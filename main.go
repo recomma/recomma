@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/terwey/3commas-sdk-go/threecommas"
+	"github.com/terwey/recomma/storage"
 	"golang.org/x/sync/semaphore"
 
 	badger "github.com/dgraph-io/badger/v4"
@@ -36,16 +36,14 @@ func (c *marketOrdersCache) Add(md metadata, order threecommas.MarketOrder) {
 }
 
 func main() {
-	// ordersMap := make(map[metadata]threecommas.MarketOrder)
 	moc := NewMarketOrdersCache()
 	sem := semaphore.NewWeighted(25)
 
-	db, err := badger.Open(badger.DefaultOptions("badger"))
+	storage, err := storage.NewStorage("badger")
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	defer db.Close()
+	defer storage.Close()
 
 	client, err := threecommas.New3CommasClient(config)
 	if err != nil {
@@ -56,12 +54,15 @@ func main() {
 		threecommas.WithScopeForListBots(threecommas.Enabled),
 	}
 
-	// let's load the current month
-	prefix := []byte(strconv.Itoa(quarterOfYear(time.Now())))
-	log.Printf("prefix: %s\n", prefix)
-	seen, err := loadSeenKeys(db, prefix)
-	if err != nil {
-		log.Fatalf("cannot get seen hashes: %s", err)
+	// let's load the last three months
+	n := 0
+	for n <= 2 {
+		prefix := time.Now().AddDate(0, -n, 0).Format("2006-01")
+		err = storage.LoadSeenKeys([]byte(prefix))
+		if err != nil {
+			log.Fatalf("cannot get seen hashes: %s", err)
+		}
+		n++
 	}
 
 	bots, err := client.ListBots(context.Background(), listBotsOpts...)
@@ -181,35 +182,24 @@ func main() {
 	// unprocessed := unprocessedMarketOrders(db, md.BotId, md.DealID, orders)
 	// unprocessed := unprocessedMarketOrdersMap(db, moc.Data)
 
-	log.Printf("Seen %d: %v", len(seen), seen)
+	log.Printf("Seen %d", storage.Size())
 
 	t = table.NewWriter()
 	t.SetOutputMirror(os.Stdout)
 	t.AppendHeader(table.Row{"Key", "DealID", "ID", "Side", "Order Type", "Status", "Rate", "Amount", "Volume", "Created", "Updated"})
 
 	for md, order := range moc.Data {
-		_, ok := seen[md.String()]
-		if ok {
+		if storage.SeenKey([]byte(md.String())) {
 			continue
 		}
 
-		// might be older than the batch
-		if seenKey(db, []byte(md.String())) {
-			continue
-		}
-
-		// key := fmt.Sprintf("%d::%d::%s", deal.BotId, deal.Id, order.OrderId)
-		err := db.Update(func(txn *badger.Txn) error {
-			data, err := json.Marshal(order)
-			if err != nil {
-				return err
-			}
-
-			e := badger.NewEntry([]byte(md.String()), data)
-			return txn.SetEntry(e)
-		})
+		data, err := json.Marshal(order)
 		if err != nil {
-			log.Fatalf("Could not add MarketOrder to DB: %s", err)
+			log.Fatalf("Could not json marshal MarketOrder: %s", err)
+		}
+		err = storage.Add(md.String(), data)
+		if err != nil {
+			log.Fatalf("Could not add MarketOrder to Storage: %s", err)
 		}
 
 		t.AppendRow(table.Row{
@@ -232,53 +222,6 @@ func main() {
 	log.Printf("MarketOrders %d", len(moc.Data))
 }
 
-// 1 → Jan–Mar, 2 → Apr–Jun, 3 → Jul–Sep, 4 → Oct–Dec
-func quarterOfYear(t time.Time) int {
-	return (int(t.Month())-1)/3 + 1
-}
-
-func loadSeenKeys(db *badger.DB, prefix []byte) (map[string]struct{}, error) {
-	seen := make(map[string]struct{})
-
-	err := db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
-		opts.Prefix = prefix
-
-		it := txn.NewIterator(opts)
-		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			key := it.Item().KeyCopy(nil)
-			seen[string(key)] = struct{}{}
-		}
-		return nil
-	})
-	return seen, err
-}
-
-func seenKey(db *badger.DB, key []byte) bool {
-	err := db.View(func(txn *badger.Txn) error {
-		log.Printf("Looking for %s\n", key)
-		_, err := txn.Get(key)
-		return err
-	})
-
-	switch err {
-	case badger.ErrKeyNotFound:
-		// unprocessed = append(unprocessed, order)
-		log.Printf("Unprocessed %s\n", key)
-		return false
-
-	case nil:
-		return true
-
-	default:
-		log.Printf("Unexpected error for key %s: %s", key, err)
-	}
-
-	return false
-}
-
 type metadata struct {
 	BotID     int
 	DealID    int
@@ -287,7 +230,7 @@ type metadata struct {
 }
 
 func (md *metadata) String() string {
-	return fmt.Sprintf("%d::%s::%d::%d::%s", quarterOfYear(md.CreatedAt), md.CreatedAt.Format("2006-01-02"), md.BotID, md.DealID, md.OrderID)
+	return fmt.Sprintf("%s::%d::%d::%s", md.CreatedAt.Format("2006-01-02"), md.BotID, md.DealID, md.OrderID)
 }
 
 func unprocessedMarketOrdersMap(db *badger.DB, orders map[metadata]threecommas.MarketOrder) map[metadata]threecommas.MarketOrder {

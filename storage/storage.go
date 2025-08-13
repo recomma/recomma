@@ -2,6 +2,7 @@ package storage
 
 import (
 	"log"
+	"sync"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -9,10 +10,15 @@ import (
 type Storage struct {
 	db   *badger.DB
 	seen map[string]struct{}
+	mu   sync.RWMutex
 }
 
-func NewStorage(path string) (*Storage, error) {
-	db, err := badger.Open(badger.DefaultOptions("badger"))
+func New(path string) (*Storage, error) {
+	return newStorage(badger.DefaultOptions(path))
+}
+
+func newStorage(opt badger.Options) (*Storage, error) {
+	db, err := badger.Open(opt)
 	if err != nil {
 		return nil, err
 	}
@@ -24,14 +30,22 @@ func NewStorage(path string) (*Storage, error) {
 }
 
 func (st *Storage) Close() error {
+	st.mu.Lock()
+	st.seen = make(map[string]struct{})
+	st.mu.Unlock()
 	return st.db.Close()
 }
 
 func (st *Storage) Size() int {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
 	return len(st.seen)
 }
 
 func (st *Storage) Add(key string, data []byte) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.seen[key] = struct{}{}
 	return st.db.Update(func(txn *badger.Txn) error {
 		e := badger.NewEntry([]byte(key), data)
 		return txn.SetEntry(e)
@@ -39,6 +53,8 @@ func (st *Storage) Add(key string, data []byte) error {
 }
 
 func (st *Storage) LoadSeenKeys(prefix []byte) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
 	err := st.db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchValues = false
@@ -56,6 +72,8 @@ func (st *Storage) LoadSeenKeys(prefix []byte) error {
 }
 
 func (st *Storage) SeenKey(key []byte) bool {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
 	// first check our cache
 	if _, ok := st.seen[string(key)]; ok {
 		return true

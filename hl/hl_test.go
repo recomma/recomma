@@ -104,7 +104,7 @@ func defaultRecorderOpts(record bool) []recorder.Option {
 	return opts
 }
 
-func getClient(t *testing.T, config ClientConfig, record bool, cassetteName string) (*hyperliquid.Exchange, error) {
+func initRecorder(t *testing.T, record bool, cassetteName string) {
 	opts := defaultRecorderOpts(record)
 
 	base := strings.ReplaceAll(t.Name(), "/", "_")
@@ -131,8 +131,6 @@ func getClient(t *testing.T, config ClientConfig, record bool, cassetteName stri
 	})
 
 	http.DefaultTransport = r
-
-	return NewExchange(config)
 }
 
 func TestOrders(t *testing.T) {
@@ -229,18 +227,41 @@ func TestOrders(t *testing.T) {
 			result: hyperliquid.OrderStatus{
 				Resting: &hyperliquid.OrderStatusResting{
 					Oid:      37522336860,
-					ClientID: "0x06c60000000000000000000000003f5a",
+					ClientID: strAsPtr("0x06c60000000000000000000000003f5a"),
 				},
 			},
 			record: false,
+		},
+		{
+			name:         "DOGE buy",
+			cassetteName: "replicate",
+			config:       config,
+			order: hyperliquid.CreateOrderRequest{
+				Coin:       "DOGE",
+				IsBuy:      true,
+				Price:      0.21367,
+				Size:       7,
+				ReduceOnly: false,
+				OrderType: hyperliquid.OrderType{
+					Limit: &hyperliquid.LimitOrderType{
+						Tif: hyperliquid.TifGtc,
+					},
+				},
+				ClientOrderID: strAsPtr("0x4f6c00fa836b8d608f365c1c8a34f64f"),
+			},
+			record: true,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(tt *testing.T) {
 			// we don't care about errors here
-			exchange, err := getClient(tt, tc.config, tc.record, tc.cassetteName)
+			initRecorder(tt, tc.record, tc.cassetteName)
+			exchange, err := NewExchange(tc.config)
 			require.NoError(tt, err, "client should not produce error")
+
+			payload, _ := json.Marshal(tc.order)
+			tt.Logf("req: \n%s\n", payload)
 
 			res, err := exchange.Order(tc.order, nil)
 			tt.Logf("res: %v", res)
@@ -260,4 +281,8 @@ func TestOrders(t *testing.T) {
 			}
 		})
 	}
+}
+
+func strAsPtr(s string) *string {
+	return &s
 }

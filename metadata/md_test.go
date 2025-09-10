@@ -126,7 +126,7 @@ func getTests() []hexData {
 				CreatedAt: epoch,
 				BotID:     0,
 				DealID:    0,
-				OrderID:   "0",
+				OrderID:   0,
 			},
 			hex: "0000 00000000 00000000 00000000 FE 54",
 		},
@@ -136,7 +136,7 @@ func getTests() []hexData {
 				CreatedAt: epoch.Add(24 * time.Hour), // 1970-01-02 -> day=1
 				BotID:     1,
 				DealID:    2,
-				OrderID:   "3",
+				OrderID:   3,
 			},
 			hex: "0001 00000001 00000002 00000003 2E 62",
 		},
@@ -146,28 +146,28 @@ func getTests() []hexData {
 				CreatedAt: epoch.AddDate(0, 0, 65535), // day=65535 -> 0xFFFF
 				BotID:     0x01020304,
 				DealID:    0xAABBCCDD,
-				OrderID:   "3735928559", // 0xDEADBEEF within uint32
+				OrderID:   3735928559, // 0xDEADBEEF within uint32
 			},
 			hex: "FFFF 01020304 AABBCCDD DEADBEEF 7D 2C",
 		},
-		{
-			name: "invalid order id panics",
-			md: Metadata{
-				CreatedAt: epoch,
-				BotID:     123,
-				DealID:    456,
-				OrderID:   "not-a-number",
-			},
-			wantPanic:        true,
-			wantErrorFromHex: HexTooShort,
-		},
+		// {
+		// 	name: "invalid order id panics",
+		// 	md: Metadata{
+		// 		CreatedAt: epoch,
+		// 		BotID:     123,
+		// 		DealID:    456,
+		// 		OrderID:   "not-a-number",
+		// 	},
+		// 	wantPanic:        true,
+		// 	wantErrorFromHex: HexTooShort,
+		// },
 		{
 			name: "received back from API",
 			md: Metadata{
 				CreatedAt: time.Date(2025, 8, 11, 0, 0, 0, 0, time.UTC),
 				BotID:     1,
 				DealID:    1,
-				OrderID:   "1",
+				OrderID:   1,
 			},
 			hex: "0x4f57000000010000000100000001f620",
 		},

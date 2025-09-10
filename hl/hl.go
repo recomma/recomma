@@ -48,3 +48,25 @@ func NewExchange(config ClientConfig) (*hyperliquid.Exchange, error) {
 
 	return exchange, nil
 }
+
+type Info struct {
+	*hyperliquid.Info
+	wallet string
+}
+
+func NewInfo(config ClientConfig) *Info {
+	url := hyperliquid.TestnetAPIURL
+	if config.BaseURL != "" {
+		url = config.BaseURL
+	}
+
+	i := hyperliquid.NewInfo(url, false, nil, nil)
+	return &Info{
+		i,
+		config.Wallet,
+	}
+}
+
+func (i *Info) QueryOrderByCloid(cloid string) (*hyperliquid.OrderQueryResult, error) {
+	return i.Info.QueryOrderByCloid(i.wallet, cloid)
+}

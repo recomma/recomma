@@ -2,10 +2,48 @@ package storage
 
 import (
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/dgraph-io/badger/v4"
 )
+
+type Storer interface {
+	Add(key string, data []byte) error
+	SeenKey(key []byte) bool
+}
+
+type Prefixed struct {
+	prefix string
+	*Storage
+}
+
+func (s *Storage) WithPrefix(prefix string) *Prefixed {
+	return &Prefixed{
+		prefix:  prefix,
+		Storage: s,
+	}
+}
+
+func (st *Prefixed) Add(key string, data []byte) error {
+	return st.add([]byte(st.prefix+"|"+key), data)
+}
+
+func (st *Prefixed) LoadSeenKeys(prefix string) error {
+	return st.loadSeenKeys([]byte(st.prefix + "|" + prefix))
+}
+
+func (st *Prefixed) Size() int {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	count := 0
+	for k := range st.seen {
+		if strings.HasPrefix(k, st.prefix) {
+			count++
+		}
+	}
+	return count
+}
 
 type Storage struct {
 	db   *badger.DB
@@ -15,6 +53,10 @@ type Storage struct {
 
 func New(path string) (*Storage, error) {
 	return newStorage(badger.DefaultOptions(path))
+}
+
+func NewMemory() (*Storage, error) {
+	return newStorage(badger.DefaultOptions("").WithInMemory(true).WithLogger(nil))
 }
 
 func newStorage(opt badger.Options) (*Storage, error) {
@@ -43,16 +85,25 @@ func (st *Storage) Size() int {
 }
 
 func (st *Storage) Add(key string, data []byte) error {
+	return st.add([]byte(key), data)
+}
+
+func (st *Storage) add(key, data []byte) error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	st.seen[key] = struct{}{}
+	log.Printf("store [%s]: %s", key, data)
+	st.seen[string(key)] = struct{}{}
 	return st.db.Update(func(txn *badger.Txn) error {
-		e := badger.NewEntry([]byte(key), data)
+		e := badger.NewEntry(key, data)
 		return txn.SetEntry(e)
 	})
 }
 
-func (st *Storage) LoadSeenKeys(prefix []byte) error {
+func (st *Storage) LoadSeenKeys(prefix string) error {
+	return st.loadSeenKeys([]byte(prefix))
+}
+
+func (st *Storage) loadSeenKeys(prefix []byte) error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	err := st.db.View(func(txn *badger.Txn) error {

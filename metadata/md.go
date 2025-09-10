@@ -16,7 +16,21 @@ type Metadata struct {
 	CreatedAt time.Time
 	BotID     int
 	DealID    int
-	OrderID   string
+	// OrderID MUST be an uint32!
+	// it's a string here because the upstream API
+	// returns a string
+	OrderID int
+}
+
+func (md *Metadata) SetOrderIDFromString(v string) error {
+	// we know OrderID is actually an uint32 too
+	oid, err := strconv.ParseUint(v, 10, 32)
+	if err != nil {
+		return fmt.Errorf("orderid cannot be parsed as uint32: %w", err)
+	}
+
+	md.OrderID = int(oid)
+	return nil
 }
 
 func (md *Metadata) String() string {
@@ -48,23 +62,24 @@ func (md *Metadata) AsHex() []byte {
 	// we can divide this by the amount of seconds in a day
 	// this should fit in an uint16
 	d := md.CreatedAt.UTC().Unix() / 86400
-	log.Printf("days since epoch: %d", d)
+	// log.Printf("days since epoch: %d", d)
 	out = binary.BigEndian.AppendUint16(out, uint16(d))
 
 	out = binary.BigEndian.AppendUint32(out, uint32(md.BotID))
 	out = binary.BigEndian.AppendUint32(out, uint32(md.DealID))
 
-	var oid uint64
-	var err error
-	if md.OrderID != "" {
-		// we know OrderID is actually an uint32 too
-		oid, err = strconv.ParseUint(md.OrderID, 10, 32)
-		if err != nil {
-			panic("orderid cannot be parsed as uint32")
-		}
-	}
+	// var oid uint64
+	// var err error
+	// if md.OrderID != "" {
+	// 	// we know OrderID is actually an uint32 too
+	// 	oid, err = strconv.ParseUint(md.OrderID, 10, 32)
+	// 	if err != nil {
+	// 		panic("orderid cannot be parsed as uint32")
+	// 	}
+	// }
 
-	out = binary.BigEndian.AppendUint32(out, uint32(oid))
+	out = binary.BigEndian.AppendUint32(out, uint32(md.OrderID))
+	// out = binary.BigEndian.AppendUint32(out, uint32(oid))
 
 	out = binary.BigEndian.AppendUint16(out, crc16.Checksum(out, crc16.IBMTable))
 
@@ -92,7 +107,8 @@ func FromHex(v []byte) (*Metadata, error) {
 
 	md.BotID = int(binary.BigEndian.Uint32(v[2:6]))
 	md.DealID = int(binary.BigEndian.Uint32(v[6:10]))
-	md.OrderID = strconv.FormatInt(int64(binary.BigEndian.Uint32(v[10:14])), 10)
+	md.OrderID = int(binary.BigEndian.Uint32(v[10:14]))
+	// md.OrderID = strconv.FormatInt(int64(binary.BigEndian.Uint32(v[10:14])), 10)
 
 	return md, nil
 }

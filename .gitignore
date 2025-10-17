@@ -1,1 +1,4 @@
-config.go
+.env
+*.bak
+*.sqlite*
+.DS_Store

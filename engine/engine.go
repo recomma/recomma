@@ -2,30 +2,31 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
+	"database/sql"
 	"errors"
 	"fmt"
-	"log"
-	"sync"
+	"log/slog"
+	"time"
 
-	"github.com/terwey/3commas-sdk-go/threecommas"
 	tc "github.com/terwey/3commas-sdk-go/threecommas"
 	"github.com/terwey/recomma/adapter"
-	"github.com/terwey/recomma/emitter"
 	"github.com/terwey/recomma/metadata"
+	"github.com/terwey/recomma/recomma"
 	"github.com/terwey/recomma/storage"
+	"golang.org/x/sync/errgroup"
 )
 
 // WorkKey is comparable (just ints), safe to use as a queue key.
 type WorkKey struct {
-	DealID int
-	BotID  int
+	DealID uint32
+	BotID  uint32
 }
 
 type ThreeCommasAPI interface {
 	ListBots(ctx context.Context, opts ...tc.ListBotsParamsOption) ([]tc.Bot, error)
 	GetListOfDeals(ctx context.Context, opts ...tc.ListDealsParamsOption) ([]tc.Deal, error)
-	GetMarketOrdersForDeal(ctx context.Context, id tc.DealPathId) ([]tc.MarketOrder, error)
+	GetDealForID(ctx context.Context, dealId tc.DealPathId) (*tc.Deal, error)
+	// GetMarketOrdersForDeal(ctx context.Context, id tc.DealPathId) ([]tc.MarketOrder, error)
 }
 
 type Queue interface {
@@ -33,37 +34,19 @@ type Queue interface {
 }
 
 type Engine struct {
-	client    ThreeCommasAPI
-	store     storage.Storer
-	dealCache sync.Map
-	emitter   emitter.Emitter
-	bots      *sync.Map
+	client  ThreeCommasAPI
+	store   *storage.Storage
+	emitter recomma.Emitter
+	logger  *slog.Logger
 }
 
-func NewEngine(client ThreeCommasAPI, store storage.Storer, emitter emitter.Emitter) *Engine {
+func NewEngine(client ThreeCommasAPI, store *storage.Storage, emitter recomma.Emitter) *Engine {
 	return &Engine{
 		client:  client,
 		store:   store,
 		emitter: emitter,
-		bots:    &sync.Map{},
+		logger:  slog.Default().WithGroup("engine"),
 	}
-}
-
-func (e *Engine) wasSubmitted(md metadata.Metadata) bool {
-	return e.store.SeenKey([]byte(md.String()))
-}
-
-func (e *Engine) markSubmitted(md metadata.Metadata, order threecommas.MarketOrder) error {
-	raw, err := json.Marshal(order)
-	if err != nil {
-		return fmt.Errorf("cannot marshal MarketOrder: %w", err)
-	}
-	// now we can add the Order to our storage that we processed it
-	if err := e.store.Add(md.String(), raw); err != nil {
-		log.Printf("could not add to store: %v", err)
-	}
-
-	return nil
 }
 
 func (e *Engine) ProduceActiveDeals(ctx context.Context, q Queue) error {
@@ -78,106 +61,273 @@ func (e *Engine) ProduceActiveDeals(ctx context.Context, q Queue) error {
 		return fmt.Errorf("list bots: %v", err)
 	}
 
-	for _, b := range bots {
-		if _, ok := e.bots.Load(b.Id); !ok {
-			log.Printf("bot not seen before: %d", b.Id)
-			e.bots.Store(b.Id, b)
-		}
-		deals, err := e.client.GetListOfDeals(ctx, tc.WithBotIdForListDeals(b.Id))
-		if err != nil {
-			log.Printf("list deals for bot %d: %v", b.Id, err)
-			continue
-		}
-		for _, d := range deals {
-			e.dealCache.Store(d.Id, d) // so workers can access full Deal when adapting
-			q.Add(WorkKey{DealID: d.Id, BotID: d.BotId})
-		}
+	e.logger.Info("Checking for new deals from bots", slog.Int("bots", len(bots)))
+
+	// Fetch deals per bot concurrently with a reasonable cap.
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(32)
+
+	for _, bot := range bots {
+		b := bot // capture loop var
+		g.Go(func() error {
+			logger := e.logger.With("bot-id", b.Id)
+
+			// default if we don't have it yet
+			// the lastReq should be the `updated_at` from the deal
+			// not a time later else we don't show that deal anymore
+			lastReq := time.Now().Add(-time.Hour * 24)
+
+			_, syncedAt, found, err := e.store.LoadBot(b.Id)
+			if found && err == nil {
+				lastReq = syncedAt
+			}
+
+			logger = logger.With("lastReq", lastReq)
+
+			// bound each call; client honors context
+			// we need a longer wait time cause we might get blocked by the rate limiter
+			callCtx, cancel := context.WithTimeout(gctx, 90*time.Second)
+			defer cancel()
+
+			start := time.Now()
+			deals, err := e.client.GetListOfDeals(callCtx, tc.WithBotIdForListDeals(b.Id),
+				tc.WithFromForListDeals(lastReq),
+			)
+			if err != nil {
+				logger.Error("list deals for bot", slog.String("error", err.Error()))
+				return nil // keep other bots going
+			}
+
+			// NB: the reason we are doing a `min` here instead of the usual `max`
+			// is because the 3commas API does not update the Deals updated_at
+			// even if the events for it are updated
+
+			var minUpdatedAt time.Time
+			for _, d := range deals {
+				if minUpdatedAt.IsZero() {
+					minUpdatedAt = d.UpdatedAt
+				}
+				minUpdatedAt = time.UnixMilli(min(minUpdatedAt.UnixMilli(), d.UpdatedAt.UnixMilli()))
+				q.Add(WorkKey{DealID: uint32(d.Id), BotID: uint32(d.BotId)})
+				err := e.store.RecordThreeCommasDeal(d)
+				if err != nil {
+					logger.Warn("could not store deal", slog.String("error", err.Error()))
+				}
+			}
+
+			latest := time.UnixMilli(min(lastReq.UnixMilli(), minUpdatedAt.UnixMilli()))
+
+			// if no deals were found for the bot, let's just set the lastReq time to now-24h
+			if len(deals) == 0 {
+				// we can use the syncedAt time we had before
+				if found {
+					latest = syncedAt
+				} else {
+					latest = time.Now().Add(-time.Hour * 24)
+				}
+			}
+
+			if err := e.store.RecordBot(b, b.UpdatedAt); err != nil {
+				logger.Warn("could not record bot", slog.String("error", err.Error()))
+			}
+
+			e.store.TouchBot(b.Id, latest)
+			if len(deals) > 0 {
+				logger.Info("Enqueued Deals", slog.Int("deals", len(deals)), slog.Duration("elapsed", time.Since(start)))
+			}
+			return nil
+		})
 	}
-	return nil
+
+	return g.Wait()
 }
 
 var ErrDealNotCached = errors.New("deal not cached")
 
 func (e *Engine) HandleDeal(ctx context.Context, wi WorkKey) error {
-	// log.Printf("handleDeal dealID %d botId %d", wi.DealID, wi.BotID)
+	logger := e.logger.With("deal-id", wi.DealID).With("bot-id", wi.BotID)
 	dealID := wi.DealID
 	if dealID == 0 {
 		return nil
 	}
 
-	orders, err := e.client.GetMarketOrdersForDeal(ctx, tc.DealPathId(dealID))
+	deal, err := e.client.GetDealForID(ctx, tc.DealPathId(dealID))
 	if err != nil {
+		logger.Warn("error on getting deal", slog.String("error", err.Error()))
 		return err
 	}
 
-	botID := wi.BotID
+	return e.processDeal(ctx, wi, deal, deal.Events())
+}
 
-	// fetch full deal from cache (populated by producer) for the adapter
-	var deal tc.Deal
-	v, ok := e.dealCache.Load(dealID)
-	if !ok {
-		log.Printf("deal %d not in cache (will resync)", dealID)
-		return fmt.Errorf("%w: %d", ErrDealNotCached, dealID)
-	}
-	deal = v.(tc.Deal)
+func (e *Engine) processDeal(ctx context.Context, wi WorkKey, deal *tc.Deal, events []tc.BotEvent) error {
+	logger := e.logger.With("deal-id", wi.DealID).With("bot-id", wi.BotID)
+	seen := make(map[uint32]metadata.Metadata)
 
-	for _, order := range orders {
+	for _, event := range events {
 		md := metadata.Metadata{
-			BotID:     botID,
-			DealID:    dealID,
-			CreatedAt: order.CreatedAt,
+			BotID:      wi.BotID,
+			DealID:     wi.DealID,
+			CreatedAt:  *event.CreatedAt,
+			BotEventID: event.FingerprintAsID(),
 		}
-
-		err = md.SetOrderIDFromString(order.OrderId)
+		// we want to store all incoming as a log
+		_, err := e.store.RecordThreeCommasBotEventLog(md, event)
 		if err != nil {
-			log.Println(err)
-			continue
+			if !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("record bot event log: %w", err)
+			}
 		}
 
-		if e.wasSubmitted(md) {
-			// log.Printf("seen: %s", md.String())
-			continue
+		if event.OrderType == tc.MarketOrderDealOrderTypeTakeProfit {
+			if event.Action == tc.BotEventActionCancel || event.Action == tc.BotEventActionCancelled {
+				// we ignore Take Profit cancellations, we cancel TP's ourselves based on the combined orders for the deal
+				continue
+			}
 		}
-
-		if !shouldReplay(order) {
-			// log.Printf("should not replay: %v", order)
-			continue
+		// we only want to act on PLACING, CANCEL and MODIFY
+		// we assume here that when within the span of 15s (our poll time) a botevent went from PLACING to CANCEL we can ignore it
+		if event.Action == tc.BotEventActionPlace || event.Action == tc.BotEventActionCancel || event.Action == tc.BotEventActionModify {
+			lastInsertedId, err := e.store.RecordThreeCommasBotEvent(md, event)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					// this means we saw it before, no error
+					continue
+				}
+				return fmt.Errorf("record bot event: %w", err)
+			}
+			if lastInsertedId != 0 {
+				seen[md.BotEventID] = md
+			}
 		}
+	}
 
-		out := adapter.ToCreateOrderRequest(deal, order, md)
-		payload, err := json.Marshal(out)
+	for _, md := range seen {
+		action, latestEvent, shouldEmit, err := e.reduceOrderEvents(deal, md, logger.With("botevent-id", md.BotEventID))
 		if err != nil {
-			log.Printf("marshal outgoing: %v", err)
+			return fmt.Errorf("reduce order %d: %w", md.BotEventID, err)
+		}
+		if !shouldEmit {
 			continue
 		}
-		// Here you would call Hyperliquid; for MVP we just log the payload
-		w := emitter.OrderWork{
-			MD:    md,
-			Req:   out,
-			Order: order,
+		work := recomma.OrderWork{MD: md, Action: action}
+		if latestEvent != nil {
+			work.BotEvent = *latestEvent
 		}
-		err = e.emitter.Emit(ctx, w)
-		if err != nil {
-			log.Printf("payload: \n%s\n", payload)
-			log.Printf("could not submit order: %s", err)
-			continue
-		}
-
-		err = e.markSubmitted(md, order)
-		if err != nil {
-			log.Printf("could not mark as submitted: %s", err)
+		if err := e.emitter.Emit(ctx, work); err != nil {
+			e.logger.Warn("could not submit order", slog.Any("md", md), slog.Any("action", action), slog.String("error", err.Error()))
 		}
 	}
 
 	return nil
 }
 
-func shouldReplay(order tc.MarketOrder) bool {
-	if order.StatusString != tc.Active {
-		return false
+// reduceOrderEvents inspects every 3Commas snapshot we have stored for a single
+// BotEvent fingerprint and projects it into "the next thing we still need to do
+// on Hyperliquid". It returns the action plus a flag telling the caller whether
+// anything needs to be emitted.
+func (e *Engine) reduceOrderEvents(
+	deal *tc.Deal,
+	md metadata.Metadata,
+	logger *slog.Logger,
+) (recomma.Action, *recomma.BotEvent, bool, error) {
+
+	// NB: we actually only care about the PLACING one's
+
+	// rows are already sorted by CreatedAt ASC in ListEventsForOrder.
+	events, err := e.store.ListEventsForOrder(md.BotID, md.DealID, md.BotEventID)
+	if err != nil {
+		return recomma.Action{}, nil, false, fmt.Errorf("load event history: %w", err)
 	}
-	if order.OrderType != tc.BUY {
-		return false
+	if len(events) == 0 {
+		return recomma.Action{}, nil, false, nil
 	}
-	return true
+
+	latest := events[len(events)-1]
+	latestCopy := latest
+	prev := previousDistinct(events)
+
+	// Did we already create anything for this CLOID on Hyperliquid?
+	submitted, haveSubmission, err := e.store.LoadHyperliquidSubmission(md)
+	if err != nil {
+		return recomma.Action{}, nil, false, fmt.Errorf("load submission: %w", err)
+	}
+	hasLocalOrder := haveSubmission && submitted.Create != nil
+
+	// If Hyperliquid hasn’t seen this order yet, we pretend there is no “previous”
+	// snapshot so BuildAction can only choose between Create or None.
+	if !hasLocalOrder {
+		prev = nil
+	}
+
+	action := adapter.BuildAction(deal, prev, latest, md)
+
+	switch action.Type {
+	case recomma.ActionNone:
+		// Nothing new to do (e.g. a filled order) – just keep the history.
+		attrs := []any{slog.String("decision", "no-op")}
+		if action.Reason != "" {
+			attrs = append(attrs, slog.String("reason", action.Reason))
+		}
+		logger.Debug("no action required", attrs...)
+		return action, &latestCopy, false, nil
+
+	case recomma.ActionModify:
+		// Guard against modify-before-create (initial backfill case).
+		// At this point BuildAction only chose Modify because latest+prev
+		// differ. If HL never saw the create we fall back to a create using
+		// the freshest snapshot so the venue ends up with the right values.
+		if !hasLocalOrder {
+			req := adapter.ToCreateOrderRequest(deal, latest, md)
+			logger.Warn("modify requested before create; falling back", slog.Any("latest", latest))
+			logger.Debug("emit create", slog.Any("request", req))
+			return recomma.Action{Type: recomma.ActionCreate, Create: &req}, &latestCopy, true, nil
+		}
+		logger.Info("emit modify", slog.Any("latest", latest))
+		return action, &latestCopy, true, nil
+
+	case recomma.ActionCancel:
+		// Only emit if HL still thinks the order exists. If we never managed to
+		// create it locally there’s nothing to cancel, so we just persist the
+		// 3C event and move on.
+		if !hasLocalOrder {
+			logger.Info("skip cancel: order never created locally", slog.Any("latest", latest))
+			return recomma.Action{Type: recomma.ActionNone, Reason: "cancel skipped: order never created locally"}, &latestCopy, false, nil
+		}
+		logger.Debug("emit cancel", slog.Any("latest", latest))
+		return action, &latestCopy, true, nil
+
+	case recomma.ActionCreate:
+		logger.Debug("emit create", slog.Any("latest", latest))
+		return action, &latestCopy, true, nil
+
+	default:
+		return recomma.Action{}, nil, false, nil
+	}
+}
+
+// previousDistinct walks backward and returns the most recent snapshot that
+// differs materially from the final one; duplicates (same status/price/size)
+// are ignored so we don’t emit a Modify for exact repeats.
+func previousDistinct(events []recomma.BotEvent) *recomma.BotEvent {
+	if len(events) < 2 {
+		return nil
+	}
+	last := events[len(events)-1]
+	for i := len(events) - 2; i >= 0; i-- {
+		evt := events[i]
+		if !sameSnapshot(&evt, &last) {
+			return &evt
+		}
+	}
+	return nil
+}
+
+func sameSnapshot(a, b *recomma.BotEvent) bool {
+	return a.Status == b.Status &&
+		a.Price == b.Price &&
+		a.Size == b.Size &&
+		a.OrderType == b.OrderType &&
+		a.Type == b.Type &&
+		a.IsMarket == b.IsMarket
 }

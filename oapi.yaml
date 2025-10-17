@@ -1,0 +1,13 @@
+package: api
+generate:
+  echo-server: false
+  chi-server: false
+  gin-server: false
+  strict-server: true    # generates the interface
+  std-http-server: true  # helpers for net/http
+  client: false
+  models: true
+  embedded-spec: false
+import-mapping:
+  ../3commas/openapi.yaml: github.com/terwey/3commas-sdk-go/threecommas
+output: internal/api/ops.gen.go

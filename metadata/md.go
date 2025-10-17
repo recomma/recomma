@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
-	"strconv"
 	"strings"
 	"time"
 
@@ -13,29 +12,16 @@ import (
 )
 
 type Metadata struct {
-	CreatedAt time.Time
-	BotID     int
-	DealID    int
-	// OrderID MUST be an uint32!
-	// it's a string here because the upstream API
-	// returns a string
-	OrderID int
-}
-
-func (md *Metadata) SetOrderIDFromString(v string) error {
-	// we know OrderID is actually an uint32 too
-	oid, err := strconv.ParseUint(v, 10, 32)
-	if err != nil {
-		return fmt.Errorf("orderid cannot be parsed as uint32: %w", err)
-	}
-
-	md.OrderID = int(oid)
-	return nil
+	CreatedAt  time.Time
+	BotID      uint32
+	DealID     uint32
+	BotEventID uint32
 }
 
 func (md *Metadata) String() string {
 	// return fmt.Sprintf("%s::%d::%d::%s", md.CreatedAt.Format("2006-01-02"), md.BotID, md.DealID, md.OrderID)
-	return fmt.Sprintf("%s::%s", md.CreatedAt.Format("2006-01-02"), md.Hex())
+	// return fmt.Sprintf("%s::%s", md.CreatedAt.Format("2006-01-02"), md.Hex())
+	return md.Hex()
 }
 
 func (md *Metadata) HexAsPointer() *string {
@@ -78,7 +64,7 @@ func (md *Metadata) AsHex() []byte {
 	// 	}
 	// }
 
-	out = binary.BigEndian.AppendUint32(out, uint32(md.OrderID))
+	out = binary.BigEndian.AppendUint32(out, uint32(md.BotEventID))
 	// out = binary.BigEndian.AppendUint32(out, uint32(oid))
 
 	out = binary.BigEndian.AppendUint16(out, crc16.Checksum(out, crc16.IBMTable))
@@ -86,29 +72,28 @@ func (md *Metadata) AsHex() []byte {
 	return out
 }
 
-var HexTooShort error = fmt.Errorf("hex data too short")
-var IncorrectChecksum error = fmt.Errorf("checksum does not match")
+var ErrHexTooShort error = fmt.Errorf("hex data too short")
+var ErrIncorrectChecksum error = fmt.Errorf("checksum does not match")
 
 // FromHex returns a Metadata from the provided hex. If the CRC16 checksum
 // does not pass an error is returned. The time is loaded with UTC
 func FromHex(v []byte) (*Metadata, error) {
 	if len(v) != 16 {
 		log.Printf("too short: %s\n%X", v, v)
-		return nil, HexTooShort
+		return nil, ErrHexTooShort
 	}
 
 	if crc16.Checksum(v[0:14], crc16.IBMTable) != binary.BigEndian.Uint16(v[14:16]) {
-		return nil, IncorrectChecksum
+		return nil, ErrIncorrectChecksum
 	}
 
 	md := &Metadata{}
 	days := binary.BigEndian.Uint16(v[0:2])
 	md.CreatedAt = time.Unix(int64(days)*86400, 0).UTC()
 
-	md.BotID = int(binary.BigEndian.Uint32(v[2:6]))
-	md.DealID = int(binary.BigEndian.Uint32(v[6:10]))
-	md.OrderID = int(binary.BigEndian.Uint32(v[10:14]))
-	// md.OrderID = strconv.FormatInt(int64(binary.BigEndian.Uint32(v[10:14])), 10)
+	md.BotID = uint32(binary.BigEndian.Uint32(v[2:6]))
+	md.DealID = uint32(binary.BigEndian.Uint32(v[6:10]))
+	md.BotEventID = uint32(binary.BigEndian.Uint32(v[10:14]))
 
 	return md, nil
 }

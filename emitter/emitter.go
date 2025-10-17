@@ -2,123 +2,219 @@ package emitter
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/sonirico/go-hyperliquid"
-	"github.com/terwey/3commas-sdk-go/threecommas"
-	"github.com/terwey/recomma/hl"
-	"github.com/terwey/recomma/metadata"
+	"github.com/terwey/recomma/hl/ws"
+	"github.com/terwey/recomma/recomma"
 	"github.com/terwey/recomma/storage"
 )
 
-type OrderWork struct {
-	MD    metadata.Metadata
-	Req   hyperliquid.CreateOrderRequest
-	Order threecommas.MarketOrder
-}
-
-type Emitter interface {
-	Emit(ctx context.Context, w OrderWork) error
-}
-
 type OrderQueue interface {
-	Add(item OrderWork)
+	Add(item recomma.OrderWork)
 }
 
 type QueueEmitter struct {
-	q OrderQueue
+	q      OrderQueue
+	logger *slog.Logger
 }
 
 func NewQueueEmitter(q OrderQueue) *QueueEmitter {
-	return &QueueEmitter{q: q}
+	return &QueueEmitter{
+		q:      q,
+		logger: slog.Default().WithGroup("emitter"),
+	}
 }
 
-func (e *QueueEmitter) Emit(ctx context.Context, w OrderWork) error {
-	log.Printf("QueueEmitter.Emit: %v", w)
+func (e *QueueEmitter) Emit(ctx context.Context, w recomma.OrderWork) error {
+	e.logger.Debug("emit", slog.Any("order-work", w))
 	e.q.Add(w)
 	return nil
 }
 
 type HyperLiquidEmitter struct {
-	exchange *hyperliquid.Exchange
-	info     *hl.Info
-	store    storage.Storer
+	exchange    *hyperliquid.Exchange
+	ws          *ws.Client
+	store       *storage.Storage
+	mu          sync.Mutex
+	nextAllowed time.Time
+	minSpacing  time.Duration
+	logger      *slog.Logger
 }
 
-func NewHyperLiquidEmitter(exchange *hyperliquid.Exchange, info *hl.Info, store storage.Storer) *HyperLiquidEmitter {
+func NewHyperLiquidEmitter(exchange *hyperliquid.Exchange, ws *ws.Client, store *storage.Storage) *HyperLiquidEmitter {
 	return &HyperLiquidEmitter{
-		exchange: exchange,
-		info:     info,
-		store:    store,
+		exchange:    exchange,
+		ws:          ws,
+		store:       store,
+		nextAllowed: time.Now(),
+		minSpacing:  300 * time.Millisecond,
+		logger:      slog.Default().WithGroup("hl-emitter"),
 	}
 }
 
-func (e *HyperLiquidEmitter) markEmitted(md metadata.Metadata, req hyperliquid.CreateOrderRequest) error {
-	raw, err := json.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("cannot marshal CreateOrderRequest: %w", err)
-	}
-
-	if err := e.store.Add("req|"+md.String(), raw); err != nil {
-		log.Printf("could not add to store: %v", err)
-	}
-
-	return nil
-}
-
-func (e *HyperLiquidEmitter) storeResult(md metadata.Metadata, status hyperliquid.OrderStatus) error {
-	raw, err := json.Marshal(status)
-	if err != nil {
-		return fmt.Errorf("cannot marshal OrderStatus: %w", err)
-	}
-
-	if err := e.store.Add("status|"+md.String(), raw); err != nil {
-		log.Printf("could not add to store: %v", err)
-	}
-
-	return nil
-}
-
-func (e *HyperLiquidEmitter) Emit(ctx context.Context, w OrderWork) error {
-	// TODO: the client doesn't handle context, we need to wrap this
-
-	log.Printf("HyperLiquidEmitter.Emit: %v", w)
-
-	// TODO: check if we later can do this with a central store that just fetches
-	// the Orders endpoint on a loop
-	res, _ := e.info.QueryOrderByCloid(*w.Req.ClientOrderID)
-	// we don't care about the error, we must check if res exists
-	if res != nil {
-		if res.Status != "unknownOid" {
-			// order already exists, skipping
-			log.Printf("order already exists: %v\n%v", w, res)
+// waitTurn enforces a simple global pacing for all Hyperliquid actions
+// to avoid bursting into HL rate limits. It spaces calls by minSpacing,
+// and can be tightened by applying a longer cooldown when 429s are seen.
+func (e *HyperLiquidEmitter) waitTurn(ctx context.Context) error {
+	for {
+		e.mu.Lock()
+		wait := time.Until(e.nextAllowed)
+		if wait <= 0 {
+			// reserve our slot and release the lock
+			e.nextAllowed = time.Now().Add(e.minSpacing)
+			e.mu.Unlock()
 			return nil
+		}
+		e.mu.Unlock()
+		select {
+		case <-time.After(wait):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func (e *HyperLiquidEmitter) applyCooldown(d time.Duration) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	now := time.Now()
+	next := now.Add(d)
+	if next.After(e.nextAllowed) {
+		e.nextAllowed = next
+	}
+}
+
+func (e *HyperLiquidEmitter) setMarketPrice(ctx context.Context, order hyperliquid.CreateOrderRequest, increase bool) hyperliquid.CreateOrderRequest {
+	e.ws.EnsureBBO(order.Coin)
+	if order.Price == 0 {
+		bboCtx, bboCancel := context.WithTimeout(ctx, time.Second*30)
+		defer bboCancel()
+		bbo := e.ws.WaitForBestBidOffer(bboCtx, order.Coin)
+		if bbo != nil {
+			if order.IsBuy {
+				order.Price = bbo.Ask.Price
+				if increase {
+					order.Price = bbo.Ask.Price + bbo.Ask.Price*0.0005
+				}
+			} else {
+				order.Price = bbo.Bid.Price
+			}
 		}
 	}
 
-	result, err := e.exchange.Order(w.Req, nil)
-	if err != nil {
-		// we cannot submit these but we must ignore them
-		if strings.Contains(err.Error(), "Order must have minimum value") {
-			e.markEmitted(w.MD, w.Req)
-			log.Printf("could not submit, ignoring: %s", err)
+	return order
+}
+
+func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) error {
+	logger := e.logger.With("md", w.MD.String()).With("bot-event", w.BotEvent)
+	logger.Debug("emit", slog.Any("orderwork", w))
+	if err := e.waitTurn(ctx); err != nil {
+		return err
+	}
+
+	// TODO: decide if we want to persist the result we get back here, it's not interesting ususally as it just states `resting`
+	switch w.Action.Type {
+	case recomma.ActionCreate:
+		if e.ws.Exists(w.MD) {
+			logger.Debug("order already exists on Hyperliquid")
 			return nil
 		}
-		return fmt.Errorf("could not place order: %w", err)
+
+		order := e.setMarketPrice(ctx, *w.Action.Create, false)
+		w.Action.Create = &order
+		_, err := e.exchange.Order(ctx, *w.Action.Create, nil)
+		if err != nil {
+			// HL rejected the IOC order, let's fetch a new price, slightly increase and try again
+			// TODO: maybe we can attach some data to the error we return so it can be price increased on next queue
+			if strings.Contains(err.Error(), "Order could not immediately match against any resting orders") {
+				if err := e.waitTurn(ctx); err != nil {
+					return err
+				}
+				order := e.setMarketPrice(ctx, *w.Action.Create, true)
+				logger = logger.With("increased", true)
+				w.Action.Create = &order
+				_, err := e.exchange.Order(ctx, *w.Action.Create, nil)
+				// TODO: figure out if we want a proper retry logic for errors
+				if err != nil {
+					return err
+				}
+			}
+
+			// we cannot submit these but we must ignore them
+			if strings.Contains(err.Error(), "Order must have minimum value") {
+				if err := e.store.RecordHyperliquidOrderRequest(w.MD, *w.Action.Create, w.BotEvent.RowID); err != nil {
+					logger.Warn("could not add to store", slog.String("error", err.Error()))
+				}
+				logger.Warn("could not submit (order value), ignoring", slog.String("error", err.Error()))
+				return nil
+			}
+
+			if strings.Contains(err.Error(), "Reduce only order would increase position") {
+				if err := e.store.RecordHyperliquidOrderRequest(w.MD, *w.Action.Create, w.BotEvent.RowID); err != nil {
+					logger.Warn("could not add to store", slog.String("error", err.Error()))
+				}
+				logger.Warn("could not submit (reduce only order, increase position), ignoring", slog.String("error", err.Error()))
+				return nil
+			}
+
+			// If HL rate limits (address-based or IP-based), apply a cooldown.
+			if strings.Contains(err.Error(), "429") || strings.Contains(strings.ToLower(err.Error()), "rate limit") {
+				logger.Debug("hit ratelimit, cooldown of 10s applied")
+				// HL allows ~1 action per 10s when address-limited.
+				e.applyCooldown(10 * time.Second)
+			}
+			logger.Warn("could not place order", slog.String("error", err.Error()), slog.Any("action", w.Action.Create))
+			return fmt.Errorf("could not place order: %w", err)
+		}
+
+		if err := e.store.RecordHyperliquidOrderRequest(w.MD, *w.Action.Create, w.BotEvent.RowID); err != nil {
+			logger.Warn("could not add to store", slog.String("error", err.Error()))
+		}
+	case recomma.ActionCancel:
+		logger.Info("Cancelling order", slog.Any("cancel", w.Action.Cancel))
+		_, err := e.exchange.CancelByCloid(ctx, w.Action.Cancel.Coin, w.Action.Cancel.Cloid)
+		if err != nil {
+
+			// If HL rate limits (address-based or IP-based), apply a cooldown.
+			if strings.Contains(err.Error(), "429") || strings.Contains(strings.ToLower(err.Error()), "rate limit") {
+				logger.Debug("hit ratelimit, cooldown of 10s applied")
+				// HL allows ~1 action per 10s when address-limited.
+				e.applyCooldown(10 * time.Second)
+			}
+			logger.Warn("could not cancel order", slog.String("error", err.Error()), slog.Any("action", w.Action.Cancel))
+			return fmt.Errorf("could not cancel order: %w", err)
+		}
+		if err := e.store.RecordHyperliquidCancel(w.MD, *w.Action.Cancel, w.BotEvent.RowID); err != nil {
+			logger.Warn("could not add to store", slog.String("error", err.Error()))
+		}
+	case recomma.ActionNone:
+		// order filled
+		return nil
+	case recomma.ActionModify:
+		order := e.setMarketPrice(ctx, w.Action.Modify.Order, false)
+		w.Action.Modify.Order = order
+		_, err := e.exchange.ModifyOrder(ctx, *w.Action.Modify)
+		if err != nil {
+			// If HL rate limits (address-based or IP-based), apply a cooldown.
+			if strings.Contains(err.Error(), "429") || strings.Contains(strings.ToLower(err.Error()), "rate limit") {
+				logger.Debug("hit ratelimit, cooldown of 10s applied")
+				// HL allows ~1 action per 10s when address-limited.
+				e.applyCooldown(10 * time.Second)
+			}
+			logger.Warn("could not modify order", slog.String("error", err.Error()), slog.Any("action", w.Action.Modify))
+			return fmt.Errorf("could not modify order: %w", err)
+		}
+		if err := e.store.AppendHyperliquidModify(w.MD, *w.Action.Modify, w.BotEvent.RowID); err != nil {
+			logger.Warn("could not add to store", slog.String("error", err.Error()))
+		}
 	}
 
-	err = e.markEmitted(w.MD, w.Req)
-	if err != nil {
-		log.Printf("could not mark as emitted: %s", err)
-	}
-
-	err = e.storeResult(w.MD, result)
-	if err != nil {
-		log.Printf("could not store result: %s", err)
-	}
+	logger.Info("Order sent", slog.Any("action", w.Action))
 
 	return nil
 }

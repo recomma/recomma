@@ -123,30 +123,30 @@ func getTests() []hexData {
 		{
 			name: "epoch day 0, all zeros",
 			md: Metadata{
-				CreatedAt: epoch,
-				BotID:     0,
-				DealID:    0,
-				OrderID:   0,
+				CreatedAt:  epoch,
+				BotID:      0,
+				DealID:     0,
+				BotEventID: 0,
 			},
 			hex: "0000 00000000 00000000 00000000 FE 54",
 		},
 		{
 			name: "small values sample",
 			md: Metadata{
-				CreatedAt: epoch.Add(24 * time.Hour), // 1970-01-02 -> day=1
-				BotID:     1,
-				DealID:    2,
-				OrderID:   3,
+				CreatedAt:  epoch.Add(24 * time.Hour), // 1970-01-02 -> day=1
+				BotID:      1,
+				DealID:     2,
+				BotEventID: 3,
 			},
 			hex: "0001 00000001 00000002 00000003 2E 62",
 		},
 		{
 			name: "max uint16 day boundary",
 			md: Metadata{
-				CreatedAt: epoch.AddDate(0, 0, 65535), // day=65535 -> 0xFFFF
-				BotID:     0x01020304,
-				DealID:    0xAABBCCDD,
-				OrderID:   3735928559, // 0xDEADBEEF within uint32
+				CreatedAt:  epoch.AddDate(0, 0, 65535), // day=65535 -> 0xFFFF
+				BotID:      0x01020304,
+				DealID:     0xAABBCCDD,
+				BotEventID: 3735928559, // 0xDEADBEEF within uint32
 			},
 			hex: "FFFF 01020304 AABBCCDD DEADBEEF 7D 2C",
 		},
@@ -164,10 +164,10 @@ func getTests() []hexData {
 		{
 			name: "received back from API",
 			md: Metadata{
-				CreatedAt: time.Date(2025, 8, 11, 0, 0, 0, 0, time.UTC),
-				BotID:     1,
-				DealID:    1,
-				OrderID:   1,
+				CreatedAt:  time.Date(2025, 8, 11, 0, 0, 0, 0, time.UTC),
+				BotID:      1,
+				DealID:     1,
+				BotEventID: 1,
 			},
 			hex: "0x4f57000000010000000100000001f620",
 		},

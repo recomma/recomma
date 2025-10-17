@@ -1,6 +1,7 @@
 package hl
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"fmt"
 	"strings"
@@ -16,7 +17,7 @@ type ClientConfig struct {
 	Wallet  string
 }
 
-func NewExchange(config ClientConfig) (*hyperliquid.Exchange, error) {
+func NewExchange(ctx context.Context, config ClientConfig) (*hyperliquid.Exchange, error) {
 	// we want to make sure the config defines main explicitly
 	url := hyperliquid.TestnetAPIURL
 	if config.BaseURL != "" {
@@ -38,6 +39,7 @@ func NewExchange(config ClientConfig) (*hyperliquid.Exchange, error) {
 	accountAddr := crypto.PubkeyToAddress(*pubECDSA).Hex()
 
 	exchange := hyperliquid.NewExchange(
+		ctx,
 		privateKey,
 		url,
 		nil, // Meta will be fetched automatically
@@ -54,19 +56,19 @@ type Info struct {
 	wallet string
 }
 
-func NewInfo(config ClientConfig) *Info {
+func NewInfo(ctx context.Context, config ClientConfig) *Info {
 	url := hyperliquid.TestnetAPIURL
 	if config.BaseURL != "" {
 		url = config.BaseURL
 	}
 
-	i := hyperliquid.NewInfo(url, false, nil, nil)
+	i := hyperliquid.NewInfo(ctx, url, false, nil, nil)
 	return &Info{
 		i,
 		config.Wallet,
 	}
 }
 
-func (i *Info) QueryOrderByCloid(cloid string) (*hyperliquid.OrderQueryResult, error) {
-	return i.Info.QueryOrderByCloid(i.wallet, cloid)
+func (i *Info) QueryOrderByCloid(ctx context.Context, cloid string) (*hyperliquid.OrderQueryResult, error) {
+	return i.Info.QueryOrderByCloid(ctx, i.wallet, cloid)
 }

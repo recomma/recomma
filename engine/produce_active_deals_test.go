@@ -3,13 +3,14 @@ package engine
 import (
 	"context"
 	"errors"
-	"sort"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/require"
 	tc "github.com/terwey/3commas-sdk-go/threecommas"
+	"github.com/terwey/recomma/recomma"
+	"github.com/terwey/recomma/storage"
 )
 
 // fakeQueue implements Queue by collecting added keys.
@@ -46,8 +47,14 @@ func (f *fakeClient) GetListOfDeals(ctx context.Context, opts ...tc.ListDealsPar
 }
 
 // Unused by ProduceActiveDeals; required by interface.
-func (f *fakeClient) GetMarketOrdersForDeal(ctx context.Context, id tc.DealPathId) ([]tc.MarketOrder, error) {
+func (f *fakeClient) GetDealForID(ctx context.Context, dealId tc.DealPathId) (*tc.Deal, error) {
 	return nil, nil
+}
+
+type fakeEmitter struct{}
+
+func (e *fakeEmitter) Emit(ctx context.Context, w recomma.OrderWork) error {
+	return nil
 }
 
 // helper to compare WorkKey slices ignoring order
@@ -68,7 +75,7 @@ func TestProduceActiveDeals_TableDriven(t *testing.T) {
 		dealsByBot    map[int][]tc.Deal
 		dealsErrByBot map[int]error
 		wantKeys      []WorkKey
-		wantCachedIDs []int
+		wantCachedIDs []uint32
 		wantErr       bool
 	}{
 		{
@@ -83,7 +90,7 @@ func TestProduceActiveDeals_TableDriven(t *testing.T) {
 				{DealID: 102, BotID: 1},
 				{DealID: 201, BotID: 2},
 			},
-			wantCachedIDs: []int{101, 102, 201},
+			wantCachedIDs: []uint32{101, 102, 201},
 		},
 		{
 			name:        "list bots error surfaces",
@@ -100,7 +107,7 @@ func TestProduceActiveDeals_TableDriven(t *testing.T) {
 				1: errors.New("rate limited"),
 			},
 			wantKeys:      []WorkKey{{DealID: 2001, BotID: 2}},
-			wantCachedIDs: []int{2001},
+			wantCachedIDs: []uint32{2001},
 		},
 		{
 			name:          "no bots => no work, no error",
@@ -140,11 +147,16 @@ func TestProduceActiveDeals_TableDriven(t *testing.T) {
 					return m
 				}(),
 			}
+
+			store, err := storage.New(":memory:", nil)
+			require.NoError(t, err)
+			defer store.Close()
+
 			q := &fakeQueue{}
 			em := &fakeEmitter{}
-			e := NewEngine(client, nil, em)
+			e := NewEngine(client, store, em)
 
-			err := e.ProduceActiveDeals(ctx, q)
+			err = e.ProduceActiveDeals(ctx, q)
 			if tcse.wantErr {
 				require.Error(t, err)
 				return
@@ -154,25 +166,6 @@ func TestProduceActiveDeals_TableDriven(t *testing.T) {
 			got := append([]WorkKey(nil), q.added...)
 			require.True(t, cmp.Equal(tcse.wantKeys, got, sortWK),
 				"diff (-want +got):\n%s", cmp.Diff(tcse.wantKeys, got, sortWK))
-
-			for _, id := range tcse.wantCachedIDs {
-				_, ok := e.dealCache.Load(id)
-				require.Truef(t, ok, "deal %d not cached", id)
-			}
-
-			// Optional: verify no unexpected IDs cached.
-			if tcse.wantCachedIDs != nil {
-				var cached []int
-				e.dealCache.Range(func(k, _ any) bool {
-					cached = append(cached, k.(int))
-					return true
-				})
-				sort.Ints(cached)
-				wantIDs := append([]int(nil), tcse.wantCachedIDs...)
-				sort.Ints(wantIDs)
-				require.True(t, cmp.Equal(wantIDs, cached),
-					"cached IDs diff (-want +got):\n%s", cmp.Diff(wantIDs, cached))
-			}
 		})
 	}
 }

@@ -1,0 +1,430 @@
+openapi: 3.0.3
+info:
+  title: Recomma Ops API
+  version: 0.2.1
+servers:
+  - url: http://localhost:8080
+paths:
+  /api/bots:
+    get:
+      operationId: listBots
+      summary: List cached 3Commas bots
+      description: >
+        Returns bot records stored in `threecommas_bots`. Use filters to drill down
+        to a single bot if needed.
+      parameters:
+        - name: bot_id
+          in: query
+          description: Return only the bot with this ID (exact match).
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: updated_from
+          in: query
+          description: ISO-8601 timestamp; include bots touched at or after this time.
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: updated_to
+          in: query
+          description: ISO-8601 timestamp; include bots touched at or before this time.
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          description: Maximum number of rows (default 100, max 500).
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 500
+        - name: page_token
+          in: query
+          description: Opaque cursor returned by a previous call (empty for first page).
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Bot records ordered newest-first unless a chronological range was requested.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BotRecord'
+                  next_page_token:
+                    type: string
+                    nullable: true
+                required:
+                  - items
+        '400':
+          description: Invalid parameters
+        '500':
+          description: Internal server error
+
+  /api/deals:
+    get:
+      operationId: listDeals
+      summary: List cached 3Commas deals
+      description: >
+        Returns deal rows from `threecommas_deals`. Filters allow narrowing by bot,
+        deal ID, and update timestamps; a single endpoint covers both list and detail use-cases.
+      parameters:
+        - name: deal_id
+          in: query
+          description: Return only the deal with this ID (exact match).
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: bot_id
+          in: query
+          description: Restrict to deals belonging to this bot.
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: updated_from
+          in: query
+          description: ISO-8601 timestamp; include deals updated at or after this time.
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: updated_to
+          in: query
+          description: ISO-8601 timestamp; include deals updated at or before this time.
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          description: Maximum number of rows (default 100, max 500).
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 500
+        - name: page_token
+          in: query
+          description: Opaque cursor returned by a previous call.
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deal records ordered newest-first unless a chronological range was requested.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DealRecord'
+                  next_page_token:
+                    type: string
+                    nullable: true
+                required:
+                  - items
+        '400':
+          description: Invalid parameters
+        '500':
+          description: Internal server error
+
+  /api/orders:
+    get:
+      operationId: listOrders
+      summary: List acted-on bot events with Hyperliquid context
+      description: >
+        Returns rows from `threecommas_botevents` (the actionable subset). Each row includes the raw
+        3Commas payload, plus the latest matching submission and status from Hyperliquid if present.
+        Use the filters to drill down to a single metadata hex, bot, deal, or bot-event ID.
+        The `from`/`to` window operates on the bot-event `observed_at` timestamp so you can page through history.
+        Setting `include_log=true` embeds matching entries from `threecommas_botevents_log` and
+        `hyperliquid_status_history` within each result, filtered by the same time window.
+      parameters:
+        - name: metadata
+          in: query
+          description: Case-insensitive prefix match on metadata hex; exact match recommended for drill-down.
+          required: false
+          schema:
+            type: string
+        - name: bot_id
+          in: query
+          description: Restrict to events emitted by this bot ID.
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: deal_id
+          in: query
+          description: Restrict to events emitted by this deal ID.
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: bot_event_id
+          in: query
+          description: Restrict to a specific 3Commas bot-event ID (exact match).
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: observed_from
+          in: query
+          description: ISO-8601 timestamp; include events observed at or after this time.
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: observed_to
+          in: query
+          description: ISO-8601 timestamp; include events observed at or before this time.
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: include_log
+          in: query
+          description: >
+            When true, embed `log_entries` for each order, limited to the same metadata and
+            time range (default false).
+          required: false
+          schema:
+            type: boolean
+        - name: limit
+          in: query
+          description: Maximum number of rows (default 100, max 500).
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 500
+        - name: page_token
+          in: query
+          description: Opaque cursor returned by a previous call.
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Order records matching the requested filters.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OrderRecord'
+                  next_page_token:
+                    type: string
+                    nullable: true
+                required:
+                  - items
+        '400':
+          description: Invalid parameters
+        '500':
+          description: Internal server error
+
+  /sse/orders:
+    get:
+      operationId: streamOrders
+      summary: Stream live changes to acted-on orders
+      description: >
+        Server Sent Events channel fed by writes to `threecommas_botevents`, `hyperliquid_submissions`,
+        and `hyperliquid_status_history`. Each `data:` frame is a JSON object containing the raw payload
+        we stored for that update, plus the metadata hex and timestamps. Filters match the query semantics
+        of `/api/orders`.
+      parameters:
+        - name: metadata
+          in: query
+          description: Case-insensitive prefix match; only events for matching metadata are emitted.
+          required: false
+          schema:
+            type: string
+        - name: bot_id
+          in: query
+          description: Restrict to this bot ID.
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: deal_id
+          in: query
+          description: Restrict to this deal ID.
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: bot_event_id
+          in: query
+          description: Restrict to this bot-event ID.
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: observed_from
+          in: query
+          description: If supplied, drop events older than this timestamp (useful for resume).
+          required: false
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: text/event-stream; each frame carries a JSON object with order-change details.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: >
+                  UTF-8 event stream. Example frame:
+                  ```
+                  event: three_commas_event
+                  data: {"type":"three_commas_event","metadata_hex":"0x1234","observed_at":"2025-01-02T03:04:05Z","payload":{...}}
+                  
+                  ```
+        '400':
+          description: Invalid parameters
+        '500':
+          description: Internal server error
+
+components:
+  schemas:
+    BotRecord:
+      type: object
+      required:
+        - bot_id
+        - last_synced_at
+        - payload
+      properties:
+        bot_id:
+          type: integer
+          format: int64
+        last_synced_at:
+          type: string
+          format: date-time
+        payload:
+          $ref: ../3commas/openapi.yaml#/components/schemas/Bot
+          description: Raw 3Commas bot payload exactly as stored.
+
+    DealRecord:
+      type: object
+      required:
+        - deal_id
+        - bot_id
+        - created_at
+        - updated_at
+        - payload
+      properties:
+        deal_id:
+          type: integer
+          format: int64
+        bot_id:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        payload:
+          $ref: ../3commas/openapi.yaml#/components/schemas/Deal
+          description: Raw 3Commas deal payload exactly as stored.
+
+    OrderRecord:
+      type: object
+      required:
+        - metadata_hex
+        - bot_id
+        - deal_id
+        - bot_event_id
+        - created_at
+        - observed_at
+        - bot_event_payload
+      properties:
+        metadata_hex:
+          type: string
+        bot_id:
+          type: integer
+          format: int64
+        deal_id:
+          type: integer
+          format: int64
+        bot_event_id:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        observed_at:
+          type: string
+          format: date-time
+        bot_event_payload:
+          type: object
+          additionalProperties: true
+          description: Raw payload from `threecommas_botevents`.
+        latest_submission:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: >
+            Raw JSON from `hyperliquid_submissions` for this metadata (last write wins).
+        latest_status:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: >
+            Raw JSON from the most recent `hyperliquid_status_history` row for this metadata.
+        log_entries:
+          type: array
+          nullable: true
+          description: Present only when `include_log=true`. Entries are filtered to the same metadata/time window.
+          items:
+            $ref: '#/components/schemas/OrderLogEntry'
+
+    OrderLogEntry:
+      type: object
+      required:
+        - type
+        - metadata_hex
+        - observed_at
+        - payload
+      properties:
+        type:
+          type: string
+          enum:
+            - three_commas_event
+            - hyperliquid_submission
+            - hyperliquid_status
+        metadata_hex:
+          type: string
+        bot_event_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Bot-event ID when available (present for 3Commas rows).
+        observed_at:
+          type: string
+          format: date-time
+        payload:
+          type: object
+          additionalProperties: true
+          description: Raw JSON payload from the corresponding table.

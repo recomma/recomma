@@ -10,10 +10,10 @@ require (
 	github.com/oapi-codegen/nullable v1.1.0
 	github.com/oapi-codegen/runtime v1.1.2
 	github.com/rs/cors v1.11.1
-	github.com/sonirico/go-hyperliquid v0.11.0
+	github.com/sonirico/go-hyperliquid v0.16.1
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
-	github.com/terwey/3commas-sdk-go v0.0.0
+	github.com/terwey/3commas-sdk-go v0.0.1
 	golang.org/x/sync v0.17.0
 	k8s.io/client-go v0.34.0
 	modernc.org/sqlite v1.39.0
@@ -98,8 +98,8 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 )
 
-replace github.com/terwey/3commas-sdk-go => ../3commas-sdk-go
+// replace github.com/terwey/3commas-sdk-go => ../3commas-sdk-go
 
-replace github.com/sonirico/go-hyperliquid => ../go-hyperliquid
+// replace github.com/sonirico/go-hyperliquid => ../go-hyperliquid
 
 tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen

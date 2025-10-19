@@ -3,7 +3,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Card } from './ui/card';
 import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
-import { Separator } from './ui/separator';
 import { Activity, TrendingUp, TrendingDown, ExternalLink, Bot } from 'lucide-react';
 import type { DealRecord } from '../types/api';
 

@@ -36,9 +36,11 @@ export default function App() {
 
       const status: VaultStatus = await response.json();
       setVaultStatus(status);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to load vault status:', err);
-      setVaultStatusError(err?.message || 'Failed to load vault status.');
+      const message =
+        err instanceof Error ? err.message : 'Failed to load vault status.';
+      setVaultStatusError(message);
     } finally {
       setIsLoadingVaultStatus(false);
     }

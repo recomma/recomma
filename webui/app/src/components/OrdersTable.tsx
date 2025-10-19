@@ -211,7 +211,7 @@ export function OrdersTable({ filters }: OrdersTableProps) {
       
       const data: ListOrdersResponse = await response.json();
       setOrders(data.items ?? []);
-    } catch (error) {
+    } catch {
       // Silently use mock data when API is unavailable
       setOrders(generateMockOrders());
     } finally {
@@ -247,7 +247,7 @@ export function OrdersTable({ filters }: OrdersTableProps) {
           eventSource.close();
         }
       };
-    } catch (error) {
+    } catch {
       // SSE not available, continue without real-time updates
     }
 

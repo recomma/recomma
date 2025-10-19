@@ -4,7 +4,7 @@ import { Input } from './ui/input';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
-import { X, Search, ChevronDown, Filter } from 'lucide-react';
+import { X, ChevronDown, Filter } from 'lucide-react';
 import { Badge } from './ui/badge';
 
 interface FilterBarProps {

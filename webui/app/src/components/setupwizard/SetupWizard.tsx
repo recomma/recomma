@@ -195,9 +195,11 @@ export function SetupWizard({ onSetupComplete }: SetupWizardProps) {
       }
 
       setCurrentStep(5);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Finalizing setup failed:', err);
-      setSubmissionError(err?.message || 'Failed to finalize setup. Please try again.');
+      const message =
+        err instanceof Error ? err.message : 'Failed to finalize setup. Please try again.';
+      setSubmissionError(message);
     } finally {
       setIsSubmitting(false);
     }

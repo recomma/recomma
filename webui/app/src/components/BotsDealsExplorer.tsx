@@ -101,7 +101,7 @@ export function BotsDealsExplorer({ onBotSelect, onDealSelect, selectedBotId, se
       if (!response.ok) throw new Error('API not available');
       const data: ListBotsResponse = await response.json();
       setBots(data.items ?? []);
-    } catch (error) {
+    } catch {
       setBots([]);
     } finally {
       // no-op
@@ -118,7 +118,7 @@ export function BotsDealsExplorer({ onBotSelect, onDealSelect, selectedBotId, se
       if (!response.ok) throw new Error('API not available');
       const data: ListDealsResponse = await response.json();
       setDeals(data.items ?? []);
-    } catch (error) {
+    } catch {
       setDeals([]);
     } finally {
       // no-op

@@ -55,7 +55,7 @@ export default defineConfig({
     sourcemap: false,        // emit .map files for stack traces
     cssMinify: true,       // no CSS minification (Vite 5+)
     target: 'esnext',       // avoid extra transforms if your browsers allow
-    outDir: '../',
+    outDir: 'dist',
   },
   esbuild: {
     keepNames: true,        // preserve function/class names in stacks

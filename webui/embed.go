@@ -5,24 +5,34 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 )
 
-// content stores the compiled web UI assets.
-//
-//go:embed index.html assets/*
-var content embed.FS
+var (
+	//go:embed app/dist/*
+	content embed.FS
+	distFS  = mustSubFS(content, "app/dist")
+)
 
-// FS exposes the embedded assets as an fs.FS.
 func FS() fs.FS {
-	return content
+	return distFS
+}
+
+func mustSubFS(fsys embed.FS, dir string) fs.FS {
+	sub, err := fs.Sub(fsys, dir)
+	if err != nil {
+		slog.Default().Error("webui dir does not exist", slog.String("error", err.Error()), slog.String("dir", dir))
+		return nil
+	}
+	return sub
 }
 
 // Handler returns an http.Handler that serves the embedded assets and a runtime config script.
 func Handler(opsAPIOrigin string, tls bool) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/config.js", configHandler(opsAPIOrigin, tls))
-	mux.Handle("/", http.FileServer(http.FS(content)))
+	mux.Handle("/", http.FileServer(http.FS(distFS)))
 
 	return mux
 }

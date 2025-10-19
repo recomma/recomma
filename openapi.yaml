@@ -2,6 +2,10 @@ openapi: 3.0.3
 info:
   title: Recomma Ops API
   version: 0.2.1
+  license:
+    name: Apache 2.0
+    url: https://github.com/terwey/recomma/blob/main/LICENSE.txt
+
 servers:
   - url: http://localhost:8080
 security:

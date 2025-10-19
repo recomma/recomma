@@ -3,15 +3,37 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    # Replace the build section with an `image:` reference once you publish a tagged image.
     env_file:
       - .env
     environment:
+      RECOMMA_PUBLIC_ORIGIN: "http://localhost:8080"
+      RECOMMA_TRUST_PROXY: "false"
       RECOMMA_STORAGE_PATH: /var/lib/recomma/db.sqlite3
-      RECOMMA_LOG_JSON: true
+      RECOMMA_LOG_JSON: "true"
       RECOMMA_LOG_LEVEL: debug
     volumes:
       - ./data:/var/lib/recomma
     ports:
-      - "8080:8080"
+      - "8080:8080"   # host:container
     restart: unless-stopped
+    init: true
+    stop_grace_period: 10s
+
+  # Alternative: consume published image
+  recomma-ghcr:
+    profiles: ["ghcr"]
+    image: ghcr.io/terwey/recomma:latest
+    env_file:
+      - .env
+    environment:
+      RECOMMA_PUBLIC_ORIGIN: "https://app.example.com"   # set for prod
+      RECOMMA_TRUST_PROXY: "true"
+      RECOMMA_STORAGE_PATH: /var/lib/recomma/db.sqlite3
+      RECOMMA_LOG_JSON: "true"
+      RECOMMA_LOG_LEVEL: info
+    volumes:
+      - ./data:/var/lib/recomma
+    # no host port if you’re behind a reverse proxy; add labels as needed
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 10s

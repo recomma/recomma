@@ -4,14 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"log"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -29,6 +26,7 @@ import (
 	"github.com/terwey/recomma/hl"
 	"github.com/terwey/recomma/hl/ws"
 	"github.com/terwey/recomma/internal/api"
+	"github.com/terwey/recomma/internal/origin"
 	"github.com/terwey/recomma/internal/vault"
 	rlog "github.com/terwey/recomma/log"
 	"github.com/terwey/recomma/recomma"
@@ -57,6 +55,9 @@ func main() {
 		fatal("invalid configuration", err)
 	}
 
+	allowedOrigins := origin.BuildAllowedOrigins(cfg.HTTPListen, cfg.PublicOrigin)
+	rpID := origin.DeriveRPID(cfg.HTTPListen, cfg.PublicOrigin)
+
 	appCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -76,8 +77,8 @@ func main() {
 
 	webAuth, err := webauthn.New(&webauthn.Config{
 		RPDisplayName: "Recomma",
-		RPID:          "localhost", // TODO: we actually request the FQDN from the user during setup
-		RPOrigins:     buildAllowedOrigins(cfg.HTTPListen),
+		RPID:          rpID,
+		RPOrigins:     allowedOrigins,
 	})
 	if err != nil {
 		fatal("webauth init failed", err)
@@ -124,7 +125,7 @@ func main() {
 	})
 
 	corsMiddleware := cors.New(cors.Options{
-		AllowedOrigins: buildAllowedOrigins(cfg.HTTPListen),
+		AllowedOrigins: allowedOrigins,
 		AllowedMethods: []string{
 			http.MethodGet,
 			http.MethodPost,
@@ -143,7 +144,7 @@ func main() {
 
 	apiHandlerWithCORS := corsMiddleware.Handler(apiMux)
 	tlsEnabled := false
-	webHandler := webui.Handler(cfg.HTTPListen, tlsEnabled)
+	webHandler := webui.Handler(cfg.HTTPListen, cfg.PublicOrigin, tlsEnabled)
 
 	rootMux := http.NewServeMux()
 	rootMux.Handle("/api/", apiHandlerWithCORS)
@@ -162,7 +163,7 @@ func main() {
 
 	apiErrCh := make(chan error, 1)
 	go func() {
-		logger.Info("HTTP API listening", slog.String("addr", apiSrv.Addr))
+		logger.Info("HTTP API listening", slog.String("addr", apiSrv.Addr), slog.String("public_origin", cfg.PublicOrigin))
 		if err := apiSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			apiErrCh <- err
 		}
@@ -450,50 +451,4 @@ func drainHTTPServer(srv *http.Server, errCh <-chan error) error {
 		return err
 	}
 	return nil
-}
-
-func buildAllowedOrigins(listenAddr string) []string {
-	origins := []string{"http://localhost:3000"}
-
-	host := strings.TrimSpace(listenAddr)
-	if host == "" {
-		return origins
-	}
-
-	addr := host
-	if !strings.Contains(host, ":") {
-		addr = ":" + host
-	}
-
-	parsedHost, port, err := net.SplitHostPort(addr)
-	if err != nil || port == "" {
-		return origins
-	}
-
-	candidates := []string{"localhost", "127.0.0.1"}
-	if parsedHost != "" && parsedHost != "0.0.0.0" && parsedHost != "::" {
-		candidates = append(candidates, parsedHost)
-	}
-
-	seen := make(map[string]struct{}, len(candidates))
-	for _, candidate := range candidates {
-		candidate = strings.TrimSpace(candidate)
-		if candidate == "" {
-			continue
-		}
-
-		hostLabel := candidate
-		if strings.Contains(candidate, ":") && !strings.HasPrefix(candidate, "[") {
-			hostLabel = "[" + candidate + "]"
-		}
-
-		origin := fmt.Sprintf("http://%s:%s", hostLabel, port)
-		if _, ok := seen[origin]; ok {
-			continue
-		}
-		seen[origin] = struct{}{}
-		origins = append(origins, origin)
-	}
-
-	return origins
 }

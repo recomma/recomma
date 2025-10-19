@@ -6,7 +6,10 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
 )
 
 var (
@@ -29,24 +32,70 @@ func mustSubFS(fsys embed.FS, dir string) fs.FS {
 }
 
 // Handler returns an http.Handler that serves the embedded assets and a runtime config script.
-func Handler(opsAPIOrigin string, tls bool) http.Handler {
+func Handler(listen string, publicOrigin string, tls bool) http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("/config.js", configHandler(opsAPIOrigin, tls))
+	mux.Handle("/config.js", configHandler(resolveOpsAPIOrigin(listen, publicOrigin, tls)))
 	mux.Handle("/", http.FileServer(http.FS(distFS)))
 
 	return mux
 }
 
-func configHandler(listen string, tls bool) http.Handler {
-	url := fmt.Sprintf("http://%s", listen)
-	if tls {
-		url = fmt.Sprintf("https://%s", listen)
-	}
-	script := fmt.Sprintf("window.__RECOMMA_CONFIG__ = { OPS_API_ORIGIN: %q };\n", url)
+func configHandler(origin string) http.Handler {
+	script := fmt.Sprintf("window.__RECOMMA_CONFIG__ = { OPS_API_ORIGIN: %q };\n", origin)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = io.WriteString(w, script)
 	})
+}
+
+func resolveOpsAPIOrigin(listen, publicOrigin string, tls bool) string {
+	trimmed := strings.TrimSpace(publicOrigin)
+	if trimmed != "" {
+		if parsed, err := url.Parse(trimmed); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+			return fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Host)
+		}
+		return strings.TrimRight(trimmed, "/")
+	}
+
+	scheme := "http"
+	defaultPort := "80"
+	if tls {
+		scheme = "https"
+		defaultPort = "443"
+	}
+
+	host := strings.TrimSpace(listen)
+	if host == "" {
+		return fmt.Sprintf("%s://localhost:8080", scheme)
+	}
+
+	addr := host
+	if strings.HasPrefix(host, ":") {
+		addr = "localhost" + host
+	}
+	if !strings.Contains(addr, ":") {
+		addr = addr + ":" + defaultPort
+	}
+
+	h, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Sprintf("%s://%s", scheme, host)
+	}
+
+	if h == "" || h == "0.0.0.0" || h == "::" || net.ParseIP(h) != nil {
+		h = "localhost"
+	}
+
+	hostLabel := h
+	if strings.Contains(h, ":") && !strings.HasPrefix(h, "[") {
+		hostLabel = "[" + h + "]"
+	}
+
+	if port == defaultPort {
+		return fmt.Sprintf("%s://%s", scheme, hostLabel)
+	}
+
+	return fmt.Sprintf("%s://%s:%s", scheme, hostLabel, port)
 }

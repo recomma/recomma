@@ -18,6 +18,7 @@ type AppConfig struct {
 	OrderWorkers   int
 	ResyncInterval time.Duration
 	HTTPListen     string
+	PublicOrigin   string
 	LogLevel       string
 	LogFormatJSON  bool
 }
@@ -43,7 +44,8 @@ func NewConfigFlagSet(cfg *AppConfig) *pflag.FlagSet {
 	fs.IntVar(&cfg.DealWorkers, "deal-workers", cfg.DealWorkers, "Number of deal-processing workers (env: RECOMMA_DEAL_WORKERS)")
 	fs.IntVar(&cfg.OrderWorkers, "order-workers", cfg.OrderWorkers, "Number of order emit workers (env: RECOMMA_ORDER_WORKERS)")
 	fs.DurationVar(&cfg.ResyncInterval, "resync-interval", cfg.ResyncInterval, "Interval between deal resyncs (env: RECOMMA_RESYNC_INTERVAL)")
-	fs.StringVar(&cfg.HTTPListen, "http-listen", cfg.HTTPListen, "HTTP listen address, needs to be a FQDN (e.g. foo-123.bar.com) (env: RECOMMA_HTTP_LISTEN)")
+	fs.StringVar(&cfg.HTTPListen, "http-listen", cfg.HTTPListen, "HTTP listen address (env: RECOMMA_HTTP_LISTEN)")
+	fs.StringVar(&cfg.PublicOrigin, "public-origin", cfg.PublicOrigin, "Public origin served to clients (env: RECOMMA_PUBLIC_ORIGIN)")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "Log level (env: RECOMMA_LOG_LEVEL)")
 	fs.BoolVar(&cfg.LogFormatJSON, "log-json", cfg.LogFormatJSON, "Emit logs as JSON (env: RECOMMA_LOG_JSON)")
 
@@ -99,6 +101,7 @@ func ApplyEnvDefaults(fs *pflag.FlagSet, cfg *AppConfig) error {
 	setInt("order-workers", "RECOMMA_ORDER_WORKERS", &cfg.OrderWorkers)
 	setDuration("resync-interval", "RECOMMA_RESYNC_INTERVAL", &cfg.ResyncInterval)
 	setString("http-listen", "RECOMMA_HTTP_LISTEN", &cfg.HTTPListen)
+	setString("public-origin", "RECOMMA_PUBLIC_ORIGIN", &cfg.PublicOrigin)
 	setString("log-level", "RECOMMA_LOG_LEVEL", &cfg.LogLevel)
 	setBool("log-json", "RECOMMA_LOG_JSON", &cfg.LogFormatJSON)
 

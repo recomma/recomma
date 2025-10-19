@@ -1,0 +1,222 @@
+src/components/Login.tsx(43,23): error TS17008: JSX element 'T' has no corresponding closing tag.
+src/components/Login.tsx(48,7): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(49,3): error TS1109: Expression expected.
+src/components/Login.tsx(50,35): error TS1005: '}' expected.
+src/components/Login.tsx(51,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(53,1): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(55,37): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(56,3): error TS1109: Expression expected.
+src/components/Login.tsx(58,35): error TS1003: Identifier expected.
+src/components/Login.tsx(59,71): error TS1005: '}' expected.
+src/components/Login.tsx(60,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(63,5): error TS1109: Expression expected.
+src/components/Login.tsx(64,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(66,1): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(68,33): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(69,3): error TS1109: Expression expected.
+src/components/Login.tsx(71,5): error TS1109: Expression expected.
+src/components/Login.tsx(72,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(75,37): error TS1003: Identifier expected.
+src/components/Login.tsx(76,37): error TS1005: '}' expected.
+src/components/Login.tsx(77,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(79,1): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(81,48): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(82,3): error TS1109: Expression expected.
+src/components/Login.tsx(85,1): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(87,52): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(88,3): error TS1109: Expression expected.
+src/components/Login.tsx(90,1): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(92,81): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(93,3): error TS1109: Expression expected.
+src/components/Login.tsx(94,5): error TS1109: Expression expected.
+src/components/Login.tsx(95,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(97,5): error TS1109: Expression expected.
+src/components/Login.tsx(98,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(101,1): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(103,90): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(104,3): error TS1109: Expression expected.
+src/components/Login.tsx(104,45): error TS1109: Expression expected.
+src/components/Login.tsx(106,5): error TS1109: Expression expected.
+src/components/Login.tsx(107,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(109,47): error TS1109: Expression expected.
+src/components/Login.tsx(111,5): error TS1109: Expression expected.
+src/components/Login.tsx(112,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(114,61): error TS1109: Expression expected.
+src/components/Login.tsx(118,14): error TS1005: '}' expected.
+src/components/Login.tsx(119,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(133,42): error TS1005: '}' expected.
+src/components/Login.tsx(134,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(137,1): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(140,5): error TS1005: '}' expected.
+src/components/Login.tsx(147,57): error TS1003: Identifier expected.
+src/components/Login.tsx(147,86): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(148,1): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(152,12): error TS1003: Identifier expected.
+src/components/Login.tsx(152,14): error TS1005: '...' expected.
+src/components/Login.tsx(152,26): error TS1005: '}' expected.
+src/components/Login.tsx(152,81): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(152,82): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(152,85): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(153,3): error TS1109: Expression expected.
+src/components/Login.tsx(154,11): error TS1005: '}' expected.
+src/components/Login.tsx(156,21): error TS1005: '}' expected.
+src/components/Login.tsx(157,5): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(160,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(163,132): error TS1005: '}' expected.
+src/components/Login.tsx(164,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(167,5): error TS1109: Expression expected.
+src/components/Login.tsx(169,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(171,59): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(172,109): error TS1005: '}' expected.
+src/components/Login.tsx(173,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(177,102): error TS1005: '}' expected.
+src/components/Login.tsx(178,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(181,104): error TS1005: '}' expected.
+src/components/Login.tsx(182,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(184,61): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(185,5): error TS1109: Expression expected.
+src/components/Login.tsx(186,7): error TS1109: Expression expected.
+src/components/Login.tsx(187,5): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(188,7): error TS1109: Expression expected.
+src/components/Login.tsx(190,5): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(191,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(194,17): error TS1005: '}' expected.
+src/components/Login.tsx(196,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(197,1): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(199,88): error TS17008: JSX element 'AssertionData' has no corresponding closing tag.
+src/components/Login.tsx(199,104): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(200,3): error TS1109: Expression expected.
+src/components/Login.tsx(200,82): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(201,5): error TS1109: Expression expected.
+src/components/Login.tsx(202,101): error TS1005: '}' expected.
+src/components/Login.tsx(203,5): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(205,126): error TS1005: '}' expected.
+src/components/Login.tsx(206,5): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(209,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(212,67): error TS1005: '}' expected.
+src/components/Login.tsx(213,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(249,7): error TS1005: '}' expected.
+src/components/Login.tsx(257,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(258,1): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(260,77): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(261,3): error TS1109: Expression expected.
+src/components/Login.tsx(262,18): error TS1005: '}' expected.
+src/components/Login.tsx(264,9): error TS1005: '}' expected.
+src/components/Login.tsx(269,26): error TS1005: '}' expected.
+src/components/Login.tsx(273,7): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(274,5): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(275,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(278,11): error TS1005: '}' expected.
+src/components/Login.tsx(280,21): error TS1005: '}' expected.
+src/components/Login.tsx(281,5): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(284,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(287,115): error TS1005: '}' expected.
+src/components/Login.tsx(288,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(291,5): error TS1109: Expression expected.
+src/components/Login.tsx(293,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(294,1): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(296,49): error TS17008: JSX element 'VaultEncryptedPayload' has no corresponding closing tag.
+src/components/Login.tsx(296,73): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(297,3): error TS1109: Expression expected.
+src/components/Login.tsx(298,11): error TS1005: '}' expected.
+src/components/Login.tsx(300,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(303,126): error TS1005: '}' expected.
+src/components/Login.tsx(304,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(307,128): error TS1005: '}' expected.
+src/components/Login.tsx(308,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(311,132): error TS1005: '}' expected.
+src/components/Login.tsx(312,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(315,5): error TS1109: Expression expected.
+src/components/Login.tsx(317,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(321,61): error TS1005: '}' expected.
+src/components/Login.tsx(322,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(323,5): error TS1109: Expression expected.
+src/components/Login.tsx(327,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(330,1): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(332,65): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(333,3): error TS1109: Expression expected.
+src/components/Login.tsx(333,54): error TS1005: '}' expected.
+src/components/Login.tsx(333,63): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(336,11): error TS1005: '}' expected.
+src/components/Login.tsx(338,21): error TS1005: '}' expected.
+src/components/Login.tsx(339,5): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(342,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(345,80): error TS1005: '}' expected.
+src/components/Login.tsx(346,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(349,116): error TS1005: '}' expected.
+src/components/Login.tsx(350,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(353,115): error TS1005: '}' expected.
+src/components/Login.tsx(354,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(357,5): error TS1109: Expression expected.
+src/components/Login.tsx(359,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(360,1): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(364,12): error TS17008: JSX element 'VaultSecretsBundleExtended' has no corresponding closing tag.
+src/components/Login.tsx(364,41): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(365,3): error TS1109: Expression expected.
+src/components/Login.tsx(366,5): error TS1109: Expression expected.
+src/components/Login.tsx(367,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(371,5): error TS1109: Expression expected.
+src/components/Login.tsx(372,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(379,71): error TS1003: Identifier expected.
+src/components/Login.tsx(379,80): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(382,5): error TS1109: Expression expected.
+src/components/Login.tsx(383,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(389,11): error TS1005: '}' expected.
+src/components/Login.tsx(389,23): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(394,45): error TS1005: '}' expected.
+src/components/Login.tsx(394,68): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(396,50): error TS1005: '}' expected.
+src/components/Login.tsx(397,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(410,5): error TS1109: Expression expected.
+src/components/Login.tsx(411,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(414,1): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(416,71): error TS17008: JSX element 'VaultSecretsBundleExtended' has no corresponding closing tag.
+src/components/Login.tsx(416,100): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(417,3): error TS1109: Expression expected.
+src/components/Login.tsx(418,5): error TS1109: Expression expected.
+src/components/Login.tsx(419,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(420,5): error TS1109: Expression expected.
+src/components/Login.tsx(422,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(423,1): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(426,3): error TS1109: Expression expected.
+src/components/Login.tsx(428,52): error TS17008: JSX element 'ProgressStep' has no corresponding closing tag.
+src/components/Login.tsx(430,45): error TS1003: Identifier expected.
+src/components/Login.tsx(430,51): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(432,40): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(433,5): error TS1109: Expression expected.
+src/components/Login.tsx(434,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(436,27): error TS17008: JSX element 'T' has no corresponding closing tag.
+src/components/Login.tsx(439,15): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(439,25): error TS17008: JSX element 'T' has no corresponding closing tag.
+src/components/Login.tsx(440,14): error TS17008: JSX element 'T' has no corresponding closing tag.
+src/components/Login.tsx(441,27): error TS1005: '}' expected.
+src/components/Login.tsx(444,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(446,44): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(447,40): error TS1005: '}' expected.
+src/components/Login.tsx(452,28): error TS1005: '}' expected.
+src/components/Login.tsx(454,5): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(457,78): error TS1005: '}' expected.
+src/components/Login.tsx(459,5): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(467,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(469,48): error TS17008: JSX element 'HTMLFormElement' has no corresponding closing tag.
+src/components/Login.tsx(469,67): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(470,27): error TS1005: '}' expected.
+src/components/Login.tsx(474,83): error TS1005: '}' expected.
+src/components/Login.tsx(476,5): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(480,67): error TS1005: '}' expected.
+src/components/Login.tsx(482,5): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(487,7): error TS1109: Expression expected.
+src/components/Login.tsx(490,13): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(496,13): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(502,13): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(508,13): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(514,13): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(520,13): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/components/Login.tsx(526,5): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(527,28): error TS1005: '}' expected.
+src/components/Login.tsx(528,5): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(529,29): error TS1005: '}' expected.
+src/components/Login.tsx(530,5): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(531,3): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(597,1): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/components/Login.tsx(600,1): error TS1005: '</' expected.

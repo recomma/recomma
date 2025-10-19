@@ -67,3 +67,29 @@ type ThreecommasDeal struct {
 	Payload       []byte `json:"payload"`
 	InsertedAtUtc int64  `json:"inserted_at_utc"`
 }
+
+type VaultPayload struct {
+	ID             int64           `json:"id"`
+	UserID         int64           `json:"user_id"`
+	Version        string          `json:"version"`
+	Ciphertext     []byte          `json:"ciphertext"`
+	Nonce          []byte          `json:"nonce"`
+	AssociatedData []byte          `json:"associated_data"`
+	PrfParams      json.RawMessage `json:"prf_params"`
+	UpdatedAtUtc   int64           `json:"updated_at_utc"`
+}
+
+type VaultUser struct {
+	ID           int64  `json:"id"`
+	Username     string `json:"username"`
+	CreatedAtUtc int64  `json:"created_at_utc"`
+}
+
+type WebauthnCredential struct {
+	ID           int64           `json:"id"`
+	UserID       int64           `json:"user_id"`
+	CredentialID []byte          `json:"credential_id"`
+	Credential   json.RawMessage `json:"credential"`
+	CreatedAtUtc int64           `json:"created_at_utc"`
+	UpdatedAtUtc int64           `json:"updated_at_utc"`
+}

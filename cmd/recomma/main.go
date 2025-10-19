@@ -18,6 +18,7 @@ import (
 
 	"k8s.io/client-go/util/workqueue"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/rs/cors"
 	"github.com/sonirico/go-hyperliquid"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/terwey/recomma/hl"
 	"github.com/terwey/recomma/hl/ws"
 	"github.com/terwey/recomma/internal/api"
+	"github.com/terwey/recomma/internal/vault"
 	rlog "github.com/terwey/recomma/log"
 	"github.com/terwey/recomma/recomma"
 	"github.com/terwey/recomma/storage"
@@ -72,29 +74,54 @@ func main() {
 	}
 	defer store.Close()
 
-	client, err := tc.New3CommasClient(cfg.ThreeCommas,
-		tc.WithRequestEditorFn(func(ctx context.Context, r *http.Request) error {
-			slog.Default().WithGroup("threecommas").Debug("sending", "method", r.Method, "url", r.URL.String())
-			return nil
-		}))
+	webAuth, err := webauthn.New(&webauthn.Config{
+		RPDisplayName: "Recomma",
+		RPID:          "localhost", // TODO: we actually request the FQDN from the user during setup
+		RPOrigins:     buildAllowedOrigins(cfg.HTTPListen),
+	})
 	if err != nil {
-		fatal("3commas client init failed", err)
+		fatal("webauth init failed", err)
 	}
 
-	exchange, err := hl.NewExchange(appCtx, cfg.Hyperliquid)
+	initialVaultState := vault.StateSetupRequired
+	var controllerOpts []vault.ControllerOption
+
+	existingUser, err := store.GetVaultUser(appCtx)
 	if err != nil {
-		fatal("Could not create Hyperliquid Exchange", err)
+		fatal("load vault user", err)
+	}
+	if existingUser != nil {
+		controllerOpts = append(controllerOpts, vault.WithInitialUser(existingUser))
+
+		payload, err := store.GetVaultPayloadForUser(appCtx, existingUser.ID)
+		if err != nil {
+			fatal("load vault payload", err)
+		}
+		if payload != nil {
+			initialVaultState = vault.StateSealed
+			sealedAt := payload.UpdatedAt
+			controllerOpts = append(controllerOpts, vault.WithInitialTimestamps(&sealedAt, nil, nil))
+		}
 	}
 
-	ws, err := ws.New(appCtx, store, cfg.Hyperliquid.Wallet, cfg.Hyperliquid.BaseURL)
+	vaultController := vault.NewController(initialVaultState, controllerOpts...)
+	webAuthApi, err := api.NewWebAuthnService(api.WebAuthnServiceConfig{
+		WebAuthn: webAuth,
+		Store:    store,
+		Logger:   logger,
+	})
 	if err != nil {
-		fatal("Could not create Hyperliquid websocket conn", err)
+		fatal("webauth api init failed", err)
 	}
-	defer ws.Close()
 
-	apiHandler := api.NewHandler(store, nil /* StreamSource */, logger)
+	apiHandler := api.NewHandler(store, nil, /* StreamSource */
+		api.WithLogger(logger),
+		api.WithWebAuthnService(webAuthApi),
+		api.WithVaultController(vaultController))
 
-	strictServer := api.NewStrictHandler(apiHandler, nil)
+	strictServer := api.NewStrictHandler(apiHandler, []api.StrictMiddlewareFunc{
+		api.RequestContextMiddleware(),
+	})
 
 	corsMiddleware := cors.New(cors.Options{
 		AllowedOrigins: buildAllowedOrigins(cfg.HTTPListen),
@@ -115,13 +142,17 @@ func main() {
 	})
 
 	apiHandlerWithCORS := corsMiddleware.Handler(apiMux)
-	webHandler := webui.Handler()
+	tlsEnabled := false
+	webHandler := webui.Handler(cfg.HTTPListen, tlsEnabled)
 
 	rootMux := http.NewServeMux()
 	rootMux.Handle("/api/", apiHandlerWithCORS)
 	rootMux.Handle("/api", apiHandlerWithCORS)
 	rootMux.Handle("/sse/", apiHandlerWithCORS)
 	rootMux.Handle("/sse", apiHandlerWithCORS)
+	rootMux.Handle("/webauthn/", apiHandlerWithCORS)
+	rootMux.Handle("/vault/", apiHandlerWithCORS)
+	rootMux.Handle("/vault", apiHandlerWithCORS)
 	rootMux.Handle("/", webHandler)
 
 	apiSrv := &http.Server{
@@ -137,7 +168,44 @@ func main() {
 		}
 	}()
 
-	logger.Info("Service ready", slog.String("wallet", cfg.Hyperliquid.Wallet), slog.String("baseurl", cfg.Hyperliquid.BaseURL))
+	logger.Debug("Waiting for vault to be unsealed")
+	err = vaultController.WaitUntilUnsealed(appCtx)
+	if err != nil {
+		logger.Warn("vaultController WaitUntilUnsealed returned an error", slog.String("error", err.Error()))
+		os.Exit(0)
+	}
+
+	// we can now access the secrets
+	secrets := vaultController.Secrets()
+
+	client, err := tc.New3CommasClient(tc.ClientConfig{
+		APIKey:     secrets.Secrets.THREECOMMASAPIKEY,
+		PrivatePEM: []byte(secrets.Secrets.THREECOMMASPRIVATEKEY),
+	},
+		tc.WithRequestEditorFn(func(ctx context.Context, r *http.Request) error {
+			slog.Default().WithGroup("threecommas").Debug("sending", "method", r.Method, "url", r.URL.String())
+			return nil
+		}))
+	if err != nil {
+		fatal("3commas client init failed", err)
+	}
+
+	exchange, err := hl.NewExchange(appCtx, hl.ClientConfig{
+		BaseURL: secrets.Secrets.HYPERLIQUIDURL,
+		Wallet:  secrets.Secrets.HYPERLIQUIDWALLET,
+		Key:     secrets.Secrets.HYPERLIQUIDPRIVATEKEY,
+	})
+	if err != nil {
+		fatal("Could not create Hyperliquid Exchange", err)
+	}
+
+	ws, err := ws.New(appCtx, store, secrets.Secrets.HYPERLIQUIDWALLET, secrets.Secrets.HYPERLIQUIDURL)
+	if err != nil {
+		fatal("Could not create Hyperliquid websocket conn", err)
+	}
+	defer ws.Close()
+
+	logger.Info("Service ready", slog.String("baseurl", secrets.Secrets.HYPERLIQUIDURL))
 
 	// Queue + workers
 	// Q creation (typed)

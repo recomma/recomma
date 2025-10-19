@@ -1,4 +1,7 @@
 .env
+.envFile
 *.bak
 *.sqlite*
 .DS_Store
+node_modules
+__debug_bin**

@@ -18,11 +18,22 @@ import (
 	externalRef0 "github.com/terwey/3commas-sdk-go/threecommas"
 )
 
+const (
+	SessionCookieScopes = "SessionCookie.Scopes"
+)
+
 // Defines values for OrderLogEntryType.
 const (
 	HyperliquidStatus     OrderLogEntryType = "hyperliquid_status"
 	HyperliquidSubmission OrderLogEntryType = "hyperliquid_submission"
 	ThreeCommasEvent      OrderLogEntryType = "three_commas_event"
+)
+
+// Defines values for VaultState.
+const (
+	Sealed        VaultState = "sealed"
+	SetupRequired VaultState = "setup_required"
+	Unsealed      VaultState = "unsealed"
 )
 
 // BotRecord defines model for BotRecord.
@@ -78,6 +89,149 @@ type OrderRecord struct {
 	LogEntries  *[]OrderLogEntry `json:"log_entries"`
 	MetadataHex string           `json:"metadata_hex"`
 	ObservedAt  time.Time        `json:"observed_at"`
+}
+
+// VaultEncryptedPayload defines model for VaultEncryptedPayload.
+type VaultEncryptedPayload struct {
+	// AssociatedData Optional associated data supplied during encryption.
+	AssociatedData *[]byte `json:"associated_data"`
+
+	// Ciphertext Base64-encoded ciphertext produced by the browser. When decrypted it yields a `VaultSecretsBundle`.
+	Ciphertext []byte `json:"ciphertext"`
+
+	// Nonce Base64-encoded nonce/IV used during encryption.
+	Nonce []byte `json:"nonce"`
+
+	// PrfParams WebAuthn PRF parameters needed for future decryptions.
+	PrfParams *map[string]interface{} `json:"prf_params"`
+
+	// Version Payload version label used to interpret the ciphertext.
+	Version string `json:"version"`
+}
+
+// VaultSecretsBundle JSON structure encrypted during setup and supplied in plaintext when unsealing the vault.
+type VaultSecretsBundle struct {
+	NotSecret struct {
+		// Username Logical username mirrored inside the plaintext payload.
+		Username string `json:"username"`
+	} `json:"not_secret"`
+	Secrets struct {
+		// HYPERLIQUIDPRIVATEKEY Hyperliquid private key corresponding to the wallet.
+		HYPERLIQUIDPRIVATEKEY string `json:"HYPERLIQUID_PRIVATE_KEY"`
+
+		// HYPERLIQUIDURL Hyperliquid URL, mainnet https://api.hyperliquid.xyz testnet https://api.hyperliquid-testnet.xyz or custom
+		HYPERLIQUIDURL string `json:"HYPERLIQUID_URL"`
+
+		// HYPERLIQUIDWALLET Hyperliquid wallet address.
+		HYPERLIQUIDWALLET string `json:"HYPERLIQUID_WALLET"`
+
+		// THREECOMMASAPIKEY Public API key for the 3Commas integration.
+		THREECOMMASAPIKEY string `json:"THREECOMMAS_API_KEY"`
+
+		// THREECOMMASPRIVATEKEY Private API key for the 3Commas integration.
+		THREECOMMASPRIVATEKEY string `json:"THREECOMMAS_PRIVATE_KEY"`
+	} `json:"secrets"`
+}
+
+// VaultSetupRequest defines model for VaultSetupRequest.
+type VaultSetupRequest struct {
+	Payload VaultEncryptedPayload `json:"payload"`
+
+	// Username Logical username for the vault owner.
+	Username string `json:"username"`
+}
+
+// VaultState defines model for VaultState.
+type VaultState string
+
+// VaultStatus defines model for VaultStatus.
+type VaultStatus struct {
+	// SealedAt Last time the vault entered the sealed state.
+	SealedAt *time.Time `json:"sealed_at"`
+
+	// SessionExpiresAt Session expiry for the current user when unsealed.
+	SessionExpiresAt *time.Time `json:"session_expires_at"`
+	State            VaultState `json:"state"`
+
+	// UnsealedAt Last time the vault was unsealed.
+	UnsealedAt *time.Time `json:"unsealed_at"`
+	User       *VaultUser `json:"user,omitempty"`
+}
+
+// VaultUnsealRequest defines model for VaultUnsealRequest.
+type VaultUnsealRequest struct {
+	// Payload JSON structure encrypted during setup and supplied in plaintext when unsealing the vault.
+	Payload VaultSecretsBundle `json:"payload"`
+
+	// RememberSessionSeconds Optional session TTL hint; server may clamp or ignore.
+	RememberSessionSeconds *int64 `json:"remember_session_seconds,omitempty"`
+}
+
+// VaultUser defines model for VaultUser.
+type VaultUser struct {
+	// CreatedAt Timestamp the user record was created, when available.
+	CreatedAt *time.Time `json:"created_at"`
+	Username  string     `json:"username"`
+}
+
+// WebAuthnLoginBeginRequest defines model for WebAuthnLoginBeginRequest.
+type WebAuthnLoginBeginRequest struct {
+	// Username Logical username initiating the login ceremony.
+	Username string `json:"username"`
+}
+
+// WebAuthnLoginBeginResponse defines model for WebAuthnLoginBeginResponse.
+type WebAuthnLoginBeginResponse struct {
+	// AssertionOptions PublicKeyCredentialRequestOptions for `navigator.credentials.get`.
+	AssertionOptions map[string]interface{} `json:"assertion_options"`
+
+	// SessionToken Opaque token that must be supplied when completing login.
+	SessionToken string `json:"session_token"`
+}
+
+// WebAuthnLoginFinishRequest defines model for WebAuthnLoginFinishRequest.
+type WebAuthnLoginFinishRequest struct {
+	// ClientResponse Parsed response from `navigator.credentials.get`.
+	ClientResponse map[string]interface{} `json:"client_response"`
+
+	// SessionToken Token issued by `/webauthn/login/begin`.
+	SessionToken string `json:"session_token"`
+}
+
+// WebAuthnLoginFinishResponse defines model for WebAuthnLoginFinishResponse.
+type WebAuthnLoginFinishResponse struct {
+	// Status Textual status of the login ceremony (for example `authenticated`).
+	Status string `json:"status"`
+}
+
+// WebAuthnRegistrationBeginRequest defines model for WebAuthnRegistrationBeginRequest.
+type WebAuthnRegistrationBeginRequest struct {
+	// Username Logical username initiating registration.
+	Username string `json:"username"`
+}
+
+// WebAuthnRegistrationBeginResponse defines model for WebAuthnRegistrationBeginResponse.
+type WebAuthnRegistrationBeginResponse struct {
+	// CreationOptions PublicKeyCredentialCreationOptions for `navigator.credentials.create`.
+	CreationOptions map[string]interface{} `json:"creation_options"`
+
+	// SessionToken Opaque token that must be supplied when completing registration.
+	SessionToken string `json:"session_token"`
+}
+
+// WebAuthnRegistrationFinishRequest defines model for WebAuthnRegistrationFinishRequest.
+type WebAuthnRegistrationFinishRequest struct {
+	// ClientResponse Parsed response from `navigator.credentials.create`.
+	ClientResponse map[string]interface{} `json:"client_response"`
+
+	// SessionToken Token issued by `/webauthn/registration/begin`.
+	SessionToken string `json:"session_token"`
+}
+
+// WebAuthnRegistrationFinishResponse defines model for WebAuthnRegistrationFinishResponse.
+type WebAuthnRegistrationFinishResponse struct {
+	// Status Textual status of the registration ceremony (for example `registered`).
+	Status string `json:"status"`
 }
 
 // ListBotsParams defines parameters for ListBots.
@@ -167,6 +321,24 @@ type StreamOrdersParams struct {
 	ObservedFrom *time.Time `form:"observed_from,omitempty" json:"observed_from,omitempty"`
 }
 
+// SetupVaultJSONRequestBody defines body for SetupVault for application/json ContentType.
+type SetupVaultJSONRequestBody = VaultSetupRequest
+
+// UnsealVaultJSONRequestBody defines body for UnsealVault for application/json ContentType.
+type UnsealVaultJSONRequestBody = VaultUnsealRequest
+
+// BeginWebauthnLoginJSONRequestBody defines body for BeginWebauthnLogin for application/json ContentType.
+type BeginWebauthnLoginJSONRequestBody = WebAuthnLoginBeginRequest
+
+// FinishWebauthnLoginJSONRequestBody defines body for FinishWebauthnLogin for application/json ContentType.
+type FinishWebauthnLoginJSONRequestBody = WebAuthnLoginFinishRequest
+
+// BeginWebauthnRegistrationJSONRequestBody defines body for BeginWebauthnRegistration for application/json ContentType.
+type BeginWebauthnRegistrationJSONRequestBody = WebAuthnRegistrationBeginRequest
+
+// FinishWebauthnRegistrationJSONRequestBody defines body for FinishWebauthnRegistration for application/json ContentType.
+type FinishWebauthnRegistrationJSONRequestBody = WebAuthnRegistrationFinishRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// List cached 3Commas bots
@@ -181,6 +353,33 @@ type ServerInterface interface {
 	// Stream live changes to acted-on orders
 	// (GET /sse/orders)
 	StreamOrders(w http.ResponseWriter, r *http.Request, params StreamOrdersParams)
+	// Retrieve encrypted vault payload
+	// (GET /vault/payload)
+	GetVaultPayload(w http.ResponseWriter, r *http.Request)
+	// Reseal the vault and clear in-memory secrets
+	// (POST /vault/seal)
+	SealVault(w http.ResponseWriter, r *http.Request)
+	// Store the encrypted vault payload
+	// (POST /vault/setup)
+	SetupVault(w http.ResponseWriter, r *http.Request)
+	// Inspect vault state
+	// (GET /vault/status)
+	GetVaultStatus(w http.ResponseWriter, r *http.Request)
+	// Provide decrypted secrets to unlock the vault
+	// (POST /vault/unseal)
+	UnsealVault(w http.ResponseWriter, r *http.Request)
+	// Begin WebAuthn assertion
+	// (POST /webauthn/login/begin)
+	BeginWebauthnLogin(w http.ResponseWriter, r *http.Request)
+	// Complete WebAuthn assertion
+	// (POST /webauthn/login/finish)
+	FinishWebauthnLogin(w http.ResponseWriter, r *http.Request)
+	// Begin WebAuthn registration
+	// (POST /webauthn/registration/begin)
+	BeginWebauthnRegistration(w http.ResponseWriter, r *http.Request)
+	// Complete WebAuthn registration
+	// (POST /webauthn/registration/finish)
+	FinishWebauthnRegistration(w http.ResponseWriter, r *http.Request)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -196,6 +395,12 @@ type MiddlewareFunc func(http.Handler) http.Handler
 func (siw *ServerInterfaceWrapper) ListBots(w http.ResponseWriter, r *http.Request) {
 
 	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListBotsParams
@@ -255,6 +460,12 @@ func (siw *ServerInterfaceWrapper) ListBots(w http.ResponseWriter, r *http.Reque
 func (siw *ServerInterfaceWrapper) ListDeals(w http.ResponseWriter, r *http.Request) {
 
 	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListDealsParams
@@ -322,6 +533,12 @@ func (siw *ServerInterfaceWrapper) ListDeals(w http.ResponseWriter, r *http.Requ
 func (siw *ServerInterfaceWrapper) ListOrders(w http.ResponseWriter, r *http.Request) {
 
 	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListOrdersParams
@@ -414,6 +631,12 @@ func (siw *ServerInterfaceWrapper) StreamOrders(w http.ResponseWriter, r *http.R
 
 	var err error
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	// Parameter object where we will unmarshal all parameters from the context
 	var params StreamOrdersParams
 
@@ -459,6 +682,144 @@ func (siw *ServerInterfaceWrapper) StreamOrders(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.StreamOrders(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetVaultPayload operation middleware
+func (siw *ServerInterfaceWrapper) GetVaultPayload(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetVaultPayload(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SealVault operation middleware
+func (siw *ServerInterfaceWrapper) SealVault(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SealVault(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetupVault operation middleware
+func (siw *ServerInterfaceWrapper) SetupVault(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetupVault(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetVaultStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetVaultStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetVaultStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UnsealVault operation middleware
+func (siw *ServerInterfaceWrapper) UnsealVault(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UnsealVault(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// BeginWebauthnLogin operation middleware
+func (siw *ServerInterfaceWrapper) BeginWebauthnLogin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.BeginWebauthnLogin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// FinishWebauthnLogin operation middleware
+func (siw *ServerInterfaceWrapper) FinishWebauthnLogin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.FinishWebauthnLogin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// BeginWebauthnRegistration operation middleware
+func (siw *ServerInterfaceWrapper) BeginWebauthnRegistration(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.BeginWebauthnRegistration(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// FinishWebauthnRegistration operation middleware
+func (siw *ServerInterfaceWrapper) FinishWebauthnRegistration(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.FinishWebauthnRegistration(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -592,6 +953,15 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/api/deals", wrapper.ListDeals)
 	m.HandleFunc("GET "+options.BaseURL+"/api/orders", wrapper.ListOrders)
 	m.HandleFunc("GET "+options.BaseURL+"/sse/orders", wrapper.StreamOrders)
+	m.HandleFunc("GET "+options.BaseURL+"/vault/payload", wrapper.GetVaultPayload)
+	m.HandleFunc("POST "+options.BaseURL+"/vault/seal", wrapper.SealVault)
+	m.HandleFunc("POST "+options.BaseURL+"/vault/setup", wrapper.SetupVault)
+	m.HandleFunc("GET "+options.BaseURL+"/vault/status", wrapper.GetVaultStatus)
+	m.HandleFunc("POST "+options.BaseURL+"/vault/unseal", wrapper.UnsealVault)
+	m.HandleFunc("POST "+options.BaseURL+"/webauthn/login/begin", wrapper.BeginWebauthnLogin)
+	m.HandleFunc("POST "+options.BaseURL+"/webauthn/login/finish", wrapper.FinishWebauthnLogin)
+	m.HandleFunc("POST "+options.BaseURL+"/webauthn/registration/begin", wrapper.BeginWebauthnRegistration)
+	m.HandleFunc("POST "+options.BaseURL+"/webauthn/registration/finish", wrapper.FinishWebauthnRegistration)
 
 	return m
 }
@@ -747,6 +1117,404 @@ func (response StreamOrders500Response) VisitStreamOrdersResponse(w http.Respons
 	return nil
 }
 
+type GetVaultPayloadRequestObject struct {
+}
+
+type GetVaultPayloadResponseObject interface {
+	VisitGetVaultPayloadResponse(w http.ResponseWriter) error
+}
+
+type GetVaultPayload200JSONResponse VaultEncryptedPayload
+
+func (response GetVaultPayload200JSONResponse) VisitGetVaultPayloadResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetVaultPayload401Response struct {
+}
+
+func (response GetVaultPayload401Response) VisitGetVaultPayloadResponse(w http.ResponseWriter) error {
+	w.WriteHeader(401)
+	return nil
+}
+
+type GetVaultPayload404Response struct {
+}
+
+func (response GetVaultPayload404Response) VisitGetVaultPayloadResponse(w http.ResponseWriter) error {
+	w.WriteHeader(404)
+	return nil
+}
+
+type GetVaultPayload423Response struct {
+}
+
+func (response GetVaultPayload423Response) VisitGetVaultPayloadResponse(w http.ResponseWriter) error {
+	w.WriteHeader(423)
+	return nil
+}
+
+type GetVaultPayload500Response struct {
+}
+
+func (response GetVaultPayload500Response) VisitGetVaultPayloadResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type SealVaultRequestObject struct {
+}
+
+type SealVaultResponseObject interface {
+	VisitSealVaultResponse(w http.ResponseWriter) error
+}
+
+type SealVault200JSONResponse VaultStatus
+
+func (response SealVault200JSONResponse) VisitSealVaultResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type SealVault401Response struct {
+}
+
+func (response SealVault401Response) VisitSealVaultResponse(w http.ResponseWriter) error {
+	w.WriteHeader(401)
+	return nil
+}
+
+type SealVault500Response struct {
+}
+
+func (response SealVault500Response) VisitSealVaultResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type SetupVaultRequestObject struct {
+	Body *SetupVaultJSONRequestBody
+}
+
+type SetupVaultResponseObject interface {
+	VisitSetupVaultResponse(w http.ResponseWriter) error
+}
+
+type SetupVault201JSONResponse VaultStatus
+
+func (response SetupVault201JSONResponse) VisitSetupVaultResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type SetupVault400Response struct {
+}
+
+func (response SetupVault400Response) VisitSetupVaultResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type SetupVault409Response struct {
+}
+
+func (response SetupVault409Response) VisitSetupVaultResponse(w http.ResponseWriter) error {
+	w.WriteHeader(409)
+	return nil
+}
+
+type SetupVault500Response struct {
+}
+
+func (response SetupVault500Response) VisitSetupVaultResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type GetVaultStatusRequestObject struct {
+}
+
+type GetVaultStatusResponseObject interface {
+	VisitGetVaultStatusResponse(w http.ResponseWriter) error
+}
+
+type GetVaultStatus200JSONResponse VaultStatus
+
+func (response GetVaultStatus200JSONResponse) VisitGetVaultStatusResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetVaultStatus500Response struct {
+}
+
+func (response GetVaultStatus500Response) VisitGetVaultStatusResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type UnsealVaultRequestObject struct {
+	Body *UnsealVaultJSONRequestBody
+}
+
+type UnsealVaultResponseObject interface {
+	VisitUnsealVaultResponse(w http.ResponseWriter) error
+}
+
+type UnsealVault200ResponseHeaders struct {
+	SetCookie string
+}
+
+type UnsealVault200JSONResponse struct {
+	Body    VaultStatus
+	Headers UnsealVault200ResponseHeaders
+}
+
+func (response UnsealVault200JSONResponse) VisitUnsealVaultResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Set-Cookie", fmt.Sprint(response.Headers.SetCookie))
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type UnsealVault400Response struct {
+}
+
+func (response UnsealVault400Response) VisitUnsealVaultResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type UnsealVault409Response struct {
+}
+
+func (response UnsealVault409Response) VisitUnsealVaultResponse(w http.ResponseWriter) error {
+	w.WriteHeader(409)
+	return nil
+}
+
+type UnsealVault423Response struct {
+}
+
+func (response UnsealVault423Response) VisitUnsealVaultResponse(w http.ResponseWriter) error {
+	w.WriteHeader(423)
+	return nil
+}
+
+type UnsealVault500Response struct {
+}
+
+func (response UnsealVault500Response) VisitUnsealVaultResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type BeginWebauthnLoginRequestObject struct {
+	Body *BeginWebauthnLoginJSONRequestBody
+}
+
+type BeginWebauthnLoginResponseObject interface {
+	VisitBeginWebauthnLoginResponse(w http.ResponseWriter) error
+}
+
+type BeginWebauthnLogin200JSONResponse WebAuthnLoginBeginResponse
+
+func (response BeginWebauthnLogin200JSONResponse) VisitBeginWebauthnLoginResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type BeginWebauthnLogin400Response struct {
+}
+
+func (response BeginWebauthnLogin400Response) VisitBeginWebauthnLoginResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type BeginWebauthnLogin404Response struct {
+}
+
+func (response BeginWebauthnLogin404Response) VisitBeginWebauthnLoginResponse(w http.ResponseWriter) error {
+	w.WriteHeader(404)
+	return nil
+}
+
+type BeginWebauthnLogin409Response struct {
+}
+
+func (response BeginWebauthnLogin409Response) VisitBeginWebauthnLoginResponse(w http.ResponseWriter) error {
+	w.WriteHeader(409)
+	return nil
+}
+
+type BeginWebauthnLogin500Response struct {
+}
+
+func (response BeginWebauthnLogin500Response) VisitBeginWebauthnLoginResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type FinishWebauthnLoginRequestObject struct {
+	Body *FinishWebauthnLoginJSONRequestBody
+}
+
+type FinishWebauthnLoginResponseObject interface {
+	VisitFinishWebauthnLoginResponse(w http.ResponseWriter) error
+}
+
+type FinishWebauthnLogin200ResponseHeaders struct {
+	SetCookie string
+}
+
+type FinishWebauthnLogin200JSONResponse struct {
+	Body    WebAuthnLoginFinishResponse
+	Headers FinishWebauthnLogin200ResponseHeaders
+}
+
+func (response FinishWebauthnLogin200JSONResponse) VisitFinishWebauthnLoginResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Set-Cookie", fmt.Sprint(response.Headers.SetCookie))
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type FinishWebauthnLogin400Response struct {
+}
+
+func (response FinishWebauthnLogin400Response) VisitFinishWebauthnLoginResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type FinishWebauthnLogin404Response struct {
+}
+
+func (response FinishWebauthnLogin404Response) VisitFinishWebauthnLoginResponse(w http.ResponseWriter) error {
+	w.WriteHeader(404)
+	return nil
+}
+
+type FinishWebauthnLogin409Response struct {
+}
+
+func (response FinishWebauthnLogin409Response) VisitFinishWebauthnLoginResponse(w http.ResponseWriter) error {
+	w.WriteHeader(409)
+	return nil
+}
+
+type FinishWebauthnLogin500Response struct {
+}
+
+func (response FinishWebauthnLogin500Response) VisitFinishWebauthnLoginResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type BeginWebauthnRegistrationRequestObject struct {
+	Body *BeginWebauthnRegistrationJSONRequestBody
+}
+
+type BeginWebauthnRegistrationResponseObject interface {
+	VisitBeginWebauthnRegistrationResponse(w http.ResponseWriter) error
+}
+
+type BeginWebauthnRegistration200JSONResponse WebAuthnRegistrationBeginResponse
+
+func (response BeginWebauthnRegistration200JSONResponse) VisitBeginWebauthnRegistrationResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type BeginWebauthnRegistration400Response struct {
+}
+
+func (response BeginWebauthnRegistration400Response) VisitBeginWebauthnRegistrationResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type BeginWebauthnRegistration409Response struct {
+}
+
+func (response BeginWebauthnRegistration409Response) VisitBeginWebauthnRegistrationResponse(w http.ResponseWriter) error {
+	w.WriteHeader(409)
+	return nil
+}
+
+type BeginWebauthnRegistration500Response struct {
+}
+
+func (response BeginWebauthnRegistration500Response) VisitBeginWebauthnRegistrationResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type FinishWebauthnRegistrationRequestObject struct {
+	Body *FinishWebauthnRegistrationJSONRequestBody
+}
+
+type FinishWebauthnRegistrationResponseObject interface {
+	VisitFinishWebauthnRegistrationResponse(w http.ResponseWriter) error
+}
+
+type FinishWebauthnRegistration200JSONResponse WebAuthnRegistrationFinishResponse
+
+func (response FinishWebauthnRegistration200JSONResponse) VisitFinishWebauthnRegistrationResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type FinishWebauthnRegistration400Response struct {
+}
+
+func (response FinishWebauthnRegistration400Response) VisitFinishWebauthnRegistrationResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type FinishWebauthnRegistration404Response struct {
+}
+
+func (response FinishWebauthnRegistration404Response) VisitFinishWebauthnRegistrationResponse(w http.ResponseWriter) error {
+	w.WriteHeader(404)
+	return nil
+}
+
+type FinishWebauthnRegistration409Response struct {
+}
+
+func (response FinishWebauthnRegistration409Response) VisitFinishWebauthnRegistrationResponse(w http.ResponseWriter) error {
+	w.WriteHeader(409)
+	return nil
+}
+
+type FinishWebauthnRegistration500Response struct {
+}
+
+func (response FinishWebauthnRegistration500Response) VisitFinishWebauthnRegistrationResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// List cached 3Commas bots
@@ -761,6 +1529,33 @@ type StrictServerInterface interface {
 	// Stream live changes to acted-on orders
 	// (GET /sse/orders)
 	StreamOrders(ctx context.Context, request StreamOrdersRequestObject) (StreamOrdersResponseObject, error)
+	// Retrieve encrypted vault payload
+	// (GET /vault/payload)
+	GetVaultPayload(ctx context.Context, request GetVaultPayloadRequestObject) (GetVaultPayloadResponseObject, error)
+	// Reseal the vault and clear in-memory secrets
+	// (POST /vault/seal)
+	SealVault(ctx context.Context, request SealVaultRequestObject) (SealVaultResponseObject, error)
+	// Store the encrypted vault payload
+	// (POST /vault/setup)
+	SetupVault(ctx context.Context, request SetupVaultRequestObject) (SetupVaultResponseObject, error)
+	// Inspect vault state
+	// (GET /vault/status)
+	GetVaultStatus(ctx context.Context, request GetVaultStatusRequestObject) (GetVaultStatusResponseObject, error)
+	// Provide decrypted secrets to unlock the vault
+	// (POST /vault/unseal)
+	UnsealVault(ctx context.Context, request UnsealVaultRequestObject) (UnsealVaultResponseObject, error)
+	// Begin WebAuthn assertion
+	// (POST /webauthn/login/begin)
+	BeginWebauthnLogin(ctx context.Context, request BeginWebauthnLoginRequestObject) (BeginWebauthnLoginResponseObject, error)
+	// Complete WebAuthn assertion
+	// (POST /webauthn/login/finish)
+	FinishWebauthnLogin(ctx context.Context, request FinishWebauthnLoginRequestObject) (FinishWebauthnLoginResponseObject, error)
+	// Begin WebAuthn registration
+	// (POST /webauthn/registration/begin)
+	BeginWebauthnRegistration(ctx context.Context, request BeginWebauthnRegistrationRequestObject) (BeginWebauthnRegistrationResponseObject, error)
+	// Complete WebAuthn registration
+	// (POST /webauthn/registration/finish)
+	FinishWebauthnRegistration(ctx context.Context, request FinishWebauthnRegistrationRequestObject) (FinishWebauthnRegistrationResponseObject, error)
 }
 
 type StrictHandlerFunc = strictnethttp.StrictHTTPHandlerFunc
@@ -889,6 +1684,264 @@ func (sh *strictHandler) StreamOrders(w http.ResponseWriter, r *http.Request, pa
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(StreamOrdersResponseObject); ok {
 		if err := validResponse.VisitStreamOrdersResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetVaultPayload operation middleware
+func (sh *strictHandler) GetVaultPayload(w http.ResponseWriter, r *http.Request) {
+	var request GetVaultPayloadRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetVaultPayload(ctx, request.(GetVaultPayloadRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetVaultPayload")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetVaultPayloadResponseObject); ok {
+		if err := validResponse.VisitGetVaultPayloadResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SealVault operation middleware
+func (sh *strictHandler) SealVault(w http.ResponseWriter, r *http.Request) {
+	var request SealVaultRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SealVault(ctx, request.(SealVaultRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SealVault")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SealVaultResponseObject); ok {
+		if err := validResponse.VisitSealVaultResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SetupVault operation middleware
+func (sh *strictHandler) SetupVault(w http.ResponseWriter, r *http.Request) {
+	var request SetupVaultRequestObject
+
+	var body SetupVaultJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetupVault(ctx, request.(SetupVaultRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetupVault")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetupVaultResponseObject); ok {
+		if err := validResponse.VisitSetupVaultResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetVaultStatus operation middleware
+func (sh *strictHandler) GetVaultStatus(w http.ResponseWriter, r *http.Request) {
+	var request GetVaultStatusRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetVaultStatus(ctx, request.(GetVaultStatusRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetVaultStatus")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetVaultStatusResponseObject); ok {
+		if err := validResponse.VisitGetVaultStatusResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UnsealVault operation middleware
+func (sh *strictHandler) UnsealVault(w http.ResponseWriter, r *http.Request) {
+	var request UnsealVaultRequestObject
+
+	var body UnsealVaultJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UnsealVault(ctx, request.(UnsealVaultRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UnsealVault")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UnsealVaultResponseObject); ok {
+		if err := validResponse.VisitUnsealVaultResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// BeginWebauthnLogin operation middleware
+func (sh *strictHandler) BeginWebauthnLogin(w http.ResponseWriter, r *http.Request) {
+	var request BeginWebauthnLoginRequestObject
+
+	var body BeginWebauthnLoginJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.BeginWebauthnLogin(ctx, request.(BeginWebauthnLoginRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "BeginWebauthnLogin")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(BeginWebauthnLoginResponseObject); ok {
+		if err := validResponse.VisitBeginWebauthnLoginResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// FinishWebauthnLogin operation middleware
+func (sh *strictHandler) FinishWebauthnLogin(w http.ResponseWriter, r *http.Request) {
+	var request FinishWebauthnLoginRequestObject
+
+	var body FinishWebauthnLoginJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.FinishWebauthnLogin(ctx, request.(FinishWebauthnLoginRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "FinishWebauthnLogin")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(FinishWebauthnLoginResponseObject); ok {
+		if err := validResponse.VisitFinishWebauthnLoginResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// BeginWebauthnRegistration operation middleware
+func (sh *strictHandler) BeginWebauthnRegistration(w http.ResponseWriter, r *http.Request) {
+	var request BeginWebauthnRegistrationRequestObject
+
+	var body BeginWebauthnRegistrationJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.BeginWebauthnRegistration(ctx, request.(BeginWebauthnRegistrationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "BeginWebauthnRegistration")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(BeginWebauthnRegistrationResponseObject); ok {
+		if err := validResponse.VisitBeginWebauthnRegistrationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// FinishWebauthnRegistration operation middleware
+func (sh *strictHandler) FinishWebauthnRegistration(w http.ResponseWriter, r *http.Request) {
+	var request FinishWebauthnRegistrationRequestObject
+
+	var body FinishWebauthnRegistrationJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.FinishWebauthnRegistration(ctx, request.(FinishWebauthnRegistrationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "FinishWebauthnRegistration")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(FinishWebauthnRegistrationResponseObject); ok {
+		if err := validResponse.VisitFinishWebauthnRegistrationResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

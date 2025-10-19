@@ -48,6 +48,56 @@ func (q *Queries) AppendHyperliquidModify(ctx context.Context, arg AppendHyperli
 	return err
 }
 
+const deleteVaultPayloadForUser = `-- name: DeleteVaultPayloadForUser :exec
+DELETE FROM vault_payloads
+WHERE user_id = ?1
+`
+
+func (q *Queries) DeleteVaultPayloadForUser(ctx context.Context, userID int64) error {
+	_, err := q.db.ExecContext(ctx, deleteVaultPayloadForUser, userID)
+	return err
+}
+
+const deleteVaultUserByID = `-- name: DeleteVaultUserByID :exec
+DELETE FROM vault_users
+WHERE id = ?1
+`
+
+func (q *Queries) DeleteVaultUserByID(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteVaultUserByID, id)
+	return err
+}
+
+const deleteWebauthnCredentialByID = `-- name: DeleteWebauthnCredentialByID :exec
+DELETE FROM webauthn_credentials
+WHERE credential_id = ?1
+`
+
+func (q *Queries) DeleteWebauthnCredentialByID(ctx context.Context, credentialID []byte) error {
+	_, err := q.db.ExecContext(ctx, deleteWebauthnCredentialByID, credentialID)
+	return err
+}
+
+const ensureVaultUser = `-- name: EnsureVaultUser :one
+
+INSERT INTO vault_users (
+    username
+) VALUES (
+    ?1
+)
+ON CONFLICT(username) DO UPDATE SET
+    username = excluded.username
+RETURNING id, username, created_at_utc
+`
+
+// Vault management
+func (q *Queries) EnsureVaultUser(ctx context.Context, username string) (VaultUser, error) {
+	row := q.db.QueryRowContext(ctx, ensureVaultUser, username)
+	var i VaultUser
+	err := row.Scan(&i.ID, &i.Username, &i.CreatedAtUtc)
+	return i, err
+}
+
 const fetchBot = `-- name: FetchBot :one
 SELECT payload, last_synced_utc
 FROM threecommas_bots
@@ -165,6 +215,124 @@ func (q *Queries) GetTPForDeal(ctx context.Context, dealID int64) (GetTPForDealR
 		&i.BoteventID,
 		&i.CreatedAtUtc,
 		&i.Payload,
+	)
+	return i, err
+}
+
+const getVaultPayloadForUser = `-- name: GetVaultPayloadForUser :one
+SELECT
+    id,
+    user_id,
+    version,
+    ciphertext,
+    nonce,
+    associated_data,
+    CAST(prf_params AS BLOB) AS prf_params,
+    updated_at_utc
+FROM vault_payloads
+WHERE user_id = ?1
+`
+
+type GetVaultPayloadForUserRow struct {
+	ID             int64  `json:"id"`
+	UserID         int64  `json:"user_id"`
+	Version        string `json:"version"`
+	Ciphertext     []byte `json:"ciphertext"`
+	Nonce          []byte `json:"nonce"`
+	AssociatedData []byte `json:"associated_data"`
+	PrfParams      []byte `json:"prf_params"`
+	UpdatedAtUtc   int64  `json:"updated_at_utc"`
+}
+
+func (q *Queries) GetVaultPayloadForUser(ctx context.Context, userID int64) (GetVaultPayloadForUserRow, error) {
+	row := q.db.QueryRowContext(ctx, getVaultPayloadForUser, userID)
+	var i GetVaultPayloadForUserRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Version,
+		&i.Ciphertext,
+		&i.Nonce,
+		&i.AssociatedData,
+		&i.PrfParams,
+		&i.UpdatedAtUtc,
+	)
+	return i, err
+}
+
+const getVaultUser = `-- name: GetVaultUser :one
+SELECT id, username, created_at_utc
+FROM vault_users
+ORDER BY id ASC
+LIMIT 1
+`
+
+func (q *Queries) GetVaultUser(ctx context.Context) (VaultUser, error) {
+	row := q.db.QueryRowContext(ctx, getVaultUser)
+	var i VaultUser
+	err := row.Scan(&i.ID, &i.Username, &i.CreatedAtUtc)
+	return i, err
+}
+
+const getVaultUserByID = `-- name: GetVaultUserByID :one
+SELECT id, username, created_at_utc
+FROM vault_users
+WHERE id = ?1
+LIMIT 1
+`
+
+func (q *Queries) GetVaultUserByID(ctx context.Context, id int64) (VaultUser, error) {
+	row := q.db.QueryRowContext(ctx, getVaultUserByID, id)
+	var i VaultUser
+	err := row.Scan(&i.ID, &i.Username, &i.CreatedAtUtc)
+	return i, err
+}
+
+const getVaultUserByUsername = `-- name: GetVaultUserByUsername :one
+SELECT id, username, created_at_utc
+FROM vault_users
+WHERE username = ?1
+LIMIT 1
+`
+
+func (q *Queries) GetVaultUserByUsername(ctx context.Context, username string) (VaultUser, error) {
+	row := q.db.QueryRowContext(ctx, getVaultUserByUsername, username)
+	var i VaultUser
+	err := row.Scan(&i.ID, &i.Username, &i.CreatedAtUtc)
+	return i, err
+}
+
+const getWebauthnCredentialByID = `-- name: GetWebauthnCredentialByID :one
+SELECT
+    id,
+    user_id,
+    credential_id,
+    CAST(credential AS BLOB) AS credential,
+    created_at_utc,
+    updated_at_utc
+FROM webauthn_credentials
+WHERE credential_id = ?1
+`
+
+type GetWebauthnCredentialByIDRow struct {
+	ID           int64  `json:"id"`
+	UserID       int64  `json:"user_id"`
+	CredentialID []byte `json:"credential_id"`
+	Credential   []byte `json:"credential"`
+	CreatedAtUtc int64  `json:"created_at_utc"`
+	UpdatedAtUtc int64  `json:"updated_at_utc"`
+}
+
+func (q *Queries) GetWebauthnCredentialByID(ctx context.Context, credentialID []byte) (GetWebauthnCredentialByIDRow, error) {
+	row := q.db.QueryRowContext(ctx, getWebauthnCredentialByID, credentialID)
+	var i GetWebauthnCredentialByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.CredentialID,
+		&i.Credential,
+		&i.CreatedAtUtc,
+		&i.UpdatedAtUtc,
 	)
 	return i, err
 }
@@ -861,6 +1029,58 @@ func (q *Queries) ListThreeCommasDeals(ctx context.Context, arg ListThreeCommasD
 	return items, nil
 }
 
+const listWebauthnCredentialsByUser = `-- name: ListWebauthnCredentialsByUser :many
+SELECT
+    id,
+    user_id,
+    credential_id,
+    CAST(credential AS BLOB) AS credential,
+    created_at_utc,
+    updated_at_utc
+FROM webauthn_credentials
+WHERE user_id = ?1
+ORDER BY id ASC
+`
+
+type ListWebauthnCredentialsByUserRow struct {
+	ID           int64  `json:"id"`
+	UserID       int64  `json:"user_id"`
+	CredentialID []byte `json:"credential_id"`
+	Credential   []byte `json:"credential"`
+	CreatedAtUtc int64  `json:"created_at_utc"`
+	UpdatedAtUtc int64  `json:"updated_at_utc"`
+}
+
+func (q *Queries) ListWebauthnCredentialsByUser(ctx context.Context, userID int64) ([]ListWebauthnCredentialsByUserRow, error) {
+	rows, err := q.db.QueryContext(ctx, listWebauthnCredentialsByUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListWebauthnCredentialsByUserRow
+	for rows.Next() {
+		var i ListWebauthnCredentialsByUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.CredentialID,
+			&i.Credential,
+			&i.CreatedAtUtc,
+			&i.UpdatedAtUtc,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateBotSync = `-- name: UpdateBotSync :exec
 UPDATE threecommas_bots
 SET last_synced_utc = ?1
@@ -1010,5 +1230,84 @@ type UpsertHyperliquidCreateParams struct {
 
 func (q *Queries) UpsertHyperliquidCreate(ctx context.Context, arg UpsertHyperliquidCreateParams) error {
 	_, err := q.db.ExecContext(ctx, upsertHyperliquidCreate, arg.Md, arg.CreatePayload, arg.BoteventRowID)
+	return err
+}
+
+const upsertVaultPayload = `-- name: UpsertVaultPayload :exec
+INSERT INTO vault_payloads (
+    user_id,
+    version,
+    ciphertext,
+    nonce,
+    associated_data,
+    prf_params,
+    updated_at_utc
+) VALUES (
+    ?1,
+    ?2,
+    ?3,
+    ?4,
+    ?5,
+    json(?6),
+    ?7
+)
+ON CONFLICT(user_id) DO UPDATE SET
+    version = excluded.version,
+    ciphertext = excluded.ciphertext,
+    nonce = excluded.nonce,
+    associated_data = excluded.associated_data,
+    prf_params = excluded.prf_params,
+    updated_at_utc = excluded.updated_at_utc
+`
+
+type UpsertVaultPayloadParams struct {
+	UserID         int64       `json:"user_id"`
+	Version        string      `json:"version"`
+	Ciphertext     []byte      `json:"ciphertext"`
+	Nonce          []byte      `json:"nonce"`
+	AssociatedData []byte      `json:"associated_data"`
+	PrfParams      interface{} `json:"prf_params"`
+	UpdatedAtUtc   int64       `json:"updated_at_utc"`
+}
+
+func (q *Queries) UpsertVaultPayload(ctx context.Context, arg UpsertVaultPayloadParams) error {
+	_, err := q.db.ExecContext(ctx, upsertVaultPayload,
+		arg.UserID,
+		arg.Version,
+		arg.Ciphertext,
+		arg.Nonce,
+		arg.AssociatedData,
+		arg.PrfParams,
+		arg.UpdatedAtUtc,
+	)
+	return err
+}
+
+const upsertWebauthnCredential = `-- name: UpsertWebauthnCredential :exec
+
+INSERT INTO webauthn_credentials (
+    user_id,
+    credential_id,
+    credential
+) VALUES (
+    ?1,
+    ?2,
+    json(?3)
+)
+ON CONFLICT(credential_id) DO UPDATE SET
+    user_id = excluded.user_id,
+    credential = excluded.credential,
+    updated_at_utc = CAST(unixepoch('now','subsec') * 1000 AS INTEGER)
+`
+
+type UpsertWebauthnCredentialParams struct {
+	UserID       int64       `json:"user_id"`
+	CredentialID []byte      `json:"credential_id"`
+	Credential   interface{} `json:"credential"`
+}
+
+// WebAuthn credential management
+func (q *Queries) UpsertWebauthnCredential(ctx context.Context, arg UpsertWebauthnCredentialParams) error {
+	_, err := q.db.ExecContext(ctx, upsertWebauthnCredential, arg.UserID, arg.CredentialID, arg.Credential)
 	return err
 }

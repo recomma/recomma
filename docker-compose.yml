@@ -1,0 +1,17 @@
+services:
+  recomma:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Replace the build section with an `image:` reference once you publish a tagged image.
+    env_file:
+      - .env
+    environment:
+      RECOMMA_STORAGE_PATH: /var/lib/recomma/db.sqlite3
+      RECOMMA_LOG_JSON: true
+      RECOMMA_LOG_LEVEL: debug
+    volumes:
+      - ./data:/var/lib/recomma
+    ports:
+      - "8080:8080"
+    restart: unless-stopped

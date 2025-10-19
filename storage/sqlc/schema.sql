@@ -71,3 +71,42 @@ CREATE TABLE IF NOT EXISTS kv_state (
     v BLOB NOT NULL,
     updated_at_utc INTEGER NOT NULL DEFAULT(unixepoch('now','subsec') * 1000)
 );
+
+-- Vault tables for WebAuthn-backed secret storage
+CREATE TABLE IF NOT EXISTS vault_users (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    username        TEXT    NOT NULL UNIQUE,
+    created_at_utc  INTEGER NOT NULL DEFAULT(unixepoch('now','subsec') * 1000)
+);
+
+CREATE TABLE IF NOT EXISTS vault_payloads (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id          INTEGER NOT NULL,
+    version          TEXT    NOT NULL,
+    ciphertext       BLOB    NOT NULL,
+    nonce            BLOB    NOT NULL,
+    associated_data  BLOB,
+    prf_params       JSON,
+    updated_at_utc   INTEGER NOT NULL DEFAULT(unixepoch('now','subsec') * 1000),
+    FOREIGN KEY(user_id) REFERENCES vault_users(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_payloads_user_id
+    ON vault_payloads(user_id);
+
+-- WebAuthn credentials associated with vault users
+CREATE TABLE IF NOT EXISTS webauthn_credentials (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id        INTEGER NOT NULL,
+    credential_id  BLOB    NOT NULL,
+    credential     JSON    NOT NULL,
+    created_at_utc INTEGER NOT NULL DEFAULT(unixepoch('now','subsec') * 1000),
+    updated_at_utc INTEGER NOT NULL DEFAULT(unixepoch('now','subsec') * 1000),
+    FOREIGN KEY(user_id) REFERENCES vault_users(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_webauthn_credentials_credential_id
+    ON webauthn_credentials(credential_id);
+
+CREATE INDEX IF NOT EXISTS idx_webauthn_credentials_user_id
+    ON webauthn_credentials(user_id);

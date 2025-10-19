@@ -375,3 +375,124 @@ WHERE deal_id = sqlc.arg(deal_id)
   AND json_extract(payload, '$.OrderType') = 'Take Profit'
 ORDER BY created_at_utc DESC
 LIMIT 1;
+
+-- Vault management
+
+-- name: EnsureVaultUser :one
+INSERT INTO vault_users (
+    username
+) VALUES (
+    sqlc.arg(username)
+)
+ON CONFLICT(username) DO UPDATE SET
+    username = excluded.username
+RETURNING id, username, created_at_utc;
+
+-- name: GetVaultUser :one
+SELECT id, username, created_at_utc
+FROM vault_users
+ORDER BY id ASC
+LIMIT 1;
+
+-- name: GetVaultUserByUsername :one
+SELECT id, username, created_at_utc
+FROM vault_users
+WHERE username = sqlc.arg(username)
+LIMIT 1;
+
+-- name: GetVaultUserByID :one
+SELECT id, username, created_at_utc
+FROM vault_users
+WHERE id = sqlc.arg(id)
+LIMIT 1;
+
+-- name: DeleteVaultUserByID :exec
+DELETE FROM vault_users
+WHERE id = sqlc.arg(id);
+
+-- name: UpsertVaultPayload :exec
+INSERT INTO vault_payloads (
+    user_id,
+    version,
+    ciphertext,
+    nonce,
+    associated_data,
+    prf_params,
+    updated_at_utc
+) VALUES (
+    sqlc.arg(user_id),
+    sqlc.arg(version),
+    sqlc.arg(ciphertext),
+    sqlc.arg(nonce),
+    sqlc.arg(associated_data),
+    json(sqlc.arg(prf_params)),
+    sqlc.arg(updated_at_utc)
+)
+ON CONFLICT(user_id) DO UPDATE SET
+    version = excluded.version,
+    ciphertext = excluded.ciphertext,
+    nonce = excluded.nonce,
+    associated_data = excluded.associated_data,
+    prf_params = excluded.prf_params,
+    updated_at_utc = excluded.updated_at_utc;
+
+-- name: GetVaultPayloadForUser :one
+SELECT
+    id,
+    user_id,
+    version,
+    ciphertext,
+    nonce,
+    associated_data,
+    CAST(prf_params AS BLOB) AS prf_params,
+    updated_at_utc
+FROM vault_payloads
+WHERE user_id = sqlc.arg(user_id);
+
+-- name: DeleteVaultPayloadForUser :exec
+DELETE FROM vault_payloads
+WHERE user_id = sqlc.arg(user_id);
+
+-- WebAuthn credential management
+
+-- name: UpsertWebauthnCredential :exec
+INSERT INTO webauthn_credentials (
+    user_id,
+    credential_id,
+    credential
+) VALUES (
+    sqlc.arg(user_id),
+    sqlc.arg(credential_id),
+    json(sqlc.arg(credential))
+)
+ON CONFLICT(credential_id) DO UPDATE SET
+    user_id = excluded.user_id,
+    credential = excluded.credential,
+    updated_at_utc = CAST(unixepoch('now','subsec') * 1000 AS INTEGER);
+
+-- name: ListWebauthnCredentialsByUser :many
+SELECT
+    id,
+    user_id,
+    credential_id,
+    CAST(credential AS BLOB) AS credential,
+    created_at_utc,
+    updated_at_utc
+FROM webauthn_credentials
+WHERE user_id = sqlc.arg(user_id)
+ORDER BY id ASC;
+
+-- name: GetWebauthnCredentialByID :one
+SELECT
+    id,
+    user_id,
+    credential_id,
+    CAST(credential AS BLOB) AS credential,
+    created_at_utc,
+    updated_at_utc
+FROM webauthn_credentials
+WHERE credential_id = sqlc.arg(credential_id);
+
+-- name: DeleteWebauthnCredentialByID :exec
+DELETE FROM webauthn_credentials
+WHERE credential_id = sqlc.arg(credential_id);

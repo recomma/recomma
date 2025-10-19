@@ -4,7 +4,260 @@ info:
   version: 0.2.1
 servers:
   - url: http://localhost:8080
+security:
+  - SessionCookie: []
 paths:
+  /webauthn/registration/begin:
+    post:
+      operationId: beginWebauthnRegistration
+      summary: Begin WebAuthn registration
+      description: >
+        Issues a WebAuthn credential creation challenge for the supplied username. Clients must
+        pass the returned options to `navigator.credentials.create` and later submit the authenticator
+        response to `/webauthn/registration/finish`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebAuthnRegistrationBeginRequest'
+      responses:
+        '200':
+          description: Registration ceremony started; includes session token and creation options.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnRegistrationBeginResponse'
+        '400':
+          description: Invalid payload
+        '409':
+          description: Registration not allowed in current vault state
+        '500':
+          description: Internal server error
+
+  /webauthn/registration/finish:
+    post:
+      operationId: finishWebauthnRegistration
+      summary: Complete WebAuthn registration
+      description: >
+        Validates the WebAuthn attestation returned by the authenticator and stores the credential for
+        the vault user. The supplied session token must match a previous registration begin call.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebAuthnRegistrationFinishRequest'
+      responses:
+        '200':
+          description: Registration completed successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnRegistrationFinishResponse'
+        '400':
+          description: Invalid attestation payload
+        '404':
+          description: Registration session not found or expired
+        '409':
+          description: Registration not allowed in current vault state
+        '500':
+          description: Internal server error
+
+  /webauthn/login/begin:
+    post:
+      operationId: beginWebauthnLogin
+      summary: Begin WebAuthn assertion
+      description: >
+        Issues a WebAuthn assertion challenge for the supplied username. Clients must forward the
+        returned options to `navigator.credentials.get` and later submit the authenticator response to
+        `/webauthn/login/finish`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebAuthnLoginBeginRequest'
+      responses:
+        '200':
+          description: Login ceremony started; includes session token and assertion options.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnLoginBeginResponse'
+        '400':
+          description: Invalid payload
+        '404':
+          description: No WebAuthn credentials available for the user
+        '409':
+          description: Login not allowed in current vault state
+        '500':
+          description: Internal server error
+
+  /webauthn/login/finish:
+    post:
+      operationId: finishWebauthnLogin
+      summary: Complete WebAuthn assertion
+      description: >
+        Validates the WebAuthn assertion and issues an authenticated session cookie for the vault endpoints.
+        The supplied session token must match a previous login begin call.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebAuthnLoginFinishRequest'
+      responses:
+        '200':
+          description: Login completed successfully; session cookie returned.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+              description: Session cookie (`recomma_session`) representing the authenticated user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnLoginFinishResponse'
+        '400':
+          description: Invalid assertion payload
+        '404':
+          description: Login session not found or expired
+        '409':
+          description: Login not allowed in current vault state
+        '500':
+          description: Internal server error
+  /vault/status:
+    get:
+      security: []
+      operationId: getVaultStatus
+      summary: Inspect vault state
+      description: >
+        Returns the current vault lifecycle state plus metadata about the active user
+        and session. This endpoint is unauthenticated so the frontend can poll during setup.
+      responses:
+        '200':
+          description: Current vault status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VaultStatus'
+        '500':
+          description: Internal server error
+
+  /vault/setup:
+    post:
+      security: []
+      operationId: setupVault
+      summary: Store the encrypted vault payload
+      description: >
+        Accepts the username and WebAuthn PRF-encrypted secret bundle produced by the browser.
+        After storing the payload the vault transitions to the sealed state and awaits unseal.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VaultSetupRequest'
+      responses:
+        '201':
+          description: Vault payload stored; service is sealed and ready for unseal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VaultStatus'
+        '400':
+          description: Invalid payload; rejected.
+        '409':
+          description: Vault is already initialized; switch to recovery flow.
+        '500':
+          description: Internal server error
+
+  /vault/unseal:
+    post:
+      security: []
+      operationId: unsealVault
+      summary: Provide decrypted secrets to unlock the vault
+      description: >
+        Accepts the plaintext bundle derived in the browser after WebAuthn verification.
+        On success the server hydrates upstream clients, issues a session cookie, and marks
+        the vault as unsealed until the session expires or `/vault/seal` is called.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VaultUnsealRequest'
+      responses:
+        '200':
+          description: Vault unsealed; session cookie returned.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+              description: Session cookie (`recomma_session`) representing the authenticated user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VaultStatus'
+        '400':
+          description: Payload rejected.
+        '409':
+          description: Vault must be sealed before unsealing.
+        '423':
+          description: Initial setup is still required.
+        '500':
+          description: Internal server error
+
+  /vault/seal:
+    post:
+      operationId: sealVault
+      summary: Reseal the vault and clear in-memory secrets
+      description: >
+        Marks the vault as sealed, drops in-memory credentials, and invalidates the current session.
+      responses:
+        '200':
+          description: Vault sealed; upstream activity should pause until unsealed again.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VaultStatus'
+        '401':
+          description: Authentication required.
+        '500':
+          description: Internal server error
+      security:
+        - SessionCookie: []
+
+  /vault/payload:
+    get:
+      operationId: getVaultPayload
+      summary: Retrieve encrypted vault payload
+      description: >
+        Returns the stored ciphertext bundle for the authenticated user. Requires a
+        valid session cookie obtained via WebAuthn and is typically called immediately
+        before `/vault/unseal`.
+      responses:
+        '200':
+          description: Ciphertext payload available for decryption in the browser.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VaultEncryptedPayload'
+        '401':
+          description: Authentication required.
+        '404':
+          description: No vault payload stored yet (setup required or recovery mode).
+        '423':
+          description: Vault is not yet initialized; run `/vault/setup` first.
+        '500':
+          description: Internal server error
+      security:
+        - SessionCookie: []
   /api/bots:
     get:
       operationId: listBots
@@ -306,7 +559,251 @@ paths:
           description: Internal server error
 
 components:
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: recomma_session
+      description: Session cookie issued after a successful `/vault/unseal`.
+
   schemas:
+    WebAuthnRegistrationBeginRequest:
+      type: object
+      required:
+        - username
+      properties:
+        username:
+          type: string
+          description: Logical username initiating registration.
+
+    WebAuthnRegistrationBeginResponse:
+      type: object
+      required:
+        - session_token
+        - creation_options
+      properties:
+        session_token:
+          type: string
+          description: Opaque token that must be supplied when completing registration.
+        creation_options:
+          type: object
+          additionalProperties: true
+          description: PublicKeyCredentialCreationOptions for `navigator.credentials.create`.
+
+    WebAuthnRegistrationFinishRequest:
+      type: object
+      required:
+        - session_token
+        - client_response
+      properties:
+        session_token:
+          type: string
+          description: Token issued by `/webauthn/registration/begin`.
+        client_response:
+          type: object
+          additionalProperties: true
+          description: Parsed response from `navigator.credentials.create`.
+
+    WebAuthnRegistrationFinishResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          description: Textual status of the registration ceremony (for example `registered`).
+
+    WebAuthnLoginBeginRequest:
+      type: object
+      required:
+        - username
+      properties:
+        username:
+          type: string
+          description: Logical username initiating the login ceremony.
+
+    WebAuthnLoginBeginResponse:
+      type: object
+      required:
+        - session_token
+        - assertion_options
+      properties:
+        session_token:
+          type: string
+          description: Opaque token that must be supplied when completing login.
+        assertion_options:
+          type: object
+          additionalProperties: true
+          description: PublicKeyCredentialRequestOptions for `navigator.credentials.get`.
+
+    WebAuthnLoginFinishRequest:
+      type: object
+      required:
+        - session_token
+        - client_response
+      properties:
+        session_token:
+          type: string
+          description: Token issued by `/webauthn/login/begin`.
+        client_response:
+          type: object
+          additionalProperties: true
+          description: Parsed response from `navigator.credentials.get`.
+
+    WebAuthnLoginFinishResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          description: Textual status of the login ceremony (for example `authenticated`).
+
+    VaultState:
+      type: string
+      enum:
+        - setup_required
+        - sealed
+        - unsealed
+
+    VaultUser:
+      type: object
+      required:
+        - username
+      properties:
+        username:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp the user record was created, when available.
+
+    VaultStatus:
+      type: object
+      required:
+        - state
+      properties:
+        state:
+          $ref: '#/components/schemas/VaultState'
+        user:
+          $ref: '#/components/schemas/VaultUser'
+          nullable: true
+          description: Present once setup is complete.
+        sealed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Last time the vault entered the sealed state.
+        unsealed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Last time the vault was unsealed.
+        session_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Session expiry for the current user when unsealed.
+
+    VaultEncryptedPayload:
+      type: object
+      required:
+        - version
+        - ciphertext
+        - nonce
+      properties:
+        version:
+          type: string
+          description: Payload version label used to interpret the ciphertext.
+        ciphertext:
+          type: string
+          format: byte
+          description: >
+            Base64-encoded ciphertext produced by the browser. When decrypted it
+            yields a `VaultSecretsBundle`.
+        nonce:
+          type: string
+          format: byte
+          description: Base64-encoded nonce/IV used during encryption.
+        associated_data:
+          type: string
+          format: byte
+          nullable: true
+          description: Optional associated data supplied during encryption.
+        prf_params:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: WebAuthn PRF parameters needed for future decryptions.
+    VaultSecretsBundle:
+      type: object
+      description: >
+        JSON structure encrypted during setup and supplied in plaintext when
+        unsealing the vault.
+      required:
+        - not_secret
+        - secrets
+      properties:
+        not_secret:
+          type: object
+          required:
+            - username
+          properties:
+            username:
+              type: string
+              description: Logical username mirrored inside the plaintext payload.
+        secrets:
+          type: object
+          required:
+            - THREECOMMAS_API_KEY
+            - THREECOMMAS_PRIVATE_KEY
+            - HYPERLIQUID_WALLET
+            - HYPERLIQUID_PRIVATE_KEY
+            - HYPERLIQUID_URL
+          properties:
+            THREECOMMAS_API_KEY:
+              type: string
+              description: Public API key for the 3Commas integration.
+            THREECOMMAS_PRIVATE_KEY:
+              type: string
+              description: Private API key for the 3Commas integration.
+            HYPERLIQUID_WALLET:
+              type: string
+              description: Hyperliquid wallet address.
+            HYPERLIQUID_PRIVATE_KEY:
+              type: string
+              description: Hyperliquid private key corresponding to the wallet.
+            HYPERLIQUID_URL:
+              type: string
+              description: Hyperliquid URL, mainnet https://api.hyperliquid.xyz testnet https://api.hyperliquid-testnet.xyz or custom
+
+    VaultSetupRequest:
+      type: object
+      required:
+        - username
+        - payload
+      properties:
+        username:
+          type: string
+          description: Logical username for the vault owner.
+        payload:
+          $ref: '#/components/schemas/VaultEncryptedPayload'
+
+    VaultUnsealRequest:
+      type: object
+      required:
+        - payload
+      properties:
+        payload:
+          $ref: '#/components/schemas/VaultSecretsBundle'
+        remember_session_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Optional session TTL hint; server may clamp or ignore.
+
+    
     BotRecord:
       type: object
       required:

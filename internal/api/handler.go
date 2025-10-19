@@ -11,6 +11,7 @@ import (
 
 	hyperliquid "github.com/sonirico/go-hyperliquid"
 	tc "github.com/terwey/3commas-sdk-go/threecommas"
+	"github.com/terwey/recomma/internal/vault"
 	"github.com/terwey/recomma/metadata"
 )
 
@@ -34,22 +35,54 @@ type StreamSource interface {
 
 // ApiHandler implements api.StrictServerInterface.
 type ApiHandler struct {
-	store  Store
-	stream StreamSource
-	logger *slog.Logger
-	now    func() time.Time
+	store    Store
+	stream   StreamSource
+	logger   *slog.Logger
+	now      func() time.Time
+	webauthn *WebAuthnService
+	vault    *vault.Controller
+	session  *vaultSessionManager
 }
 
 // NewHandler wires everything together.
-func NewHandler(store Store, stream StreamSource, logger *slog.Logger) *ApiHandler {
-	if logger == nil {
-		logger = slog.Default()
+func NewHandler(store Store, stream StreamSource, opts ...HandlerOption) *ApiHandler {
+	h := &ApiHandler{
+		store:   store,
+		stream:  stream,
+		now:     time.Now,
+		session: newVaultSessionManager(),
 	}
-	return &ApiHandler{
-		store:  store,
-		stream: stream,
-		logger: logger,
-		now:    time.Now,
+	for _, opt := range opts {
+		opt(h)
+	}
+
+	if h.logger == nil {
+		h.logger = slog.Default()
+	}
+
+	return h
+}
+
+// HandlerOption configures ApiHandler optional dependencies.
+type HandlerOption func(*ApiHandler)
+
+// WithWebAuthnService injects the WebAuthn service used for registration/login flows.
+func WithWebAuthnService(service *WebAuthnService) HandlerOption {
+	return func(h *ApiHandler) {
+		h.webauthn = service
+	}
+}
+
+// WithVaultController injects the vault controller dependency.
+func WithVaultController(controller *vault.Controller) HandlerOption {
+	return func(h *ApiHandler) {
+		h.vault = controller
+	}
+}
+
+func WithLogger(logger *slog.Logger) HandlerOption {
+	return func(h *ApiHandler) {
+		h.logger = logger
 	}
 }
 

@@ -1,0 +1,43 @@
+# .github/workflows/webui-ci.yml
+name: WebUI Lint & Typecheck
+
+on:
+  push:
+    paths:
+      - "webui/app/**"
+      - ".github/workflows/webui-ci.yml"
+  pull_request:
+    paths:
+      - "webui/app/**"
+      - ".github/workflows/webui-ci.yml"
+
+jobs:
+  lint-typecheck:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: webui-app-${{ github.ref }}
+      cancel-in-progress: true
+
+    defaults:
+      run:
+        working-directory: webui/app
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: webui/app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript (no emit)
+        run: npx tsc --noEmit
+
+      - name: ESLint
+        run: npx eslint

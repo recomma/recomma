@@ -50,7 +50,6 @@ func TestStorageThreeCommasRoundTrip(t *testing.T) {
 		{
 			name: "basic-roundtrip",
 			md: metadata.Metadata{
-				CreatedAt:  base,
 				BotID:      42,
 				DealID:     7,
 				BotEventID: 3,
@@ -79,7 +78,6 @@ func TestStorageThreeCommasRoundTrip(t *testing.T) {
 		{
 			name: "different-metadata",
 			md: metadata.Metadata{
-				CreatedAt:  base.Add(24 * time.Hour),
 				BotID:      99,
 				DealID:     1001,
 				BotEventID: 222,
@@ -160,7 +158,6 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	store := newTestStorage(t)
 
 	md := metadata.Metadata{
-		CreatedAt:  time.Date(2024, time.March, 3, 0, 0, 0, 0, time.UTC),
 		BotID:      7,
 		DealID:     77,
 		BotEventID: 777,
@@ -776,7 +773,6 @@ func TestStorageListEventsForOrder(t *testing.T) {
 	mk := func(offset time.Duration, price float64, label string) (metadata.Metadata, tc.BotEvent) {
 		ts := base.Add(offset)
 		return metadata.Metadata{
-				CreatedAt:  ts,
 				BotID:      botID,
 				DealID:     dealID,
 				BotEventID: botEventID,
@@ -824,7 +820,6 @@ func TestStorageListEventsForOrder(t *testing.T) {
 	}
 
 	otherMD := metadata.Metadata{
-		CreatedAt:  base,
 		BotID:      botID,
 		DealID:     dealID + 1,
 		BotEventID: botEventID,
@@ -856,7 +851,6 @@ func TestRecordThreeCommasBotEventDuplicateReturnsPreviousInsertID(t *testing.T)
 
 	base := time.Date(2024, time.February, 2, 9, 30, 0, 0, time.UTC)
 	md := metadata.Metadata{
-		CreatedAt:  base,
 		BotID:      123,
 		DealID:     456,
 		BotEventID: 789,
@@ -902,7 +896,6 @@ func TestLoadTakeProfitForDeal(t *testing.T) {
 	t.Run("returns latest take profit event", func(t *testing.T) {
 		base := time.Date(2024, time.January, 15, 8, 0, 0, 0, time.UTC)
 		md := metadata.Metadata{
-			CreatedAt:  base,
 			BotID:      321,
 			DealID:     654,
 			BotEventID: 987,
@@ -929,7 +922,6 @@ func TestLoadTakeProfitForDeal(t *testing.T) {
 		require.Equal(t, md.BotID, gotMD.BotID)
 		require.Equal(t, md.DealID, gotMD.DealID)
 		require.Equal(t, md.BotEventID, gotMD.BotEventID)
-		require.Equal(t, md.CreatedAt.Truncate(24*time.Hour), gotMD.CreatedAt)
 		require.Equal(t, evt.Coin, gotEvent.Coin)
 		require.Equal(t, evt.Action, gotEvent.Action)
 		require.Equal(t, tc.MarketOrderDealOrderTypeTakeProfit, gotEvent.OrderType)

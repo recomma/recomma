@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
@@ -40,8 +39,10 @@ func TestAsHex_(t *testing.T) {
 			if tc.wantPanic {
 				return
 			}
-			if !bytes.Equal(mustHex(tc.hex), got) {
-				t.Fatalf("not equal\nwant: % X\ngot:  % X", tc.hex, got)
+
+			want := mustHex(tc.hex)
+			if !bytes.Equal(want, got) {
+				t.Fatalf("not equal\nwant: % X\ngot:  % X", want, got)
 			}
 		})
 	}
@@ -113,63 +114,38 @@ type hexData struct {
 }
 
 func getTests() []hexData {
-	epoch := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 	return []hexData{
 		{
 			name: "Empty",
 			md:   Metadata{},
-			hex:  "06 C6 00 00 00 00 00 00 00 00 00 00 00 00 3F 5A",
-		},
-		{
-			name: "epoch day 0, all zeros",
-			md: Metadata{
-				CreatedAt:  epoch,
-				BotID:      0,
-				DealID:     0,
-				BotEventID: 0,
-			},
-			hex: "0000 00000000 00000000 00000000 FE 54",
+			hex:  "00000000 00000000 00000000 7B D5 C6 6F",
 		},
 		{
 			name: "small values sample",
 			md: Metadata{
-				CreatedAt:  epoch.Add(24 * time.Hour), // 1970-01-02 -> day=1
 				BotID:      1,
 				DealID:     2,
 				BotEventID: 3,
 			},
-			hex: "0001 00000001 00000002 00000003 2E 62",
+			hex: "00000001 00000002 00000003 8F 67 D0 F6",
 		},
 		{
-			name: "max uint16 day boundary",
+			name: "boundary",
 			md: Metadata{
-				CreatedAt:  epoch.AddDate(0, 0, 65535), // day=65535 -> 0xFFFF
 				BotID:      0x01020304,
 				DealID:     0xAABBCCDD,
 				BotEventID: 3735928559, // 0xDEADBEEF within uint32
 			},
-			hex: "FFFF 01020304 AABBCCDD DEADBEEF 7D 2C",
+			hex: "01020304 AABBCCDD DEADBEEF 5D AF 20 B1",
 		},
-		// {
-		// 	name: "invalid order id panics",
-		// 	md: Metadata{
-		// 		CreatedAt: epoch,
-		// 		BotID:     123,
-		// 		DealID:    456,
-		// 		OrderID:   "not-a-number",
-		// 	},
-		// 	wantPanic:        true,
-		// 	wantErrorFromHex: HexTooShort,
-		// },
 		{
 			name: "received back from API",
 			md: Metadata{
-				CreatedAt:  time.Date(2025, 8, 11, 0, 0, 0, 0, time.UTC),
-				BotID:      1,
-				DealID:     1,
-				BotEventID: 1,
+				BotID:      16541235,
+				DealID:     2381631392,
+				BotEventID: 568275668,
 			},
-			hex: "0x4f57000000010000000100000001f620",
+			hex: "0x00fc66338df4cfa021df32d4094afe38",
 		},
 	}
 }

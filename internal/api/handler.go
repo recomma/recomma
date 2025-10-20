@@ -229,17 +229,12 @@ func (h *ApiHandler) orderRecordFromItem(ctx context.Context, row OrderItem, inc
 		}
 	}
 
-	createdAt := row.Metadata.CreatedAt
-	if row.BotEvent != nil && row.BotEvent.CreatedAt != nil {
-		createdAt = *row.BotEvent.CreatedAt
-	}
-
 	record := OrderRecord{
 		MetadataHex:      row.Metadata.Hex(),
 		BotId:            int64(row.Metadata.BotID),
 		DealId:           int64(row.Metadata.DealID),
 		BotEventId:       int64(row.Metadata.BotEventID),
-		CreatedAt:        createdAt,
+		CreatedAt:        *row.BotEvent.CreatedAt,
 		ObservedAt:       row.ObservedAt,
 		BotEventPayload:  eventPayload,
 		LatestSubmission: latestSubmission,

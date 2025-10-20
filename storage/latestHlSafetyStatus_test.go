@@ -29,10 +29,9 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 		volume    int
 	}
 
-	insertSafetyEvent := func(t *testing.T, store *Storage, md metadata.Metadata, o order) metadata.Metadata {
+	insertSafetyEvent := func(t *testing.T, store *Storage, md metadata.Metadata, created time.Time, o order) metadata.Metadata {
 		t.Helper()
 
-		created := md.CreatedAt
 		botevent := tc.BotEvent{
 			CreatedAt:     &created,
 			Action:        tc.BotEventActionExecute,
@@ -79,24 +78,22 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 				botID := uint32(42)
 
 				md1 := metadata.Metadata{
-					CreatedAt:  base,
 					BotID:      botID,
 					DealID:     9001,
 					BotEventID: 1,
 				}
 				md2 := metadata.Metadata{
-					CreatedAt:  base.Add(24 * time.Hour),
 					BotID:      botID,
 					DealID:     9001,
 					BotEventID: 2,
 				}
 
-				normalized1 := insertSafetyEvent(t, store, md1, order{
+				normalized1 := insertSafetyEvent(t, store, md1, base, order{
 					position:  1,
 					ordersize: 2,
 					volume:    2,
 				})
-				normalized2 := insertSafetyEvent(t, store, md2, order{
+				normalized2 := insertSafetyEvent(t, store, md2, base.Add(24*time.Hour), order{
 					position:  2,
 					ordersize: 2,
 					volume:    1,
@@ -178,24 +175,22 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 				botID := uint32(43)
 
 				md1 := metadata.Metadata{
-					CreatedAt:  base,
 					BotID:      botID,
 					DealID:     9002,
 					BotEventID: 3,
 				}
 				md2 := metadata.Metadata{
-					CreatedAt:  base.Add(24 * time.Hour),
 					BotID:      botID,
 					DealID:     9002,
 					BotEventID: 4,
 				}
 
-				normalized1 := insertSafetyEvent(t, store, md1, order{
+				normalized1 := insertSafetyEvent(t, store, md1, base, order{
 					position:  1,
 					ordersize: 2,
 					volume:    3,
 				})
-				normalized2 := insertSafetyEvent(t, store, md2, order{
+				normalized2 := insertSafetyEvent(t, store, md2, base.Add(24*time.Hour), order{
 					position:  2,
 					ordersize: 2,
 					volume:    4,
@@ -273,12 +268,11 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 
 				otherDeal := uint32(9100)
 				otherMD := metadata.Metadata{
-					CreatedAt:  base,
 					BotID:      50,
 					DealID:     otherDeal,
 					BotEventID: 1,
 				}
-				insertSafetyEvent(t, store, otherMD, order{
+				insertSafetyEvent(t, store, otherMD, base, order{
 					position:  1,
 					ordersize: 1,
 					volume:    1,
@@ -299,12 +293,11 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 				})
 
 				mdTakeProfit := metadata.Metadata{
-					CreatedAt:  base,
 					BotID:      51,
 					DealID:     9003,
 					BotEventID: 2,
 				}
-				created := mdTakeProfit.CreatedAt
+				created := base
 				takeProfit := tc.BotEvent{
 					CreatedAt:     &created,
 					Action:        tc.BotEventActionExecute,

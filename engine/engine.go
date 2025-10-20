@@ -168,7 +168,6 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, deal *tc.Deal, eve
 		md := metadata.Metadata{
 			BotID:      wi.BotID,
 			DealID:     wi.DealID,
-			CreatedAt:  *event.CreatedAt,
 			BotEventID: event.FingerprintAsID(),
 		}
 		// we want to store all incoming as a log

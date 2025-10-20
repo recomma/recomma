@@ -4,23 +4,19 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"hash/crc32"
 	"log"
 	"strings"
-	"time"
-
-	"github.com/howeyc/crc16"
 )
 
+// Metadata is to track an order across different states
 type Metadata struct {
-	CreatedAt  time.Time
 	BotID      uint32
 	DealID     uint32
 	BotEventID uint32
 }
 
 func (md *Metadata) String() string {
-	// return fmt.Sprintf("%s::%d::%d::%s", md.CreatedAt.Format("2006-01-02"), md.BotID, md.DealID, md.OrderID)
-	// return fmt.Sprintf("%s::%s", md.CreatedAt.Format("2006-01-02"), md.Hex())
 	return md.Hex()
 }
 
@@ -35,39 +31,19 @@ func (md *Metadata) Hex() string {
 
 // AsHex returns a 16 byte representation of the metadata
 // All are BigEndian encoded
-// 2 bytes are the days since epoch uint16
 // 4 bytes are the BotID uint32
 // 4 bytes are the DealID uint32
 // 4 bytes are the OrderID uint32
-// 2 bytes are a CRC16 of the preceding bytes
+// 4 bytes are a CRC32 of the preceding bytes
 // The time is stored with UTC
 func (md *Metadata) AsHex() []byte {
 	out := make([]byte, 0, 16)
 
-	// unix returns number of seconds since epoch
-	// we can divide this by the amount of seconds in a day
-	// this should fit in an uint16
-	d := md.CreatedAt.UTC().Unix() / 86400
-	// log.Printf("days since epoch: %d", d)
-	out = binary.BigEndian.AppendUint16(out, uint16(d))
-
 	out = binary.BigEndian.AppendUint32(out, uint32(md.BotID))
 	out = binary.BigEndian.AppendUint32(out, uint32(md.DealID))
 
-	// var oid uint64
-	// var err error
-	// if md.OrderID != "" {
-	// 	// we know OrderID is actually an uint32 too
-	// 	oid, err = strconv.ParseUint(md.OrderID, 10, 32)
-	// 	if err != nil {
-	// 		panic("orderid cannot be parsed as uint32")
-	// 	}
-	// }
-
 	out = binary.BigEndian.AppendUint32(out, uint32(md.BotEventID))
-	// out = binary.BigEndian.AppendUint32(out, uint32(oid))
-
-	out = binary.BigEndian.AppendUint16(out, crc16.Checksum(out, crc16.IBMTable))
+	out = binary.BigEndian.AppendUint32(out, crc32.Checksum(out, crc32.IEEETable))
 
 	return out
 }
@@ -83,17 +59,14 @@ func FromHex(v []byte) (*Metadata, error) {
 		return nil, ErrHexTooShort
 	}
 
-	if crc16.Checksum(v[0:14], crc16.IBMTable) != binary.BigEndian.Uint16(v[14:16]) {
+	if crc32.Checksum(v[0:12], crc32.IEEETable) != binary.BigEndian.Uint32(v[12:16]) {
 		return nil, ErrIncorrectChecksum
 	}
 
 	md := &Metadata{}
-	days := binary.BigEndian.Uint16(v[0:2])
-	md.CreatedAt = time.Unix(int64(days)*86400, 0).UTC()
-
-	md.BotID = uint32(binary.BigEndian.Uint32(v[2:6]))
-	md.DealID = uint32(binary.BigEndian.Uint32(v[6:10]))
-	md.BotEventID = uint32(binary.BigEndian.Uint32(v[10:14]))
+	md.BotID = uint32(binary.BigEndian.Uint32(v[0:4]))
+	md.DealID = uint32(binary.BigEndian.Uint32(v[4:8]))
+	md.BotEventID = uint32(binary.BigEndian.Uint32(v[8:12]))
 
 	return md, nil
 }

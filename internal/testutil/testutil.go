@@ -34,7 +34,6 @@ func NewBotEvent(t *testing.T, base time.Time, botID uint32,
 	md := metadata.Metadata{
 		BotID:      uint32(botID),
 		DealID:     uint32(dealID),
-		CreatedAt:  *evt.CreatedAt,
 		BotEventID: evt.FingerprintAsID(),
 	}
 	return evt, md

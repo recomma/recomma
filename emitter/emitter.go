@@ -111,7 +111,7 @@ func (e *HyperLiquidEmitter) setMarketPrice(ctx context.Context, order hyperliqu
 }
 
 func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) error {
-	logger := e.logger.With("md", w.MD.String()).With("bot-event", w.BotEvent)
+	logger := e.logger.With("md", w.MD.Hex()).With("bot-event", w.BotEvent)
 	logger.Debug("emit", slog.Any("orderwork", w))
 	if err := e.waitTurn(ctx); err != nil {
 		return err

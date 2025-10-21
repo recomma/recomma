@@ -55,7 +55,7 @@ func TestStorageThreeCommasRoundTrip(t *testing.T) {
 				BotEventID: 3,
 			},
 			botevent: tc.BotEvent{
-				CreatedAt:        &base,
+				CreatedAt:        base,
 				Action:           tc.BotEventActionExecute,
 				Coin:             "DOGE",
 				Type:             tc.MarketOrderOrderType(tc.BUY),
@@ -83,7 +83,7 @@ func TestStorageThreeCommasRoundTrip(t *testing.T) {
 				BotEventID: 222,
 			},
 			botevent: tc.BotEvent{
-				CreatedAt:        &base,
+				CreatedAt:        base,
 				Action:           tc.BotEventActionExecute,
 				Coin:             "DOGE",
 				Type:             tc.MarketOrderOrderType(tc.BUY),
@@ -760,11 +760,6 @@ func TestStorageThreeCommasDealUpsert(t *testing.T) {
 func TestStorageListEventsForOrder(t *testing.T) {
 	store := newTestStorage(t)
 
-	ptrTime := func(t time.Time) *time.Time {
-		v := t
-		return &v
-	}
-
 	base := time.Date(2024, time.July, 18, 14, 30, 0, 0, time.UTC)
 	botID := uint32(501)
 	dealID := uint32(1601)
@@ -777,7 +772,7 @@ func TestStorageListEventsForOrder(t *testing.T) {
 				DealID:     dealID,
 				BotEventID: botEventID,
 			}, tc.BotEvent{
-				CreatedAt:        ptrTime(ts),
+				CreatedAt:        ts,
 				Action:           tc.BotEventActionExecute,
 				Coin:             "DOGE",
 				Type:             tc.MarketOrderOrderType(tc.BUY),
@@ -825,7 +820,7 @@ func TestStorageListEventsForOrder(t *testing.T) {
 		BotEventID: botEventID,
 	}
 	otherEvt := tc.BotEvent{
-		CreatedAt: ptrTime(base),
+		CreatedAt: base,
 		Action:    tc.BotEventActionExecute,
 		Coin:      "DOGE",
 	}
@@ -856,7 +851,7 @@ func TestRecordThreeCommasBotEventDuplicateReturnsPreviousInsertID(t *testing.T)
 		BotEventID: 789,
 	}
 	event := tc.BotEvent{
-		CreatedAt:     &base,
+		CreatedAt:     base,
 		Action:        tc.BotEventActionPlace,
 		Coin:          "DOGE",
 		Type:          tc.BUY,
@@ -901,7 +896,7 @@ func TestLoadTakeProfitForDeal(t *testing.T) {
 			BotEventID: 987,
 		}
 		evt := tc.BotEvent{
-			CreatedAt:     &base,
+			CreatedAt:     base,
 			Action:        tc.BotEventActionExecute,
 			Coin:          "ETH",
 			OrderType:     tc.MarketOrderDealOrderTypeTakeProfit,
@@ -926,6 +921,6 @@ func TestLoadTakeProfitForDeal(t *testing.T) {
 		require.Equal(t, evt.Action, gotEvent.Action)
 		require.Equal(t, tc.MarketOrderDealOrderTypeTakeProfit, gotEvent.OrderType)
 		require.NotNil(t, gotEvent.CreatedAt)
-		require.WithinDuration(t, base, *gotEvent.CreatedAt, 0)
+		require.WithinDuration(t, base, gotEvent.CreatedAt, 0)
 	})
 }

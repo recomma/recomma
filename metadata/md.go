@@ -16,10 +16,6 @@ type Metadata struct {
 	BotEventID uint32
 }
 
-func (md *Metadata) String() string {
-	return md.Hex()
-}
-
 func (md *Metadata) HexAsPointer() *string {
 	hex := md.Hex()
 	return &hex

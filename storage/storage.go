@@ -85,7 +85,7 @@ func (s *Storage) RecordThreeCommasBotEvent(md metadata.Metadata, order tc.BotEv
 
 	ctx := context.Background()
 	params := sqlcgen.InsertThreeCommasBotEventParams{
-		Md:           md.String(),
+		Md:           md.Hex(),
 		BotID:        int64(md.BotID),
 		DealID:       int64(md.DealID),
 		BoteventID:   int64(md.BotEventID),
@@ -113,7 +113,7 @@ func (s *Storage) RecordThreeCommasBotEventLog(md metadata.Metadata, order tc.Bo
 
 	ctx := context.Background()
 	params := sqlcgen.InsertThreeCommasBotEventLogParams{
-		Md:           md.String(),
+		Md:           md.Hex(),
 		BotID:        int64(md.BotID),
 		DealID:       int64(md.DealID),
 		BoteventID:   int64(md.BotEventID),
@@ -163,7 +163,7 @@ func (s *Storage) HasMetadata(md metadata.Metadata) (bool, error) {
 	defer s.mu.Unlock()
 
 	ctx := context.Background()
-	exists, err := s.queries.HasThreeCommasMetadata(ctx, md.String())
+	exists, err := s.queries.HasThreeCommasMetadata(ctx, md.Hex())
 	if err != nil {
 		return false, err
 	}
@@ -176,7 +176,7 @@ func (s *Storage) LoadThreeCommasBotEvent(md metadata.Metadata) (*tc.BotEvent, e
 	defer s.mu.Unlock()
 
 	ctx := context.Background()
-	payload, err := s.queries.FetchThreeCommasBotEvent(ctx, md.String())
+	payload, err := s.queries.FetchThreeCommasBotEvent(ctx, md.Hex())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -203,7 +203,7 @@ func (s *Storage) RecordHyperliquidOrderRequest(md metadata.Metadata, req hyperl
 
 	ctx := context.Background()
 	params := sqlcgen.UpsertHyperliquidCreateParams{
-		Md:            md.String(),
+		Md:            md.Hex(),
 		CreatePayload: raw,
 		BoteventRowID: boteventRowId,
 	}
@@ -222,7 +222,7 @@ func (s *Storage) AppendHyperliquidModify(md metadata.Metadata, req hyperliquid.
 
 	ctx := context.Background()
 	params := sqlcgen.AppendHyperliquidModifyParams{
-		Md:            md.String(),
+		Md:            md.Hex(),
 		ModifyPayload: raw,
 		BoteventRowID: boteventRowId,
 	}
@@ -241,7 +241,7 @@ func (s *Storage) RecordHyperliquidCancel(md metadata.Metadata, req hyperliquid.
 
 	ctx := context.Background()
 	params := sqlcgen.UpsertHyperliquidCancelParams{
-		Md:            md.String(),
+		Md:            md.Hex(),
 		CancelPayload: raw,
 		BoteventRowID: boteventRowId,
 	}
@@ -260,7 +260,7 @@ func (s *Storage) RecordHyperliquidStatus(md metadata.Metadata, status hyperliqu
 
 	ctx := context.Background()
 	params := sqlcgen.InsertHyperliquidStatusParams{
-		Md:            md.String(),
+		Md:            md.Hex(),
 		Status:        raw,
 		RecordedAtUtc: time.Now().UTC().UnixMilli(),
 	}
@@ -269,7 +269,7 @@ func (s *Storage) RecordHyperliquidStatus(md metadata.Metadata, status hyperliqu
 }
 
 func (s *Storage) loadLatestHyperliquidStatusLocked(ctx context.Context, md metadata.Metadata) (*hyperliquid.WsOrder, bool, error) {
-	payload, err := s.queries.FetchLatestHyperliquidStatus(ctx, md.String())
+	payload, err := s.queries.FetchLatestHyperliquidStatus(ctx, md.Hex())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -290,7 +290,7 @@ func (s *Storage) ListHyperliquidStatuses(md metadata.Metadata) ([]hyperliquid.W
 	defer s.mu.Unlock()
 
 	ctx := context.Background()
-	rows, err := s.queries.ListHyperliquidStatuses(ctx, md.String())
+	rows, err := s.queries.ListHyperliquidStatuses(ctx, md.Hex())
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +402,7 @@ func (s *Storage) LoadHyperliquidSubmission(md metadata.Metadata) (recomma.Actio
 	defer s.mu.Unlock()
 
 	ctx := context.Background()
-	row, err := s.queries.FetchHyperliquidSubmission(ctx, md.String())
+	row, err := s.queries.FetchHyperliquidSubmission(ctx, md.Hex())
 	if errors.Is(err, sql.ErrNoRows) {
 		return recomma.Action{}, false, nil
 	}
@@ -591,11 +591,6 @@ func (s *Storage) LoadTakeProfitForDeal(dealID uint32) (*metadata.Metadata, *tc.
 	var evt tc.BotEvent
 	if err := json.Unmarshal(row.Payload, &evt); err != nil {
 		return nil, nil, fmt.Errorf("decode take profit bot event: %w", err)
-	}
-	// backfill CreatedAt from the DB if the payload didn’t include it
-	if evt.CreatedAt == nil && row.CreatedAtUtc != 0 {
-		ts := time.UnixMilli(row.CreatedAtUtc).UTC()
-		evt.CreatedAt = &ts
 	}
 
 	return md, &evt, nil

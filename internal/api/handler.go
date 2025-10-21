@@ -234,7 +234,7 @@ func (h *ApiHandler) orderRecordFromItem(ctx context.Context, row OrderItem, inc
 		BotId:            int64(row.Metadata.BotID),
 		DealId:           int64(row.Metadata.DealID),
 		BotEventId:       int64(row.Metadata.BotEventID),
-		CreatedAt:        *row.BotEvent.CreatedAt,
+		CreatedAt:        row.BotEvent.CreatedAt,
 		ObservedAt:       row.ObservedAt,
 		BotEventPayload:  eventPayload,
 		LatestSubmission: latestSubmission,

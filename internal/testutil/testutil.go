@@ -16,7 +16,7 @@ func NewBotEvent(t *testing.T, base time.Time, botID uint32,
 	t.Helper()
 
 	evt := tc.BotEvent{
-		CreatedAt:     ptr(base.UTC()),
+		CreatedAt:     base.UTC(),
 		Action:        tc.BotEventActionPlace,
 		Coin:          "BTC",
 		Type:          tc.MarketOrderOrderType(tc.BUY),
@@ -59,10 +59,8 @@ func WithAction(action tc.BotEventAction) EventOpt {
 	return func(e *tc.BotEvent) { e.Action = action }
 }
 func WithCreatedAt(ts time.Time) EventOpt {
-	return func(e *tc.BotEvent) { e.CreatedAt = ptr(ts.UTC()) }
+	return func(e *tc.BotEvent) { e.CreatedAt = ts.UTC() }
 }
 func WithMarket(isMarket bool) EventOpt {
 	return func(e *tc.BotEvent) { e.IsMarket = isMarket }
 }
-
-func ptr(t time.Time) *time.Time { return &t }

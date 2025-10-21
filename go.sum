@@ -278,6 +278,8 @@ github.com/supranational/blst v0.3.16 h1:bTDadT+3fK497EvLdWRQEjiGnUtzJ7jjIUMF0jq
 github.com/supranational/blst v0.3.16/go.mod h1:jZJtfjgudtNl4en1tzwPIV3KjUnQUvG3/j+w+fVonLw=
 github.com/terwey/3commas-sdk-go v0.0.1 h1:FCZBysJ5Yq6li10CIT5wuSVFTnKBAxiUTIPs8IiNe1w=
 github.com/terwey/3commas-sdk-go v0.0.1/go.mod h1:R6WkKWr7REsAh49F3eQX7b1QasBVWxDzwG1T3JIW5T0=
+github.com/terwey/3commas-sdk-go v0.0.2 h1:0PU/n3VZPP6/pqkiG5Vwgsp/t+ebZ1H85F0jEHcadvo=
+github.com/terwey/3commas-sdk-go v0.0.2/go.mod h1:R6WkKWr7REsAh49F3eQX7b1QasBVWxDzwG1T3JIW5T0=
 github.com/tetratelabs/wazero v1.9.0 h1:IcZ56OuxrtaEz8UYNRHBrUa9bYeX9oVY93KspZZBf/I=
 github.com/tetratelabs/wazero v1.9.0/go.mod h1:TSbcXCfFP0L2FGkRPxHphadXPjo1T6W+CseNNY7EkjM=
 github.com/tklauser/go-sysconf v0.3.12 h1:0QaGUFOdQaIVdPgfITYzaTegZvdCjmYO52cSFAEVmqU=

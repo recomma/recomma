@@ -17,7 +17,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 
 	normalizeMetadata := func(t *testing.T, md metadata.Metadata) metadata.Metadata {
 		t.Helper()
-		normalized, err := metadata.FromHexString(md.String())
+		normalized, err := metadata.FromHexString(md.Hex())
 		require.NoError(t, err)
 		return *normalized
 	}
@@ -33,7 +33,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 		t.Helper()
 
 		botevent := tc.BotEvent{
-			CreatedAt:     &created,
+			CreatedAt:     created,
 			Action:        tc.BotEventActionExecute,
 			Coin:          coin,
 			Type:          tc.BUY,
@@ -299,7 +299,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 				}
 				created := base
 				takeProfit := tc.BotEvent{
-					CreatedAt:     &created,
+					CreatedAt:     created,
 					Action:        tc.BotEventActionExecute,
 					Coin:          coin,
 					Type:          tc.BUY,

@@ -137,7 +137,7 @@ func TestServiceUpdateStatusAdjustsPosition(t *testing.T) {
 	// Partial fill: remaining 80 of 200.
 	partialStatus := makeStatus(tpMD, coin, "S", hyperliquid.OrderStatusValueOpen, 200, 80, 0.205, now)
 	require.NoError(t, recordStatus(store, tpMD, partialStatus))
-	require.NoError(t, tracker.UpdateStatus(tpMD, partialStatus))
+	require.NoError(t, tracker.UpdateStatus(ctx, tpMD, partialStatus))
 
 	snapshot, ok := tracker.Snapshot(dealID)
 	require.True(t, ok)
@@ -323,7 +323,7 @@ func recordDeal(t *testing.T, store *storage.Storage, dealID, botID uint32, coin
 	t.Helper()
 
 	now := time.Now().UTC()
-	err := store.RecordThreeCommasDeal(tc.Deal{
+	err := store.RecordThreeCommasDeal(context.Background(), tc.Deal{
 		Id:         int(dealID),
 		BotId:      int(botID),
 		CreatedAt:  now,
@@ -334,12 +334,12 @@ func recordDeal(t *testing.T, store *storage.Storage, dealID, botID uint32, coin
 }
 
 func recordEvent(store *storage.Storage, md metadata.Metadata, evt tc.BotEvent) error {
-	_, err := store.RecordThreeCommasBotEvent(md, evt)
+	_, err := store.RecordThreeCommasBotEvent(context.Background(), md, evt)
 	return err
 }
 
 func recordStatus(store *storage.Storage, md metadata.Metadata, status hyperliquid.WsOrder) error {
-	return store.RecordHyperliquidStatus(md, status)
+	return store.RecordHyperliquidStatus(context.Background(), md, status)
 }
 
 func makeStatus(md metadata.Metadata, coin, side string, status hyperliquid.OrderStatusValue, original, remaining, limit float64, ts time.Time) hyperliquid.WsOrder {

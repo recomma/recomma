@@ -65,8 +65,8 @@ func (s *Service) Rebuild(ctx context.Context) error {
 }
 
 // UpdateStatus ingests a fresh Hyperliquid status update for a metadata fingerprint.
-func (s *Service) UpdateStatus(md metadata.Metadata, status hyperliquid.WsOrder) error {
-	event, err := s.store.LoadThreeCommasBotEvent(md)
+func (s *Service) UpdateStatus(ctx context.Context, md metadata.Metadata, status hyperliquid.WsOrder) error {
+	event, err := s.store.LoadThreeCommasBotEvent(ctx, md)
 	if err != nil {
 		return err
 	}
@@ -166,11 +166,11 @@ func (s *Service) reloadDeal(ctx context.Context, dealID uint32) error {
 	}
 
 	for _, md := range mds {
-		event, err := s.store.LoadThreeCommasBotEvent(md)
+		event, err := s.store.LoadThreeCommasBotEvent(ctx, md)
 		if err != nil {
 			return err
 		}
-		status, found, err := s.store.LoadHyperliquidStatus(md)
+		status, found, err := s.store.LoadHyperliquidStatus(ctx, md)
 		if err != nil {
 			return err
 		}

@@ -8,6 +8,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,11 +23,82 @@ const (
 	SessionCookieScopes = "SessionCookie.Scopes"
 )
 
-// Defines values for OrderLogEntryType.
+// Defines values for HyperliquidCancelActionKind.
 const (
-	HyperliquidStatus     OrderLogEntryType = "hyperliquid_status"
-	HyperliquidSubmission OrderLogEntryType = "hyperliquid_submission"
-	ThreeCommasEvent      OrderLogEntryType = "three_commas_event"
+	Cancel HyperliquidCancelActionKind = "cancel"
+)
+
+// Defines values for HyperliquidCreateActionKind.
+const (
+	Create HyperliquidCreateActionKind = "create"
+)
+
+// Defines values for HyperliquidModifyActionKind.
+const (
+	Modify HyperliquidModifyActionKind = "modify"
+)
+
+// Defines values for HyperliquidNoopActionKind.
+const (
+	None HyperliquidNoopActionKind = "none"
+)
+
+// Defines values for HyperliquidOrderStatus.
+const (
+	BadAloPxRejected                          HyperliquidOrderStatus = "badAloPxRejected"
+	BadTriggerPxRejected                      HyperliquidOrderStatus = "badTriggerPxRejected"
+	Canceled                                  HyperliquidOrderStatus = "canceled"
+	DelistedCanceled                          HyperliquidOrderStatus = "delistedCanceled"
+	Filled                                    HyperliquidOrderStatus = "filled"
+	IocCancelRejected                         HyperliquidOrderStatus = "iocCancelRejected"
+	LiquidatedCanceled                        HyperliquidOrderStatus = "liquidatedCanceled"
+	MarginCanceled                            HyperliquidOrderStatus = "marginCanceled"
+	MarketOrderNoLiquidityRejected            HyperliquidOrderStatus = "marketOrderNoLiquidityRejected"
+	MinTradeNtlRejected                       HyperliquidOrderStatus = "minTradeNtlRejected"
+	Open                                      HyperliquidOrderStatus = "open"
+	OpenInterestCapCanceled                   HyperliquidOrderStatus = "openInterestCapCanceled"
+	OpenInterestIncreaseRejected              HyperliquidOrderStatus = "openInterestIncreaseRejected"
+	PerpMarginRejected                        HyperliquidOrderStatus = "perpMarginRejected"
+	PositionFlipAtOpenInterestCapRejected     HyperliquidOrderStatus = "positionFlipAtOpenInterestCapRejected"
+	PositionIncreaseAtOpenInterestCapRejected HyperliquidOrderStatus = "positionIncreaseAtOpenInterestCapRejected"
+	ReduceOnlyCanceled                        HyperliquidOrderStatus = "reduceOnlyCanceled"
+	ReduceOnlyRejected                        HyperliquidOrderStatus = "reduceOnlyRejected"
+	Rejected                                  HyperliquidOrderStatus = "rejected"
+	ScheduledCancel                           HyperliquidOrderStatus = "scheduledCancel"
+	SelfTradeCanceled                         HyperliquidOrderStatus = "selfTradeCanceled"
+	SiblingFilledCanceled                     HyperliquidOrderStatus = "siblingFilledCanceled"
+	TickRejected                              HyperliquidOrderStatus = "tickRejected"
+	TooAggressiveAtOpenInterestCapRejected    HyperliquidOrderStatus = "tooAggressiveAtOpenInterestCapRejected"
+	Triggered                                 HyperliquidOrderStatus = "triggered"
+	VaultWithdrawalCanceled                   HyperliquidOrderStatus = "vaultWithdrawalCanceled"
+)
+
+// Defines values for HyperliquidStatusLogEntryType.
+const (
+	HyperliquidStatusLogEntryTypeHyperliquidStatus     HyperliquidStatusLogEntryType = "hyperliquid_status"
+	HyperliquidStatusLogEntryTypeHyperliquidSubmission HyperliquidStatusLogEntryType = "hyperliquid_submission"
+	HyperliquidStatusLogEntryTypeThreeCommasEvent      HyperliquidStatusLogEntryType = "three_commas_event"
+)
+
+// Defines values for HyperliquidSubmissionLogEntryType.
+const (
+	HyperliquidSubmissionLogEntryTypeHyperliquidStatus     HyperliquidSubmissionLogEntryType = "hyperliquid_status"
+	HyperliquidSubmissionLogEntryTypeHyperliquidSubmission HyperliquidSubmissionLogEntryType = "hyperliquid_submission"
+	HyperliquidSubmissionLogEntryTypeThreeCommasEvent      HyperliquidSubmissionLogEntryType = "three_commas_event"
+)
+
+// Defines values for OrderLogEntryBaseType.
+const (
+	OrderLogEntryBaseTypeHyperliquidStatus     OrderLogEntryBaseType = "hyperliquid_status"
+	OrderLogEntryBaseTypeHyperliquidSubmission OrderLogEntryBaseType = "hyperliquid_submission"
+	OrderLogEntryBaseTypeThreeCommasEvent      OrderLogEntryBaseType = "three_commas_event"
+)
+
+// Defines values for ThreeCommasLogEntryType.
+const (
+	ThreeCommasLogEntryTypeHyperliquidStatus     ThreeCommasLogEntryType = "hyperliquid_status"
+	ThreeCommasLogEntryTypeHyperliquidSubmission ThreeCommasLogEntryType = "hyperliquid_submission"
+	ThreeCommasLogEntryTypeThreeCommasEvent      ThreeCommasLogEntryType = "three_commas_event"
 )
 
 // Defines values for VaultState.
@@ -54,41 +126,268 @@ type DealRecord struct {
 	UpdatedAt time.Time         `json:"updated_at"`
 }
 
-// OrderLogEntry defines model for OrderLogEntry.
-type OrderLogEntry struct {
-	// BotEventId Bot-event ID when available (present for 3Commas rows).
-	BotEventId  *int64    `json:"bot_event_id"`
-	MetadataHex string    `json:"metadata_hex"`
-	ObservedAt  time.Time `json:"observed_at"`
-
-	// Payload Raw JSON payload from the corresponding table.
-	Payload map[string]interface{} `json:"payload"`
-	Type    OrderLogEntryType      `json:"type"`
+// HyperliquidAction defines model for HyperliquidAction.
+type HyperliquidAction struct {
+	union json.RawMessage
 }
 
-// OrderLogEntryType defines model for OrderLogEntry.Type.
-type OrderLogEntryType string
+// HyperliquidActionBase defines model for HyperliquidActionBase.
+type HyperliquidActionBase struct {
+	Kind string `json:"kind"`
+}
+
+// HyperliquidCancelAction defines model for HyperliquidCancelAction.
+type HyperliquidCancelAction struct {
+	Cancel HyperliquidCancelOrder      `json:"cancel"`
+	Kind   HyperliquidCancelActionKind `json:"kind"`
+}
+
+// HyperliquidCancelActionKind defines model for HyperliquidCancelAction.Kind.
+type HyperliquidCancelActionKind string
+
+// HyperliquidCancelOrder defines model for HyperliquidCancelOrder.
+type HyperliquidCancelOrder struct {
+	ClientOrderId string `json:"client_order_id"`
+	Coin          string `json:"coin"`
+}
+
+// HyperliquidCreateAction defines model for HyperliquidCreateAction.
+type HyperliquidCreateAction struct {
+	Kind  HyperliquidCreateActionKind `json:"kind"`
+	Order HyperliquidCreateOrder      `json:"order"`
+}
+
+// HyperliquidCreateActionKind defines model for HyperliquidCreateAction.Kind.
+type HyperliquidCreateActionKind string
+
+// HyperliquidCreateOrder defines model for HyperliquidCreateOrder.
+type HyperliquidCreateOrder struct {
+	ClientOrderId *string              `json:"client_order_id"`
+	Coin          string               `json:"coin"`
+	IsBuy         bool                 `json:"is_buy"`
+	OrderType     HyperliquidOrderType `json:"order_type"`
+	Price         float64              `json:"price"`
+	ReduceOnly    bool                 `json:"reduce_only"`
+	Size          float64              `json:"size"`
+}
+
+// HyperliquidLimitOrder defines model for HyperliquidLimitOrder.
+type HyperliquidLimitOrder struct {
+	// Tif Time in force. Examples include `Gtc`, `Ioc`, and `Alo`.
+	Tif string `json:"tif"`
+}
+
+// HyperliquidModifyAction defines model for HyperliquidModifyAction.
+type HyperliquidModifyAction struct {
+	// ClientOrderId Client order identifier (CLOID) to target when `oid` is not available.
+	ClientOrderId *string                     `json:"client_order_id"`
+	Kind          HyperliquidModifyActionKind `json:"kind"`
+
+	// Oid Target order identifier when available.
+	Oid   *int64                 `json:"oid"`
+	Order HyperliquidCreateOrder `json:"order"`
+}
+
+// HyperliquidModifyActionKind defines model for HyperliquidModifyAction.Kind.
+type HyperliquidModifyActionKind string
+
+// HyperliquidNoopAction defines model for HyperliquidNoopAction.
+type HyperliquidNoopAction struct {
+	Kind HyperliquidNoopActionKind `json:"kind"`
+
+	// Reason Optional explanation when no actionable payload is available.
+	Reason *string `json:"reason"`
+}
+
+// HyperliquidNoopActionKind defines model for HyperliquidNoopAction.Kind.
+type HyperliquidNoopActionKind string
+
+// HyperliquidOrderState defines model for HyperliquidOrderState.
+type HyperliquidOrderState struct {
+	LatestStatus     *HyperliquidWsOrder `json:"latest_status,omitempty"`
+	LatestSubmission *HyperliquidAction  `json:"latest_submission,omitempty"`
+}
+
+// HyperliquidOrderStatus defines model for HyperliquidOrderStatus.
+type HyperliquidOrderStatus string
+
+// HyperliquidOrderType defines model for HyperliquidOrderType.
+type HyperliquidOrderType struct {
+	Limit   *HyperliquidLimitOrder   `json:"limit,omitempty"`
+	Trigger *HyperliquidTriggerOrder `json:"trigger,omitempty"`
+}
+
+// HyperliquidStatusLogEntry defines model for HyperliquidStatusLogEntry.
+type HyperliquidStatusLogEntry struct {
+	BotEventId  *int64            `json:"bot_event_id"`
+	Identifiers *OrderIdentifiers `json:"identifiers,omitempty"`
+
+	// Metadata Metadata hash (hex) identifying the order context.
+	Metadata   string    `json:"metadata"`
+	ObservedAt time.Time `json:"observed_at"`
+
+	// Sequence Monotonic sequence counter assigned at publish time, useful for de-duplicating streamed events.
+	Sequence *int64                        `json:"sequence"`
+	Status   HyperliquidWsOrder            `json:"status"`
+	Type     HyperliquidStatusLogEntryType `json:"type"`
+}
+
+// HyperliquidStatusLogEntryType defines model for HyperliquidStatusLogEntry.Type.
+type HyperliquidStatusLogEntryType string
+
+// HyperliquidSubmissionLogEntry defines model for HyperliquidSubmissionLogEntry.
+type HyperliquidSubmissionLogEntry struct {
+	Action      HyperliquidAction `json:"action"`
+	BotEventId  *int64            `json:"bot_event_id"`
+	Identifiers *OrderIdentifiers `json:"identifiers,omitempty"`
+
+	// Metadata Metadata hash (hex) identifying the order context.
+	Metadata   string    `json:"metadata"`
+	ObservedAt time.Time `json:"observed_at"`
+
+	// Sequence Monotonic sequence counter assigned at publish time, useful for de-duplicating streamed events.
+	Sequence *int64                            `json:"sequence"`
+	Type     HyperliquidSubmissionLogEntryType `json:"type"`
+}
+
+// HyperliquidSubmissionLogEntryType defines model for HyperliquidSubmissionLogEntry.Type.
+type HyperliquidSubmissionLogEntryType string
+
+// HyperliquidTriggerOrder defines model for HyperliquidTriggerOrder.
+type HyperliquidTriggerOrder struct {
+	IsMarket bool `json:"is_market"`
+
+	// Tpsl Describes whether this trigger is take-profit (`tp`) or stop-loss (`sl`).
+	Tpsl      string  `json:"tpsl"`
+	TriggerPx float64 `json:"trigger_px"`
+}
+
+// HyperliquidWsBasicOrder defines model for HyperliquidWsBasicOrder.
+type HyperliquidWsBasicOrder struct {
+	ClientOrderId *string `json:"client_order_id"`
+	Coin          string  `json:"coin"`
+	LimitPx       string  `json:"limit_px"`
+	Oid           int64   `json:"oid"`
+	OrigSize      string  `json:"orig_size"`
+
+	// Side Either `A` (ask) or `B` (bid) in Hyperliquid terminology.
+	Side      string `json:"side"`
+	Size      string `json:"size"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+// HyperliquidWsOrder defines model for HyperliquidWsOrder.
+type HyperliquidWsOrder struct {
+	Order           HyperliquidWsBasicOrder `json:"order"`
+	Status          HyperliquidOrderStatus  `json:"status"`
+	StatusTimestamp int64                   `json:"status_timestamp"`
+}
+
+// OrderIdentifiers defines model for OrderIdentifiers.
+type OrderIdentifiers struct {
+	BotEventId int64 `json:"bot_event_id"`
+	BotId      int64 `json:"bot_id"`
+
+	// CreatedAt When the originating 3Commas event was created.
+	CreatedAt time.Time `json:"created_at"`
+	DealId    int64     `json:"deal_id"`
+
+	// Hex Case-insensitive hash deriving from the 3Commas metadata payload.
+	Hex string `json:"hex"`
+}
+
+// OrderLogEntry defines model for OrderLogEntry.
+type OrderLogEntry struct {
+	union json.RawMessage
+}
+
+// OrderLogEntryBase defines model for OrderLogEntryBase.
+type OrderLogEntryBase struct {
+	BotEventId  *int64            `json:"bot_event_id"`
+	Identifiers *OrderIdentifiers `json:"identifiers,omitempty"`
+
+	// Metadata Metadata hash (hex) identifying the order context.
+	Metadata   string    `json:"metadata"`
+	ObservedAt time.Time `json:"observed_at"`
+
+	// Sequence Monotonic sequence counter assigned at publish time, useful for de-duplicating streamed events.
+	Sequence *int64                `json:"sequence"`
+	Type     OrderLogEntryBaseType `json:"type"`
+}
+
+// OrderLogEntryBaseType defines model for OrderLogEntryBase.Type.
+type OrderLogEntryBaseType string
 
 // OrderRecord defines model for OrderRecord.
 type OrderRecord struct {
-	BotEventId int64 `json:"bot_event_id"`
+	Hyperliquid *HyperliquidOrderState `json:"hyperliquid,omitempty"`
+	Identifiers OrderIdentifiers       `json:"identifiers"`
 
-	// BotEventPayload Raw payload from `threecommas_botevents`.
-	BotEventPayload map[string]interface{} `json:"bot_event_payload"`
-	BotId           int64                  `json:"bot_id"`
-	CreatedAt       time.Time              `json:"created_at"`
-	DealId          int64                  `json:"deal_id"`
+	// LogEntries Present only when `include_log=true`. Entries follow the same structured shape as the SSE stream.
+	LogEntries *[]OrderLogEntry `json:"log_entries"`
 
-	// LatestStatus Raw JSON from the most recent `hyperliquid_status_history` row for this metadata.
-	LatestStatus *map[string]interface{} `json:"latest_status"`
+	// Metadata Metadata hash (hex) as stored in `threecommas_botevents`.
+	Metadata string `json:"metadata"`
 
-	// LatestSubmission Raw JSON from `hyperliquid_submissions` for this metadata (last write wins).
-	LatestSubmission *map[string]interface{} `json:"latest_submission"`
+	// ObservedAt Timestamp when Recomma observed the order update.
+	ObservedAt  time.Time             `json:"observed_at"`
+	ThreeCommas ThreeCommasOrderState `json:"three_commas"`
+}
 
-	// LogEntries Present only when `include_log=true`. Entries are filtered to the same metadata/time window.
-	LogEntries  *[]OrderLogEntry `json:"log_entries"`
-	MetadataHex string           `json:"metadata_hex"`
-	ObservedAt  time.Time        `json:"observed_at"`
+// ThreeCommasBotEvent defines model for ThreeCommasBotEvent.
+type ThreeCommasBotEvent struct {
+	// Action High-level classification provided by the bot event parser (for example `Placing` or `Execute`).
+	Action    string    `json:"action"`
+	Coin      string    `json:"coin"`
+	CreatedAt time.Time `json:"created_at"`
+	IsMarket  bool      `json:"is_market"`
+
+	// OrderPosition Position of this event inside the group (1-indexed).
+	OrderPosition int `json:"order_position"`
+
+	// OrderSize Total number of orders in the group this event belongs to.
+	OrderSize int `json:"order_size"`
+
+	// OrderType Event order type from 3Commas (base, safety, take_profit, etc).
+	OrderType        string   `json:"order_type"`
+	Price            float64  `json:"price"`
+	Profit           *float64 `json:"profit"`
+	ProfitCurrency   *string  `json:"profit_currency"`
+	ProfitPercentage *float64 `json:"profit_percentage"`
+	ProfitUsd        *float64 `json:"profit_usd"`
+	QuoteCurrency    string   `json:"quote_currency"`
+	QuoteVolume      float64  `json:"quote_volume"`
+	Size             float64  `json:"size"`
+	Status           string   `json:"status"`
+
+	// Text Raw message parsed from 3Commas describing the event.
+	Text string `json:"text"`
+
+	// Type BUY/SELL side reported by 3Commas.
+	Type string `json:"type"`
+}
+
+// ThreeCommasLogEntry defines model for ThreeCommasLogEntry.
+type ThreeCommasLogEntry struct {
+	BotEventId  *int64              `json:"bot_event_id"`
+	Event       ThreeCommasBotEvent `json:"event"`
+	Identifiers *OrderIdentifiers   `json:"identifiers,omitempty"`
+
+	// Metadata Metadata hash (hex) identifying the order context.
+	Metadata   string    `json:"metadata"`
+	ObservedAt time.Time `json:"observed_at"`
+
+	// Sequence Monotonic sequence counter assigned at publish time, useful for de-duplicating streamed events.
+	Sequence *int64                  `json:"sequence"`
+	Type     ThreeCommasLogEntryType `json:"type"`
+}
+
+// ThreeCommasLogEntryType defines model for ThreeCommasLogEntry.Type.
+type ThreeCommasLogEntryType string
+
+// ThreeCommasOrderState defines model for ThreeCommasOrderState.
+type ThreeCommasOrderState struct {
+	Event ThreeCommasBotEvent `json:"event"`
 }
 
 // VaultEncryptedPayload defines model for VaultEncryptedPayload.
@@ -338,6 +637,274 @@ type BeginWebauthnRegistrationJSONRequestBody = WebAuthnRegistrationBeginRequest
 
 // FinishWebauthnRegistrationJSONRequestBody defines body for FinishWebauthnRegistration for application/json ContentType.
 type FinishWebauthnRegistrationJSONRequestBody = WebAuthnRegistrationFinishRequest
+
+// AsHyperliquidNoopAction returns the union data inside the HyperliquidAction as a HyperliquidNoopAction
+func (t HyperliquidAction) AsHyperliquidNoopAction() (HyperliquidNoopAction, error) {
+	var body HyperliquidNoopAction
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromHyperliquidNoopAction overwrites any union data inside the HyperliquidAction as the provided HyperliquidNoopAction
+func (t *HyperliquidAction) FromHyperliquidNoopAction(v HyperliquidNoopAction) error {
+	v.Kind = "none"
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeHyperliquidNoopAction performs a merge with any union data inside the HyperliquidAction, using the provided HyperliquidNoopAction
+func (t *HyperliquidAction) MergeHyperliquidNoopAction(v HyperliquidNoopAction) error {
+	v.Kind = "none"
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsHyperliquidCreateAction returns the union data inside the HyperliquidAction as a HyperliquidCreateAction
+func (t HyperliquidAction) AsHyperliquidCreateAction() (HyperliquidCreateAction, error) {
+	var body HyperliquidCreateAction
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromHyperliquidCreateAction overwrites any union data inside the HyperliquidAction as the provided HyperliquidCreateAction
+func (t *HyperliquidAction) FromHyperliquidCreateAction(v HyperliquidCreateAction) error {
+	v.Kind = "create"
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeHyperliquidCreateAction performs a merge with any union data inside the HyperliquidAction, using the provided HyperliquidCreateAction
+func (t *HyperliquidAction) MergeHyperliquidCreateAction(v HyperliquidCreateAction) error {
+	v.Kind = "create"
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsHyperliquidModifyAction returns the union data inside the HyperliquidAction as a HyperliquidModifyAction
+func (t HyperliquidAction) AsHyperliquidModifyAction() (HyperliquidModifyAction, error) {
+	var body HyperliquidModifyAction
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromHyperliquidModifyAction overwrites any union data inside the HyperliquidAction as the provided HyperliquidModifyAction
+func (t *HyperliquidAction) FromHyperliquidModifyAction(v HyperliquidModifyAction) error {
+	v.Kind = "modify"
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeHyperliquidModifyAction performs a merge with any union data inside the HyperliquidAction, using the provided HyperliquidModifyAction
+func (t *HyperliquidAction) MergeHyperliquidModifyAction(v HyperliquidModifyAction) error {
+	v.Kind = "modify"
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsHyperliquidCancelAction returns the union data inside the HyperliquidAction as a HyperliquidCancelAction
+func (t HyperliquidAction) AsHyperliquidCancelAction() (HyperliquidCancelAction, error) {
+	var body HyperliquidCancelAction
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromHyperliquidCancelAction overwrites any union data inside the HyperliquidAction as the provided HyperliquidCancelAction
+func (t *HyperliquidAction) FromHyperliquidCancelAction(v HyperliquidCancelAction) error {
+	v.Kind = "cancel"
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeHyperliquidCancelAction performs a merge with any union data inside the HyperliquidAction, using the provided HyperliquidCancelAction
+func (t *HyperliquidAction) MergeHyperliquidCancelAction(v HyperliquidCancelAction) error {
+	v.Kind = "cancel"
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t HyperliquidAction) Discriminator() (string, error) {
+	var discriminator struct {
+		Discriminator string `json:"kind"`
+	}
+	err := json.Unmarshal(t.union, &discriminator)
+	return discriminator.Discriminator, err
+}
+
+func (t HyperliquidAction) ValueByDiscriminator() (interface{}, error) {
+	discriminator, err := t.Discriminator()
+	if err != nil {
+		return nil, err
+	}
+	switch discriminator {
+	case "cancel":
+		return t.AsHyperliquidCancelAction()
+	case "create":
+		return t.AsHyperliquidCreateAction()
+	case "modify":
+		return t.AsHyperliquidModifyAction()
+	case "none":
+		return t.AsHyperliquidNoopAction()
+	default:
+		return nil, errors.New("unknown discriminator value: " + discriminator)
+	}
+}
+
+func (t HyperliquidAction) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *HyperliquidAction) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsThreeCommasLogEntry returns the union data inside the OrderLogEntry as a ThreeCommasLogEntry
+func (t OrderLogEntry) AsThreeCommasLogEntry() (ThreeCommasLogEntry, error) {
+	var body ThreeCommasLogEntry
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromThreeCommasLogEntry overwrites any union data inside the OrderLogEntry as the provided ThreeCommasLogEntry
+func (t *OrderLogEntry) FromThreeCommasLogEntry(v ThreeCommasLogEntry) error {
+	v.Type = "three_commas_event"
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeThreeCommasLogEntry performs a merge with any union data inside the OrderLogEntry, using the provided ThreeCommasLogEntry
+func (t *OrderLogEntry) MergeThreeCommasLogEntry(v ThreeCommasLogEntry) error {
+	v.Type = "three_commas_event"
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsHyperliquidSubmissionLogEntry returns the union data inside the OrderLogEntry as a HyperliquidSubmissionLogEntry
+func (t OrderLogEntry) AsHyperliquidSubmissionLogEntry() (HyperliquidSubmissionLogEntry, error) {
+	var body HyperliquidSubmissionLogEntry
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromHyperliquidSubmissionLogEntry overwrites any union data inside the OrderLogEntry as the provided HyperliquidSubmissionLogEntry
+func (t *OrderLogEntry) FromHyperliquidSubmissionLogEntry(v HyperliquidSubmissionLogEntry) error {
+	v.Type = "hyperliquid_submission"
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeHyperliquidSubmissionLogEntry performs a merge with any union data inside the OrderLogEntry, using the provided HyperliquidSubmissionLogEntry
+func (t *OrderLogEntry) MergeHyperliquidSubmissionLogEntry(v HyperliquidSubmissionLogEntry) error {
+	v.Type = "hyperliquid_submission"
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsHyperliquidStatusLogEntry returns the union data inside the OrderLogEntry as a HyperliquidStatusLogEntry
+func (t OrderLogEntry) AsHyperliquidStatusLogEntry() (HyperliquidStatusLogEntry, error) {
+	var body HyperliquidStatusLogEntry
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromHyperliquidStatusLogEntry overwrites any union data inside the OrderLogEntry as the provided HyperliquidStatusLogEntry
+func (t *OrderLogEntry) FromHyperliquidStatusLogEntry(v HyperliquidStatusLogEntry) error {
+	v.Type = "hyperliquid_status"
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeHyperliquidStatusLogEntry performs a merge with any union data inside the OrderLogEntry, using the provided HyperliquidStatusLogEntry
+func (t *OrderLogEntry) MergeHyperliquidStatusLogEntry(v HyperliquidStatusLogEntry) error {
+	v.Type = "hyperliquid_status"
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t OrderLogEntry) Discriminator() (string, error) {
+	var discriminator struct {
+		Discriminator string `json:"type"`
+	}
+	err := json.Unmarshal(t.union, &discriminator)
+	return discriminator.Discriminator, err
+}
+
+func (t OrderLogEntry) ValueByDiscriminator() (interface{}, error) {
+	discriminator, err := t.Discriminator()
+	if err != nil {
+		return nil, err
+	}
+	switch discriminator {
+	case "hyperliquid_status":
+		return t.AsHyperliquidStatusLogEntry()
+	case "hyperliquid_submission":
+		return t.AsHyperliquidSubmissionLogEntry()
+	case "three_commas_event":
+		return t.AsThreeCommasLogEntry()
+	default:
+		return nil, errors.New("unknown discriminator value: " + discriminator)
+	}
+}
+
+func (t OrderLogEntry) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *OrderLogEntry) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {

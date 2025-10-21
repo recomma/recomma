@@ -199,67 +199,34 @@ func (h *ApiHandler) buildOrderRecords(ctx context.Context, rows []OrderItem, in
 }
 
 func (h *ApiHandler) orderRecordFromItem(ctx context.Context, row OrderItem, includeLog bool) (OrderRecord, bool) {
-	eventPayload, err := marshalToMap(row.BotEvent)
-	if err != nil {
-		h.logger.WarnContext(ctx, "marshal bot event payload",
-			slog.String("metadata_hex", row.Metadata.Hex()),
-			slog.String("error", err.Error()))
+	if row.BotEvent == nil {
+		h.logger.WarnContext(ctx, "order row missing bot event",
+			slog.String("metadata", row.Metadata.Hex()))
 		return OrderRecord{}, false
 	}
 
-	var latestSubmission *map[string]interface{}
-	if row.LatestSubmission != nil {
-		if v, err := marshalToMap(row.LatestSubmission); err == nil {
-			latestSubmission = &v
-		} else {
-			h.logger.WarnContext(ctx, "marshal latest submission",
-				slog.String("metadata_hex", row.Metadata.Hex()),
-				slog.String("error", err.Error()))
-		}
-	}
-
-	var latestStatus *map[string]interface{}
-	if row.LatestStatus != nil {
-		if v, err := marshalToMap(row.LatestStatus); err == nil {
-			latestStatus = &v
-		} else {
-			h.logger.WarnContext(ctx, "marshal latest status",
-				slog.String("metadata_hex", row.Metadata.Hex()),
-				slog.String("error", err.Error()))
-		}
-	}
+	identifiers := makeOrderIdentifiers(row.Metadata, row.BotEvent, row.ObservedAt)
 
 	record := OrderRecord{
-		MetadataHex:      row.Metadata.Hex(),
-		BotId:            int64(row.Metadata.BotID),
-		DealId:           int64(row.Metadata.DealID),
-		BotEventId:       int64(row.Metadata.BotEventID),
-		CreatedAt:        row.BotEvent.CreatedAt,
-		ObservedAt:       row.ObservedAt,
-		BotEventPayload:  eventPayload,
-		LatestSubmission: latestSubmission,
-		LatestStatus:     latestStatus,
+		Metadata:    row.Metadata.Hex(),
+		Identifiers: identifiers,
+		ObservedAt:  row.ObservedAt,
+		ThreeCommas: ThreeCommasOrderState{
+			Event: convertThreeCommasBotEvent(row.BotEvent),
+		},
+	}
+
+	if state := buildHyperliquidOrderState(row.LatestSubmission, row.LatestStatus); state != nil {
+		record.Hyperliquid = state
 	}
 
 	if includeLog && len(row.LogEntries) > 0 {
 		entries := make([]OrderLogEntry, 0, len(row.LogEntries))
+		identCopy := record.Identifiers
 		for _, logRow := range row.LogEntries {
-			payload, err := payloadForEntry(logRow.Type, logRow.BotEvent, logRow.Submission, logRow.Status)
-			if err != nil {
-				h.logger.WarnContext(ctx, "marshal log payload",
-					slog.String("metadata_hex", row.Metadata.Hex()),
-					slog.String("error", err.Error()))
+			entry, ok := h.makeOrderLogEntry(ctx, logRow.Metadata, logRow.ObservedAt, logRow.Type, logRow.BotEvent, logRow.Submission, logRow.Status, &identCopy, nil)
+			if !ok {
 				continue
-			}
-			entry := OrderLogEntry{
-				Type:        logRow.Type,
-				MetadataHex: logRow.Metadata.Hex(),
-				ObservedAt:  logRow.ObservedAt,
-				Payload:     payload,
-			}
-			if id := logRow.Metadata.BotEventID; id != 0 {
-				val := int64(id)
-				entry.BotEventId = &val
 			}
 			entries = append(entries, entry)
 		}
@@ -303,7 +270,7 @@ func (h *ApiHandler) StreamOrders(ctx context.Context, req StreamOrdersRequestOb
 				if !ok {
 					return
 				}
-				if err := h.writeSSEFrame(pw, evt); err != nil {
+				if err := h.writeSSEFrame(ctx, pw, evt); err != nil {
 					h.logger.WarnContext(ctx, "write SSE frame", slog.String("error", err.Error()))
 					return
 				}
@@ -317,26 +284,16 @@ func (h *ApiHandler) StreamOrders(ctx context.Context, req StreamOrdersRequestOb
 }
 
 // writeSSEFrame marshals the event payload and writes an SSE-formatted frame.
-func (h *ApiHandler) writeSSEFrame(w io.Writer, evt StreamEvent) error {
-	payload, err := payloadForEntry(evt.Type, evt.BotEvent, evt.Submission, evt.Status)
-	if err != nil {
-		return fmt.Errorf("marshal stream payload: %w", err)
+func (h *ApiHandler) writeSSEFrame(ctx context.Context, w io.Writer, evt StreamEvent) error {
+	h.logger.Debug("sending SSE", slog.Any("event", evt))
+	ident := makeOrderIdentifiers(evt.Metadata, evt.BotEvent, evt.ObservedAt)
+
+	entry, ok := h.makeOrderLogEntry(ctx, evt.Metadata, evt.ObservedAt, evt.Type, evt.BotEvent, evt.Submission, evt.Status, &ident, evt.Sequence)
+	if !ok {
+		return nil
 	}
 
-	frame := map[string]interface{}{
-		"type":         string(evt.Type),
-		"metadata_hex": evt.Metadata.Hex(),
-		"observed_at":  evt.ObservedAt.UTC(),
-		"payload":      payload,
-	}
-	if id := evt.Metadata.BotEventID; id != 0 {
-		frame["bot_event_id"] = int64(id)
-	}
-	if evt.Sequence != nil {
-		frame["sequence"] = *evt.Sequence
-	}
-
-	data, err := json.Marshal(frame)
+	data, err := entry.MarshalJSON()
 	if err != nil {
 		return fmt.Errorf("marshal stream frame: %w", err)
 	}
@@ -459,6 +416,14 @@ type OrderItem struct {
 	LogEntries       []OrderLogItem
 }
 
+type OrderLogEntryType string
+
+const (
+	ThreeCommasEvent      OrderLogEntryType = "three_commas_event"
+	HyperliquidSubmission OrderLogEntryType = "hyperliquid_submission"
+	HyperliquidStatus     OrderLogEntryType = "hyperliquid_status"
+)
+
 type OrderLogItem struct {
 	Type       OrderLogEntryType
 	Metadata   metadata.Metadata
@@ -486,15 +451,352 @@ type StreamEvent struct {
 	Sequence   *int64
 }
 
-func payloadForEntry(entryType OrderLogEntryType, botEvent *tc.BotEvent, submission interface{}, status *hyperliquid.WsOrder) (map[string]interface{}, error) {
+func makeOrderIdentifiers(md metadata.Metadata, event *tc.BotEvent, fallback time.Time) OrderIdentifiers {
+	createdAt := fallback
+	if event != nil && !event.CreatedAt.IsZero() {
+		createdAt = event.CreatedAt
+	}
+	return OrderIdentifiers{
+		Hex:        md.Hex(),
+		BotId:      int64(md.BotID),
+		DealId:     int64(md.DealID),
+		BotEventId: int64(md.BotEventID),
+		CreatedAt:  createdAt,
+	}
+}
+
+func convertThreeCommasBotEvent(evt *tc.BotEvent) ThreeCommasBotEvent {
+	if evt == nil {
+		return ThreeCommasBotEvent{}
+	}
+
+	profit := evt.Profit
+	profitCurrency := evt.ProfitCurrency
+	profitUSD := evt.ProfitUSD
+	profitPercentage := evt.ProfitPercentage
+
+	return ThreeCommasBotEvent{
+		CreatedAt:        evt.CreatedAt,
+		Action:           string(evt.Action),
+		Coin:             evt.Coin,
+		Type:             string(evt.Type),
+		Status:           string(evt.Status),
+		Price:            evt.Price,
+		Size:             evt.Size,
+		OrderType:        string(evt.OrderType),
+		OrderSize:        evt.OrderSize,
+		OrderPosition:    evt.OrderPosition,
+		QuoteVolume:      evt.QuoteVolume,
+		QuoteCurrency:    evt.QuoteCurrency,
+		IsMarket:         evt.IsMarket,
+		Text:             evt.Text,
+		Profit:           &profit,
+		ProfitCurrency:   &profitCurrency,
+		ProfitUsd:        &profitUSD,
+		ProfitPercentage: &profitPercentage,
+	}
+}
+
+func buildHyperliquidOrderState(submission interface{}, status *hyperliquid.WsOrder) *HyperliquidOrderState {
+	var state HyperliquidOrderState
+
+	if action, ok := convertHyperliquidAction(submission); ok {
+		state.LatestSubmission = &action
+	}
+	if ws, ok := convertHyperliquidWsOrder(status); ok {
+		state.LatestStatus = &ws
+	}
+	if state.LatestSubmission == nil && state.LatestStatus == nil {
+		return nil
+	}
+	return &state
+}
+
+func convertHyperliquidAction(payload interface{}) (HyperliquidAction, bool) {
+	var action HyperliquidAction
+	switch v := payload.(type) {
+	case *hyperliquid.CreateOrderRequest:
+		if v == nil {
+			return HyperliquidAction{}, false
+		}
+		create := convertHyperliquidCreateOrder(*v)
+		if err := action.FromHyperliquidCreateAction(HyperliquidCreateAction{Order: create}); err != nil {
+			return HyperliquidAction{}, false
+		}
+		return action, true
+	case hyperliquid.CreateOrderRequest:
+		create := convertHyperliquidCreateOrder(v)
+		if err := action.FromHyperliquidCreateAction(HyperliquidCreateAction{Order: create}); err != nil {
+			return HyperliquidAction{}, false
+		}
+		return action, true
+	case *hyperliquid.ModifyOrderRequest:
+		if v == nil {
+			return HyperliquidAction{}, false
+		}
+		modify, ok := convertHyperliquidModify(*v)
+		if !ok {
+			return HyperliquidAction{}, false
+		}
+		if err := action.FromHyperliquidModifyAction(modify); err != nil {
+			return HyperliquidAction{}, false
+		}
+		return action, true
+	case hyperliquid.ModifyOrderRequest:
+		modify, ok := convertHyperliquidModify(v)
+		if !ok {
+			return HyperliquidAction{}, false
+		}
+		if err := action.FromHyperliquidModifyAction(modify); err != nil {
+			return HyperliquidAction{}, false
+		}
+		return action, true
+	case *hyperliquid.CancelOrderRequestByCloid:
+		if v == nil {
+			return HyperliquidAction{}, false
+		}
+		cancel := convertHyperliquidCancel(*v)
+		if err := action.FromHyperliquidCancelAction(cancel); err != nil {
+			return HyperliquidAction{}, false
+		}
+		return action, true
+	case hyperliquid.CancelOrderRequestByCloid:
+		cancel := convertHyperliquidCancel(v)
+		if err := action.FromHyperliquidCancelAction(cancel); err != nil {
+			return HyperliquidAction{}, false
+		}
+		return action, true
+	default:
+		return HyperliquidAction{}, false
+	}
+}
+
+func convertHyperliquidCreateOrder(req hyperliquid.CreateOrderRequest) HyperliquidCreateOrder {
+	order := HyperliquidCreateOrder{
+		Coin:       req.Coin,
+		IsBuy:      req.IsBuy,
+		Price:      req.Price,
+		Size:       req.Size,
+		ReduceOnly: req.ReduceOnly,
+		OrderType:  convertHyperliquidOrderType(req.OrderType),
+	}
+	if req.ClientOrderID != nil {
+		order.ClientOrderId = req.ClientOrderID
+	}
+	return order
+}
+
+func convertHyperliquidOrderType(src hyperliquid.OrderType) HyperliquidOrderType {
+	var out HyperliquidOrderType
+	if src.Limit != nil {
+		out.Limit = &HyperliquidLimitOrder{Tif: string(src.Limit.Tif)}
+	}
+	if src.Trigger != nil {
+		out.Trigger = &HyperliquidTriggerOrder{
+			TriggerPx: src.Trigger.TriggerPx,
+			IsMarket:  src.Trigger.IsMarket,
+			Tpsl:      string(src.Trigger.Tpsl),
+		}
+	}
+	return out
+}
+
+func convertHyperliquidModify(req hyperliquid.ModifyOrderRequest) (HyperliquidModifyAction, bool) {
+	action := HyperliquidModifyAction{
+		Order: convertHyperliquidCreateOrder(req.Order),
+	}
+
+	switch oid := req.Oid.(type) {
+	case nil:
+	case int64:
+		action.Oid = &oid
+	case int:
+		v := int64(oid)
+		action.Oid = &v
+	case float64:
+		v := int64(oid)
+		action.Oid = &v
+	case hyperliquid.Cloid:
+		val := oid.ToRaw()
+		action.ClientOrderId = &val
+	case *hyperliquid.Cloid:
+		if oid != nil {
+			val := oid.ToRaw()
+			action.ClientOrderId = &val
+		}
+	case string:
+		val := oid
+		action.ClientOrderId = &val
+	case *string:
+		if oid != nil {
+			val := *oid
+			action.ClientOrderId = &val
+		}
+	case fmt.Stringer:
+		val := oid.String()
+		action.ClientOrderId = &val
+	default:
+		// unknown identifier shape
+	}
+
+	if action.Oid == nil && action.ClientOrderId == nil && req.Order.ClientOrderID != nil {
+		val := *req.Order.ClientOrderID
+		action.ClientOrderId = &val
+	}
+
+	if action.Oid == nil && action.ClientOrderId == nil {
+		return HyperliquidModifyAction{}, false
+	}
+
+	return action, true
+}
+
+func convertHyperliquidCancel(req hyperliquid.CancelOrderRequestByCloid) HyperliquidCancelAction {
+	return HyperliquidCancelAction{
+		Cancel: HyperliquidCancelOrder{
+			Coin:          req.Coin,
+			ClientOrderId: req.Cloid,
+		},
+	}
+}
+
+func convertHyperliquidWsOrder(src *hyperliquid.WsOrder) (HyperliquidWsOrder, bool) {
+	if src == nil {
+		return HyperliquidWsOrder{}, false
+	}
+
+	order := HyperliquidWsBasicOrder{
+		Coin:          src.Order.Coin,
+		Side:          src.Order.Side,
+		LimitPx:       src.Order.LimitPx,
+		Size:          src.Order.Sz,
+		Oid:           src.Order.Oid,
+		Timestamp:     src.Order.Timestamp,
+		OrigSize:      src.Order.OrigSz,
+		ClientOrderId: src.Order.Cloid,
+	}
+
+	return HyperliquidWsOrder{
+		Order:           order,
+		Status:          HyperliquidOrderStatus(src.Status),
+		StatusTimestamp: src.StatusTimestamp,
+	}, true
+}
+
+func cloneIdentifiers(base *OrderIdentifiers, md metadata.Metadata, createdAt, fallback time.Time) *OrderIdentifiers {
+	var ident OrderIdentifiers
+	if base != nil {
+		ident = *base
+	}
+	ident.Hex = md.Hex()
+	ident.BotId = int64(md.BotID)
+	ident.DealId = int64(md.DealID)
+	ident.BotEventId = int64(md.BotEventID)
+	if !createdAt.IsZero() {
+		ident.CreatedAt = createdAt
+	} else if ident.CreatedAt.IsZero() {
+		ident.CreatedAt = fallback
+	}
+	return &ident
+}
+
+func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata, observedAt time.Time, entryType OrderLogEntryType, botEvent *tc.BotEvent, submission interface{}, status *hyperliquid.WsOrder, baseIdentifiers *OrderIdentifiers, sequence *int64) (OrderLogEntry, bool) {
+	metadataHex := md.Hex()
+	var entry OrderLogEntry
+	var botEventID *int64
+	if id := md.BotEventID; id != 0 {
+		val := int64(id)
+		botEventID = &val
+	}
+
 	switch entryType {
 	case ThreeCommasEvent:
-		return marshalToMap(botEvent)
+		if botEvent == nil {
+			h.logger.WarnContext(ctx, "missing bot event for log entry",
+				slog.String("metadata", metadataHex))
+			return OrderLogEntry{}, false
+		}
+		logEntry := ThreeCommasLogEntry{
+			Metadata:   metadataHex,
+			ObservedAt: observedAt,
+			Event:      convertThreeCommasBotEvent(botEvent),
+			BotEventId: botEventID,
+		}
+		if identifiers := cloneIdentifiers(baseIdentifiers, md, botEvent.CreatedAt, observedAt); identifiers != nil {
+			logEntry.Identifiers = identifiers
+		}
+		if sequence != nil {
+			logEntry.Sequence = sequence
+		}
+		if err := entry.FromThreeCommasLogEntry(logEntry); err != nil {
+			h.logger.WarnContext(ctx, "marshal threecommas log entry",
+				slog.String("metadata", metadataHex),
+				slog.String("error", err.Error()))
+			return OrderLogEntry{}, false
+		}
 	case HyperliquidSubmission:
-		return marshalToMap(submission)
+		action, ok := convertHyperliquidAction(submission)
+		if !ok {
+			h.logger.WarnContext(ctx, "unexpected submission payload",
+				slog.String("metadata", metadataHex))
+			return OrderLogEntry{}, false
+		}
+		logEntry := HyperliquidSubmissionLogEntry{
+			Metadata:   metadataHex,
+			ObservedAt: observedAt,
+			Action:     action,
+			BotEventId: botEventID,
+		}
+		if identifiers := cloneIdentifiers(baseIdentifiers, md, createdAt(botEvent), observedAt); identifiers != nil {
+			logEntry.Identifiers = identifiers
+		}
+		if sequence != nil {
+			logEntry.Sequence = sequence
+		}
+		if err := entry.FromHyperliquidSubmissionLogEntry(logEntry); err != nil {
+			h.logger.WarnContext(ctx, "marshal hyperliquid submission log entry",
+				slog.String("metadata", metadataHex),
+				slog.String("error", err.Error()))
+			return OrderLogEntry{}, false
+		}
 	case HyperliquidStatus:
-		return marshalToMap(status)
+		ws, ok := convertHyperliquidWsOrder(status)
+		if !ok {
+			h.logger.WarnContext(ctx, "missing hyperliquid status payload",
+				slog.String("metadata", metadataHex))
+			return OrderLogEntry{}, false
+		}
+		logEntry := HyperliquidStatusLogEntry{
+			Metadata:   metadataHex,
+			ObservedAt: observedAt,
+			Status:     ws,
+			BotEventId: botEventID,
+		}
+		if identifiers := cloneIdentifiers(baseIdentifiers, md, createdAt(botEvent), observedAt); identifiers != nil {
+			logEntry.Identifiers = identifiers
+		}
+		if sequence != nil {
+			logEntry.Sequence = sequence
+		}
+		if err := entry.FromHyperliquidStatusLogEntry(logEntry); err != nil {
+			h.logger.WarnContext(ctx, "marshal hyperliquid status log entry",
+				slog.String("metadata", metadataHex),
+				slog.String("error", err.Error()))
+			return OrderLogEntry{}, false
+		}
 	default:
-		return map[string]interface{}{}, nil
+		h.logger.WarnContext(ctx, "unknown log entry type",
+			slog.String("metadata", metadataHex),
+			slog.String("type", string(entryType)))
+		return OrderLogEntry{}, false
 	}
+
+	return entry, true
+}
+
+func createdAt(evt *tc.BotEvent) time.Time {
+	if evt == nil {
+		return time.Time{}
+	}
+	return evt.CreatedAt
 }

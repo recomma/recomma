@@ -68,7 +68,9 @@ func main() {
 
 	appCtx = rlog.ContextWithLogger(appCtx, logger)
 
-	store, err := storage.New(cfg.StoragePath)
+	streamController := api.NewStreamController(api.WithStreamLogger(logger))
+
+	store, err := storage.New(cfg.StoragePath, storage.WithStreamPublisher(streamController))
 	if err != nil {
 		fatal("storage init failed", err)
 	}
@@ -114,7 +116,7 @@ func main() {
 		fatal("webauth api init failed", err)
 	}
 
-	apiHandler := api.NewHandler(store, nil, /* StreamSource */
+	apiHandler := api.NewHandler(store, streamController,
 		api.WithLogger(logger),
 		api.WithWebAuthnService(webAuthApi),
 		api.WithVaultController(vaultController))

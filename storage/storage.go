@@ -15,6 +15,7 @@ import (
 
 	hyperliquid "github.com/sonirico/go-hyperliquid"
 	tc "github.com/terwey/3commas-sdk-go/threecommas"
+	"github.com/terwey/recomma/internal/api"
 	"github.com/terwey/recomma/metadata"
 	"github.com/terwey/recomma/recomma"
 	"github.com/terwey/recomma/storage/sqlcgen"
@@ -29,10 +30,18 @@ type Storage struct {
 	db      *sql.DB
 	queries *sqlcgen.Queries
 	mu      sync.Mutex
+	stream  api.StreamPublisher
 }
 
 // StorageOption configures Storage optional dependencies.
 type StorageOption func(*Storage)
+
+// WithStreamPublisher injects the StreamPublisher service used for SSE
+func WithStreamPublisher(stream api.StreamPublisher) StorageOption {
+	return func(h *Storage) {
+		h.stream = stream
+	}
+}
 
 func WithLogger(logger *slog.Logger) StorageOption {
 	return func(s *Storage) {
@@ -108,6 +117,15 @@ func (s *Storage) RecordThreeCommasBotEvent(md metadata.Metadata, order tc.BotEv
 		return 0, err
 	}
 
+	if lastInsertId != 0 {
+		clone := order
+		s.publishStreamEventLocked(api.StreamEvent{
+			Type:     api.ThreeCommasEvent,
+			Metadata: md,
+			BotEvent: &clone,
+		})
+	}
+
 	return lastInsertId, nil
 }
 
@@ -168,6 +186,41 @@ func (s *Storage) ListEventsForOrder(botID, dealID, botEventID uint32) ([]recomm
 	return events, nil
 }
 
+// ListEventsLog returns all BotEvents recorded, irrelevant if we acted on it.
+func (s *Storage) ListEventsLog(ctx context.Context) ([]recomma.BotEventLog, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.queries.ListThreeCommasBotEventLogs(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	events := make([]recomma.BotEventLog, 0, len(rows))
+	for _, row := range rows {
+		var evt tc.BotEvent
+		if err := json.Unmarshal(row.Payload, &evt); err != nil {
+			return nil, fmt.Errorf("decode bot event: %w", err)
+		}
+		md, err := metadata.FromHexString(row.Md)
+		if err != nil {
+			return nil, fmt.Errorf("decode metadata: %w", err)
+		}
+		events = append(events, recomma.BotEventLog{
+			RowID:      row.ID,
+			BotEvent:   evt,
+			BotID:      row.BotID,
+			DealID:     row.DealID,
+			BoteventID: row.BoteventID,
+			Md:         *md,
+			CreatedAt:  time.UnixMilli(row.CreatedAtUtc).UTC(),
+			ObservedAt: time.UnixMilli(row.ObservedAtUtc).UTC(),
+		})
+	}
+
+	return events, nil
+}
+
 func (s *Storage) HasMetadata(md metadata.Metadata) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -218,7 +271,12 @@ func (s *Storage) RecordHyperliquidOrderRequest(md metadata.Metadata, req hyperl
 		BoteventRowID: boteventRowId,
 	}
 
-	return s.queries.UpsertHyperliquidCreate(ctx, params)
+	if err := s.queries.UpsertHyperliquidCreate(ctx, params); err != nil {
+		return err
+	}
+
+	s.publishHyperliquidSubmissionLocked(ctx, md, req, boteventRowId)
+	return nil
 }
 
 func (s *Storage) AppendHyperliquidModify(md metadata.Metadata, req hyperliquid.ModifyOrderRequest, boteventRowId int64) error {
@@ -237,7 +295,12 @@ func (s *Storage) AppendHyperliquidModify(md metadata.Metadata, req hyperliquid.
 		BoteventRowID: boteventRowId,
 	}
 
-	return s.queries.AppendHyperliquidModify(ctx, params)
+	if err := s.queries.AppendHyperliquidModify(ctx, params); err != nil {
+		return err
+	}
+
+	s.publishHyperliquidSubmissionLocked(ctx, md, req, boteventRowId)
+	return nil
 }
 
 func (s *Storage) RecordHyperliquidCancel(md metadata.Metadata, req hyperliquid.CancelOrderRequestByCloid, boteventRowId int64) error {
@@ -256,7 +319,12 @@ func (s *Storage) RecordHyperliquidCancel(md metadata.Metadata, req hyperliquid.
 		BoteventRowID: boteventRowId,
 	}
 
-	return s.queries.UpsertHyperliquidCancel(ctx, params)
+	if err := s.queries.UpsertHyperliquidCancel(ctx, params); err != nil {
+		return err
+	}
+
+	s.publishHyperliquidSubmissionLocked(ctx, md, req, boteventRowId)
+	return nil
 }
 
 func (s *Storage) RecordHyperliquidStatus(md metadata.Metadata, status hyperliquid.WsOrder) error {
@@ -275,7 +343,18 @@ func (s *Storage) RecordHyperliquidStatus(md metadata.Metadata, status hyperliqu
 		RecordedAtUtc: time.Now().UTC().UnixMilli(),
 	}
 
-	return s.queries.InsertHyperliquidStatus(ctx, params)
+	if err := s.queries.InsertHyperliquidStatus(ctx, params); err != nil {
+		return err
+	}
+
+	copy := status
+	s.publishStreamEventLocked(api.StreamEvent{
+		Type:     api.HyperliquidStatus,
+		Metadata: md,
+		Status:   &copy,
+	})
+
+	return nil
 }
 
 func (s *Storage) loadLatestHyperliquidStatusLocked(ctx context.Context, md metadata.Metadata) (*hyperliquid.WsOrder, bool, error) {
@@ -293,6 +372,51 @@ func (s *Storage) loadLatestHyperliquidStatusLocked(ctx context.Context, md meta
 	}
 
 	return &decoded, true, nil
+}
+
+func (s *Storage) publishHyperliquidSubmissionLocked(ctx context.Context, md metadata.Metadata, submission interface{}, boteventRowID int64) {
+	if s.stream == nil || submission == nil {
+		return
+	}
+
+	var botEvent *tc.BotEvent
+	if boteventRowID > 0 {
+		if evt, err := s.fetchBotEventByRowIDLocked(ctx, boteventRowID); err == nil {
+			botEvent = evt
+		}
+	}
+
+	s.publishStreamEventLocked(api.StreamEvent{
+		Type:       api.HyperliquidSubmission,
+		Metadata:   md,
+		BotEvent:   botEvent,
+		Submission: submission,
+	})
+}
+
+func (s *Storage) fetchBotEventByRowIDLocked(ctx context.Context, rowID int64) (*tc.BotEvent, error) {
+	var payload []byte
+	err := s.db.QueryRowContext(ctx, "SELECT payload FROM threecommas_botevents WHERE id = ?", rowID).Scan(&payload)
+	if err != nil {
+		return nil, err
+	}
+
+	var evt tc.BotEvent
+	if err := json.Unmarshal(payload, &evt); err != nil {
+		return nil, err
+	}
+
+	return &evt, nil
+}
+
+func (s *Storage) publishStreamEventLocked(evt api.StreamEvent) {
+	if s.stream == nil {
+		return
+	}
+	if evt.ObservedAt.IsZero() {
+		evt.ObservedAt = time.Now().UTC()
+	}
+	s.stream.Publish(evt)
 }
 
 func (s *Storage) ListHyperliquidStatuses(md metadata.Metadata) ([]hyperliquid.WsOrder, error) {

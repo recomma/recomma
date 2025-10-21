@@ -66,12 +66,6 @@ CREATE TABLE IF NOT EXISTS hyperliquid_status_history (
     recorded_at_utc INTEGER NOT NULL DEFAULT(unixepoch('now','subsec') * 1000)
 );
 
-CREATE TABLE IF NOT EXISTS kv_state (
-    k TEXT PRIMARY KEY,
-    v BLOB NOT NULL,
-    updated_at_utc INTEGER NOT NULL DEFAULT(unixepoch('now','subsec') * 1000)
-);
-
 -- Vault tables for WebAuthn-backed secret storage
 CREATE TABLE IF NOT EXISTS vault_users (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,

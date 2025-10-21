@@ -40,13 +40,31 @@ type Engine struct {
 	logger  *slog.Logger
 }
 
-func NewEngine(client ThreeCommasAPI, store *storage.Storage, emitter recomma.Emitter) *Engine {
-	return &Engine{
-		client:  client,
-		store:   store,
-		emitter: emitter,
-		logger:  slog.Default().WithGroup("engine"),
+type EngineOption func(*Engine)
+
+func WithStorage(store *storage.Storage) EngineOption {
+	return func(h *Engine) {
+		h.store = store
 	}
+}
+
+func WithEmitter(emitter recomma.Emitter) EngineOption {
+	return func(h *Engine) {
+		h.emitter = emitter
+	}
+}
+
+func NewEngine(client ThreeCommasAPI, opts ...EngineOption) *Engine {
+	e := &Engine{
+		client: client,
+		logger: slog.Default().WithGroup("engine"),
+	}
+
+	for _, opt := range opts {
+		opt(e)
+	}
+
+	return e
 }
 
 func (e *Engine) ProduceActiveDeals(ctx context.Context, q Queue) error {

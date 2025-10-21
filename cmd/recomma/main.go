@@ -227,7 +227,10 @@ func main() {
 	oq := workqueue.NewTypedRateLimitingQueueWithConfig(rlOrders, oqCfg)
 
 	engineEmitter := emitter.NewQueueEmitter(oq)
-	e := engine.NewEngine(client, store, engineEmitter)
+	e := engine.NewEngine(client,
+		engine.WithStorage(store),
+		engine.WithEmitter(engineEmitter),
+	)
 
 	submitter := emitter.NewHyperLiquidEmitter(exchange, ws, store)
 

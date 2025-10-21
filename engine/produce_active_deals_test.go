@@ -148,7 +148,7 @@ func TestProduceActiveDeals_TableDriven(t *testing.T) {
 				}(),
 			}
 
-			store, err := storage.New(":memory:", nil)
+			store, err := storage.New(":memory:")
 			require.NoError(t, err)
 			defer store.Close()
 

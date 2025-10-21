@@ -25,7 +25,7 @@ func newTestStorage(t *testing.T) *Storage {
 func newTestStorageWithLogger(t *testing.T, logger *slog.Logger) *Storage {
 	t.Helper()
 
-	store, err := New(":memory:", logger)
+	store, err := New(":memory:", WithLogger(logger))
 	if err != nil {
 		t.Fatalf("open sqlite storage: %v", err)
 	}

@@ -2,13 +2,17 @@ package engine
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
+	hyperliquid "github.com/sonirico/go-hyperliquid"
 	"github.com/stretchr/testify/require"
 	tc "github.com/terwey/3commas-sdk-go/threecommas"
 	"github.com/terwey/recomma/adapter"
+	"github.com/terwey/recomma/filltracker"
 	"github.com/terwey/recomma/internal/testutil"
+	"github.com/terwey/recomma/metadata"
 	"github.com/terwey/recomma/recomma"
 	"github.com/terwey/recomma/storage"
 )
@@ -34,7 +38,8 @@ type harness struct {
 func newHarness(t *testing.T, botID, dealID uint32) *harness {
 	t.Helper()
 
-	store, err := storage.New(":memory:", nil)
+	// storage.WithLogger(slog.Default())
+	store, err := storage.New(":memory:")
 	require.NoError(t, err)
 
 	em := &capturingEmitter{}
@@ -189,4 +194,82 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestProcessDeal_TakeProfitSizedFromTracker(t *testing.T) {
+	t.Parallel()
+
+	const (
+		botID  = uint32(99)
+		dealID = uint32(1001)
+		coin   = "BTC"
+	)
+
+	base := time.Date(2025, 2, 3, 4, 5, 6, 0, time.UTC)
+
+	h := newHarness(t, botID, dealID)
+	defer h.store.Close()
+
+	require.NoError(t, h.store.RecordThreeCommasDeal(tc.Deal{
+		Id:         int(dealID),
+		BotId:      int(botID),
+		CreatedAt:  base,
+		UpdatedAt:  base,
+		ToCurrency: coin,
+	}))
+
+	baseEvent, baseMD := testutil.NewBotEvent(t, base, botID, dealID,
+		testutil.WithAction(tc.BotEventActionExecute),
+		testutil.WithStatus(tc.MarketOrderStatusString(tc.Filled)),
+		testutil.WithPrice(10),
+		testutil.WithSize(5),
+		testutil.WithOrderType(tc.MarketOrderDealOrderTypeBase),
+	)
+	_, err := h.store.RecordThreeCommasBotEvent(baseMD, baseEvent)
+	require.NoError(t, err)
+	require.NoError(t, h.store.RecordHyperliquidStatus(baseMD, makeWsStatus(baseMD, coin, "B", hyperliquid.OrderStatusValueFilled, 5, 0, 10, base.Add(time.Second))))
+
+	tracker := filltracker.New(h.store, nil)
+	require.NoError(t, tracker.Rebuild(h.ctx))
+
+	h.engine = NewEngine(nil, WithStorage(h.store), WithEmitter(h.emitter), WithFillTracker(tracker))
+
+	tpEvent, _ := testutil.NewBotEvent(t, base.Add(2*time.Minute), botID, dealID,
+		testutil.WithOrderType(tc.MarketOrderDealOrderTypeTakeProfit),
+		testutil.WithType(tc.MarketOrderOrderType(tc.SELL)),
+		testutil.WithPrice(12.5),
+		testutil.WithSize(9.5),
+	)
+
+	err = h.engine.processDeal(h.ctx, h.key, coin, []tc.BotEvent{tpEvent})
+	require.NoError(t, err)
+
+	require.Len(t, h.emitter.items, 1)
+	got := h.emitter.items[0].Action
+	require.Equal(t, recomma.ActionCreate, got.Type)
+	require.NotNil(t, got.Create)
+	require.InDelta(t, 5.0, got.Create.Size, 1e-6)
+	require.True(t, got.Create.ReduceOnly)
+	require.InDelta(t, 12.5, got.Create.Price, 1e-6)
+}
+
+func makeWsStatus(md metadata.Metadata, coin, side string, status hyperliquid.OrderStatusValue, original, remaining, limit float64, ts time.Time) hyperliquid.WsOrder {
+	return hyperliquid.WsOrder{
+		Order: hyperliquid.WsBasicOrder{
+			Coin:      coin,
+			Side:      side,
+			LimitPx:   formatFloat(limit),
+			Sz:        formatFloat(remaining),
+			Oid:       ts.UnixNano(),
+			Timestamp: ts.UnixMilli(),
+			OrigSz:    formatFloat(original),
+			Cloid:     md.HexAsPointer(),
+		},
+		Status:          status,
+		StatusTimestamp: ts.UnixMilli(),
+	}
+}
+
+func formatFloat(v float64) string {
+	return strconv.FormatFloat(v, 'f', -1, 64)
 }

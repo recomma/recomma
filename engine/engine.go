@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"time"
 
 	tc "github.com/terwey/3commas-sdk-go/threecommas"
 	"github.com/terwey/recomma/adapter"
+	"github.com/terwey/recomma/filltracker"
 	"github.com/terwey/recomma/metadata"
 	"github.com/terwey/recomma/recomma"
 	"github.com/terwey/recomma/storage"
@@ -38,6 +40,7 @@ type Engine struct {
 	store   *storage.Storage
 	emitter recomma.Emitter
 	logger  *slog.Logger
+	tracker *filltracker.Service
 }
 
 type EngineOption func(*Engine)
@@ -51,6 +54,12 @@ func WithStorage(store *storage.Storage) EngineOption {
 func WithEmitter(emitter recomma.Emitter) EngineOption {
 	return func(h *Engine) {
 		h.emitter = emitter
+	}
+}
+
+func WithFillTracker(tracker *filltracker.Service) EngineOption {
+	return func(h *Engine) {
+		h.tracker = tracker
 	}
 }
 
@@ -182,6 +191,22 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 	logger := e.logger.With("deal-id", wi.DealID).With("bot-id", wi.BotID)
 	seen := make(map[uint32]metadata.Metadata)
 
+	var fillSnapshot *filltracker.DealSnapshot
+	if e.tracker != nil {
+		if snapshot, ok := e.tracker.Snapshot(wi.DealID); ok {
+			fillSnapshot = &snapshot
+			logger.Debug("fill snapshot",
+				slog.Float64("net_qty", snapshot.Position.NetQty),
+				slog.Float64("avg_entry", snapshot.Position.AverageEntry),
+				slog.Bool("all_buys_filled", snapshot.AllBuysFilled),
+				slog.Float64("outstanding_buys", snapshot.OutstandingBuyQty),
+				slog.Float64("outstanding_sells", snapshot.OutstandingSellQty),
+			)
+		} else {
+			logger.Debug("fill snapshot unavailable")
+		}
+	}
+
 	for _, event := range events {
 		md := metadata.Metadata{
 			BotID:      wi.BotID,
@@ -199,6 +224,7 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 		if event.OrderType == tc.MarketOrderDealOrderTypeTakeProfit {
 			if event.Action == tc.BotEventActionCancel || event.Action == tc.BotEventActionCancelled {
 				// we ignore Take Profit cancellations, we cancel TP's ourselves based on the combined orders for the deal
+				// TODO: figure out that the Take Profit SHOULD be cancelled because the price changed!!
 				continue
 			}
 		}
@@ -226,6 +252,12 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 		}
 		if !shouldEmit {
 			continue
+		}
+		if fillSnapshot != nil && latestEvent != nil {
+			action, shouldEmit = e.adjustActionWithTracker(currency, md, *latestEvent, action, fillSnapshot, logger.With("botevent-id", md.BotEventID))
+			if !shouldEmit {
+				continue
+			}
 		}
 		work := recomma.OrderWork{MD: md, Action: action}
 		if latestEvent != nil {
@@ -347,4 +379,90 @@ func sameSnapshot(a, b *recomma.BotEvent) bool {
 		a.OrderType == b.OrderType &&
 		a.Type == b.Type &&
 		a.IsMarket == b.IsMarket
+}
+
+const qtyTolerance = 1e-6
+
+func nearlyEqual(a, b float64) bool {
+	return math.Abs(a-b) <= qtyTolerance
+}
+
+func (e *Engine) adjustActionWithTracker(
+	currency string,
+	md metadata.Metadata,
+	latest recomma.BotEvent,
+	action recomma.Action,
+	snapshot *filltracker.DealSnapshot,
+	logger *slog.Logger,
+) (recomma.Action, bool) {
+	if snapshot == nil {
+		return action, true
+	}
+	if latest.OrderType != tc.MarketOrderDealOrderTypeTakeProfit {
+		return action, true
+	}
+
+	desiredQty := snapshot.Position.NetQty
+	if desiredQty <= qtyTolerance {
+		logger.Info("skipping take profit placement: position flat",
+			slog.Float64("net_qty", desiredQty),
+			slog.Any("action_type", action.Type),
+		)
+		return recomma.Action{Type: recomma.ActionNone, Reason: "skip take-profit: position flat"}, false
+	}
+
+	active := snapshot.ActiveTakeProfit
+	if active != nil && active.ReduceOnly && nearlyEqual(active.RemainingQty, desiredQty) {
+		logger.Debug("take profit already matches position",
+			slog.Float64("desired_qty", desiredQty),
+			slog.Float64("existing_qty", active.RemainingQty),
+		)
+		return recomma.Action{Type: recomma.ActionNone, Reason: "take-profit already matches position"}, false
+	}
+
+	switch action.Type {
+	case recomma.ActionNone:
+		req := adapter.ToCreateOrderRequest(currency, latest, md)
+		req.Size = desiredQty
+		req.ReduceOnly = true
+		logger.Info("placing take profit to match position",
+			slog.Float64("desired_qty", desiredQty),
+			slog.Float64("price", req.Price),
+		)
+		return recomma.Action{Type: recomma.ActionCreate, Create: &req}, true
+	case recomma.ActionCreate:
+		if action.Create == nil {
+			req := adapter.ToCreateOrderRequest(currency, latest, md)
+			action.Create = &req
+		}
+		action.Create.Size = desiredQty
+		action.Create.ReduceOnly = true
+		logger.Info("creating take profit with tracked size",
+			slog.Float64("desired_qty", desiredQty),
+			slog.Float64("price", action.Create.Price),
+		)
+		return action, true
+	case recomma.ActionModify:
+		if action.Modify == nil {
+			req := adapter.ToCreateOrderRequest(currency, latest, md)
+			req.Size = desiredQty
+			req.ReduceOnly = true
+			logger.Warn("modify without prior request; emitting create instead",
+				slog.Float64("desired_qty", desiredQty),
+			)
+			return recomma.Action{Type: recomma.ActionCreate, Create: &req}, true
+		}
+		action.Modify.Order.Size = desiredQty
+		action.Modify.Order.ReduceOnly = true
+		logger.Info("modifying take profit to tracked size",
+			slog.Float64("desired_qty", desiredQty),
+			slog.Float64("price", action.Modify.Order.Price),
+		)
+		return action, true
+	case recomma.ActionCancel:
+		logger.Debug("take profit cancel requested", slog.Float64("net_qty", desiredQty))
+		return action, true
+	default:
+		return action, true
+	}
 }

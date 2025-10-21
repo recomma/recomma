@@ -53,11 +53,11 @@ func New(ctx context.Context, store *storage.Storage, tracker *filltracker.Servi
 						continue
 					}
 					if c.tracker != nil {
-						if err := c.tracker.UpdateStatus(*md, o); err != nil {
+						if err := c.tracker.UpdateStatus(context.Background(), *md, o); err != nil {
 							c.logger.Warn("could not update fill tracker", slog.String("error", err.Error()))
 						}
 					}
-					if err := c.store.RecordHyperliquidStatus(*md, o); err != nil {
+					if err := c.store.RecordHyperliquidStatus(context.Background(), *md, o); err != nil {
 						c.logger.Warn("could not store status", slog.String("error", err.Error()))
 						continue
 					}
@@ -133,8 +133,8 @@ func (c *Client) Close() error {
 }
 
 // Exists returns true if we've seen this CLOID via OrderUpdates.
-func (c *Client) Exists(md metadata.Metadata) bool {
-	_, ok, err := c.store.LoadHyperliquidStatus(md)
+func (c *Client) Exists(ctx context.Context, md metadata.Metadata) bool {
+	_, ok, err := c.store.LoadHyperliquidStatus(ctx, md)
 	if err != nil {
 		return false
 	}
@@ -143,8 +143,8 @@ func (c *Client) Exists(md metadata.Metadata) bool {
 }
 
 // Get returns the full WsOrder for a CLOID, if we have it.
-func (c *Client) Get(md metadata.Metadata) (*hyperliquid.WsOrder, bool) {
-	status, ok, err := c.store.LoadHyperliquidStatus(md)
+func (c *Client) Get(ctx context.Context, md metadata.Metadata) (*hyperliquid.WsOrder, bool) {
+	status, ok, err := c.store.LoadHyperliquidStatus(ctx, md)
 	if err != nil {
 		return nil, false
 	}

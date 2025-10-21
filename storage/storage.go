@@ -93,7 +93,7 @@ func (s *Storage) Close() error {
 }
 
 // RecordThreeCommasBotEvent records the threecommas botevents that we acted upon
-func (s *Storage) RecordThreeCommasBotEvent(md metadata.Metadata, order tc.BotEvent) (lastInsertId int64, err error) {
+func (s *Storage) RecordThreeCommasBotEvent(ctx context.Context, md metadata.Metadata, order tc.BotEvent) (lastInsertId int64, err error) {
 	raw, err := json.Marshal(order)
 	if err != nil {
 		return 0, err
@@ -102,7 +102,6 @@ func (s *Storage) RecordThreeCommasBotEvent(md metadata.Metadata, order tc.BotEv
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ctx := context.Background()
 	params := sqlcgen.InsertThreeCommasBotEventParams{
 		Md:           md.Hex(),
 		BotID:        int64(md.BotID),
@@ -130,7 +129,7 @@ func (s *Storage) RecordThreeCommasBotEvent(md metadata.Metadata, order tc.BotEv
 }
 
 // RecordThreeCommasBotEvent records all threecommas botevents, acted upon or not
-func (s *Storage) RecordThreeCommasBotEventLog(md metadata.Metadata, order tc.BotEvent) (lastInsertId int64, err error) {
+func (s *Storage) RecordThreeCommasBotEventLog(ctx context.Context, md metadata.Metadata, order tc.BotEvent) (lastInsertId int64, err error) {
 	raw, err := json.Marshal(order)
 	if err != nil {
 		return 0, err
@@ -139,7 +138,6 @@ func (s *Storage) RecordThreeCommasBotEventLog(md metadata.Metadata, order tc.Bo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ctx := context.Background()
 	params := sqlcgen.InsertThreeCommasBotEventLogParams{
 		Md:           md.Hex(),
 		BotID:        int64(md.BotID),
@@ -157,11 +155,10 @@ func (s *Storage) RecordThreeCommasBotEventLog(md metadata.Metadata, order tc.Bo
 	return lastInsertId, nil
 }
 
-func (s *Storage) ListEventsForOrder(botID, dealID, botEventID uint32) ([]recomma.BotEvent, error) {
+func (s *Storage) ListEventsForOrder(ctx context.Context, botID, dealID, botEventID uint32) ([]recomma.BotEvent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ctx := context.Background()
 	rows, err := s.queries.ListThreeCommasBotEventsForOrder(ctx, sqlcgen.ListThreeCommasBotEventsForOrderParams{
 		BotID:      int64(botID),
 		DealID:     int64(dealID),
@@ -221,11 +218,10 @@ func (s *Storage) ListEventsLog(ctx context.Context) ([]recomma.BotEventLog, err
 	return events, nil
 }
 
-func (s *Storage) HasMetadata(md metadata.Metadata) (bool, error) {
+func (s *Storage) HasMetadata(ctx context.Context, md metadata.Metadata) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ctx := context.Background()
 	exists, err := s.queries.HasThreeCommasMetadata(ctx, md.Hex())
 	if err != nil {
 		return false, err
@@ -234,11 +230,10 @@ func (s *Storage) HasMetadata(md metadata.Metadata) (bool, error) {
 	return exists == 1, nil
 }
 
-func (s *Storage) LoadThreeCommasBotEvent(md metadata.Metadata) (*tc.BotEvent, error) {
+func (s *Storage) LoadThreeCommasBotEvent(ctx context.Context, md metadata.Metadata) (*tc.BotEvent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ctx := context.Background()
 	payload, err := s.queries.FetchThreeCommasBotEvent(ctx, md.Hex())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -255,7 +250,7 @@ func (s *Storage) LoadThreeCommasBotEvent(md metadata.Metadata) (*tc.BotEvent, e
 	return &order, nil
 }
 
-func (s *Storage) RecordHyperliquidOrderRequest(md metadata.Metadata, req hyperliquid.CreateOrderRequest, boteventRowId int64) error {
+func (s *Storage) RecordHyperliquidOrderRequest(ctx context.Context, md metadata.Metadata, req hyperliquid.CreateOrderRequest, boteventRowId int64) error {
 	raw, err := json.Marshal(req)
 	if err != nil {
 		return err
@@ -264,7 +259,6 @@ func (s *Storage) RecordHyperliquidOrderRequest(md metadata.Metadata, req hyperl
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ctx := context.Background()
 	params := sqlcgen.UpsertHyperliquidCreateParams{
 		Md:            md.Hex(),
 		CreatePayload: raw,
@@ -279,7 +273,7 @@ func (s *Storage) RecordHyperliquidOrderRequest(md metadata.Metadata, req hyperl
 	return nil
 }
 
-func (s *Storage) AppendHyperliquidModify(md metadata.Metadata, req hyperliquid.ModifyOrderRequest, boteventRowId int64) error {
+func (s *Storage) AppendHyperliquidModify(ctx context.Context, md metadata.Metadata, req hyperliquid.ModifyOrderRequest, boteventRowId int64) error {
 	raw, err := json.Marshal(req)
 	if err != nil {
 		return err
@@ -288,7 +282,6 @@ func (s *Storage) AppendHyperliquidModify(md metadata.Metadata, req hyperliquid.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ctx := context.Background()
 	params := sqlcgen.AppendHyperliquidModifyParams{
 		Md:            md.Hex(),
 		ModifyPayload: raw,
@@ -303,7 +296,7 @@ func (s *Storage) AppendHyperliquidModify(md metadata.Metadata, req hyperliquid.
 	return nil
 }
 
-func (s *Storage) RecordHyperliquidCancel(md metadata.Metadata, req hyperliquid.CancelOrderRequestByCloid, boteventRowId int64) error {
+func (s *Storage) RecordHyperliquidCancel(ctx context.Context, md metadata.Metadata, req hyperliquid.CancelOrderRequestByCloid, boteventRowId int64) error {
 	raw, err := json.Marshal(req)
 	if err != nil {
 		return err
@@ -312,7 +305,6 @@ func (s *Storage) RecordHyperliquidCancel(md metadata.Metadata, req hyperliquid.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ctx := context.Background()
 	params := sqlcgen.UpsertHyperliquidCancelParams{
 		Md:            md.Hex(),
 		CancelPayload: raw,
@@ -327,7 +319,7 @@ func (s *Storage) RecordHyperliquidCancel(md metadata.Metadata, req hyperliquid.
 	return nil
 }
 
-func (s *Storage) RecordHyperliquidStatus(md metadata.Metadata, status hyperliquid.WsOrder) error {
+func (s *Storage) RecordHyperliquidStatus(ctx context.Context, md metadata.Metadata, status hyperliquid.WsOrder) error {
 	raw, err := json.Marshal(status)
 	if err != nil {
 		return err
@@ -336,7 +328,6 @@ func (s *Storage) RecordHyperliquidStatus(md metadata.Metadata, status hyperliqu
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ctx := context.Background()
 	params := sqlcgen.InsertHyperliquidStatusParams{
 		Md:            md.Hex(),
 		Status:        raw,
@@ -419,11 +410,10 @@ func (s *Storage) publishStreamEventLocked(evt api.StreamEvent) {
 	s.stream.Publish(evt)
 }
 
-func (s *Storage) ListHyperliquidStatuses(md metadata.Metadata) ([]hyperliquid.WsOrder, error) {
+func (s *Storage) ListHyperliquidStatuses(ctx context.Context, md metadata.Metadata) ([]hyperliquid.WsOrder, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ctx := context.Background()
 	rows, err := s.queries.ListHyperliquidStatuses(ctx, md.Hex())
 	if err != nil {
 		return nil, err
@@ -480,11 +470,10 @@ type HyperliquidSafetyStatus struct {
 	HLEventTime      time.Time
 }
 
-func (s *Storage) ListLatestHyperliquidSafetyStatuses(dealID uint32) ([]HyperliquidSafetyStatus, error) {
+func (s *Storage) ListLatestHyperliquidSafetyStatuses(ctx context.Context, dealID uint32) ([]HyperliquidSafetyStatus, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ctx := context.Background()
 	rows, err := s.queries.ListLatestHyperliquidSafetyStatuses(ctx, int64(dealID))
 	if err != nil {
 		return nil, err
@@ -518,8 +507,8 @@ func (s *Storage) ListLatestHyperliquidSafetyStatuses(dealID uint32) ([]Hyperliq
 // DealSafetiesFilled checks if all safety orders for the deal id have been filled.
 // Only returns an error when an inconsistency has occured, e.g. ordersize is set to
 // 2 but only 1 status is available
-func (s *Storage) DealSafetiesFilled(dealID uint32) (bool, error) {
-	statuses, err := s.ListLatestHyperliquidSafetyStatuses(dealID)
+func (s *Storage) DealSafetiesFilled(ctx context.Context, dealID uint32) (bool, error) {
+	statuses, err := s.ListLatestHyperliquidSafetyStatuses(ctx, dealID)
 	if err != nil {
 		return false, err
 	}
@@ -556,11 +545,10 @@ func (s *Storage) DealSafetiesFilled(dealID uint32) (bool, error) {
 	return true, nil
 }
 
-func (s *Storage) LoadHyperliquidSubmission(md metadata.Metadata) (recomma.Action, bool, error) {
+func (s *Storage) LoadHyperliquidSubmission(ctx context.Context, md metadata.Metadata) (recomma.Action, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ctx := context.Background()
 	row, err := s.queries.FetchHyperliquidSubmission(ctx, md.Hex())
 	if errors.Is(err, sql.ErrNoRows) {
 		return recomma.Action{}, false, nil
@@ -616,18 +604,18 @@ func (s *Storage) LoadHyperliquidSubmission(md metadata.Metadata) (recomma.Actio
 	return action, true, nil
 }
 
-func (s *Storage) LoadHyperliquidStatus(md metadata.Metadata) (*hyperliquid.WsOrder, bool, error) {
+func (s *Storage) LoadHyperliquidStatus(ctx context.Context, md metadata.Metadata) (*hyperliquid.WsOrder, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.loadLatestHyperliquidStatusLocked(context.Background(), md)
+	return s.loadLatestHyperliquidStatusLocked(ctx, md)
 }
 
-func (s *Storage) LoadHyperliquidRequest(md metadata.Metadata) (*hyperliquid.CreateOrderRequest, bool, error) {
-	action, found, err := s.LoadHyperliquidSubmission(md)
+func (s *Storage) LoadHyperliquidRequest(ctx context.Context, md metadata.Metadata) (*hyperliquid.CreateOrderRequest, bool, error) {
+	action, found, err := s.LoadHyperliquidSubmission(ctx, md)
 	return action.Create, found, err
 }
 
-func (s *Storage) RecordBot(bot tc.Bot, syncedAt time.Time) error {
+func (s *Storage) RecordBot(ctx context.Context, bot tc.Bot, syncedAt time.Time) error {
 	raw, err := json.Marshal(bot)
 	if err != nil {
 		return err
@@ -636,7 +624,6 @@ func (s *Storage) RecordBot(bot tc.Bot, syncedAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ctx := context.Background()
 	params := sqlcgen.UpsertBotParams{
 		BotID:         int64(bot.Id),
 		Payload:       raw,
@@ -646,11 +633,10 @@ func (s *Storage) RecordBot(bot tc.Bot, syncedAt time.Time) error {
 	return s.queries.UpsertBot(ctx, params)
 }
 
-func (s *Storage) LoadBot(botID int) (*tc.Bot, time.Time, bool, error) {
+func (s *Storage) LoadBot(ctx context.Context, botID int) (*tc.Bot, time.Time, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ctx := context.Background()
 	row, err := s.queries.FetchBot(ctx, int64(botID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, time.Time{}, false, nil
@@ -667,11 +653,10 @@ func (s *Storage) LoadBot(botID int) (*tc.Bot, time.Time, bool, error) {
 	return &decoded, time.UnixMilli(row.LastSyncedUtc).UTC(), true, nil
 }
 
-func (s *Storage) TouchBot(botID int, syncedAt time.Time) error {
+func (s *Storage) TouchBot(ctx context.Context, botID int, syncedAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ctx := context.Background()
 	params := sqlcgen.UpdateBotSyncParams{
 		LastSyncedUtc: syncedAt.UTC().UnixMilli(),
 		BotID:         int64(botID),
@@ -680,7 +665,7 @@ func (s *Storage) TouchBot(botID int, syncedAt time.Time) error {
 	return s.queries.UpdateBotSync(ctx, params)
 }
 
-func (s *Storage) RecordThreeCommasDeal(deal tc.Deal) error {
+func (s *Storage) RecordThreeCommasDeal(ctx context.Context, deal tc.Deal) error {
 	raw, err := json.Marshal(deal)
 	if err != nil {
 		return err
@@ -689,7 +674,6 @@ func (s *Storage) RecordThreeCommasDeal(deal tc.Deal) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ctx := context.Background()
 	params := sqlcgen.UpsertDealParams{
 		DealID:       int64(deal.Id),
 		BotID:        int64(deal.BotId),
@@ -701,11 +685,10 @@ func (s *Storage) RecordThreeCommasDeal(deal tc.Deal) error {
 	return s.queries.UpsertDeal(ctx, params)
 }
 
-func (s *Storage) LoadThreeCommasDeal(dealID int) (*tc.Deal, bool, error) {
+func (s *Storage) LoadThreeCommasDeal(ctx context.Context, dealID int) (*tc.Deal, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ctx := context.Background()
 	payload, err := s.queries.FetchDeal(ctx, int64(dealID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
@@ -729,11 +712,10 @@ func (s *Storage) ListDealIDs(ctx context.Context) ([]int64, error) {
 	return s.queries.ListDealIDs(ctx)
 }
 
-func (s *Storage) LoadTakeProfitForDeal(dealID uint32) (*metadata.Metadata, *tc.BotEvent, error) {
+func (s *Storage) LoadTakeProfitForDeal(ctx context.Context, dealID uint32) (*metadata.Metadata, *tc.BotEvent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ctx := context.Background()
 	row, err := s.queries.GetTPForDeal(ctx, int64(dealID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil, sql.ErrNoRows

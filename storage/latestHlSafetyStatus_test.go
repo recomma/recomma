@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -49,7 +50,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 			Text:          "test safety order",
 		}
 
-		if _, err := store.RecordThreeCommasBotEvent(md, botevent); err != nil {
+		if _, err := store.RecordThreeCommasBotEvent(context.Background(), md, botevent); err != nil {
 			t.Fatalf("RecordThreeCommasBotEvent: %v", err)
 		}
 
@@ -58,7 +59,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 
 	recordStatus := func(t *testing.T, store *Storage, md metadata.Metadata, status hyperliquid.WsOrder) {
 		t.Helper()
-		if err := store.RecordHyperliquidStatus(md, status); err != nil {
+		if err := store.RecordHyperliquidStatus(context.Background(), md, status); err != nil {
 			t.Fatalf("RecordHyperliquidStatus: %v", err)
 		}
 	}
@@ -314,7 +315,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 					IsMarket:      true,
 					Text:          "test take profit",
 				}
-				if _, err := store.RecordThreeCommasBotEvent(mdTakeProfit, takeProfit); err != nil {
+				if _, err := store.RecordThreeCommasBotEvent(context.Background(), mdTakeProfit, takeProfit); err != nil {
 					t.Fatalf("RecordThreeCommasBotEvent take profit: %v", err)
 				}
 
@@ -344,7 +345,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 			store := newTestStorageWithLogger(t, nil)
 			want := tc.setup(t, store)
 
-			got, err := store.ListLatestHyperliquidSafetyStatuses(tc.dealID)
+			got, err := store.ListLatestHyperliquidSafetyStatuses(context.Background(), tc.dealID)
 			require.NoError(t, err)
 			require.Equal(t, len(want), len(got), "unexpected number of safety statuses")
 
@@ -364,7 +365,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 				require.False(t, got[i].HLStatusRecorded.IsZero(), "expected recorded time at index %d", i)
 			}
 
-			filled, err := store.DealSafetiesFilled(tc.dealID)
+			filled, err := store.DealSafetiesFilled(context.Background(), tc.dealID)
 			if tc.wantFilled {
 				require.NoError(t, err)
 				require.True(t, filled, "expect deal safeties to be filled")

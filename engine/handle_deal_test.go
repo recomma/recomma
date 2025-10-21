@@ -120,7 +120,7 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 			name:   "cancel emitted after local create",
 			events: []tc.BotEvent{cancelEvent(base.Add(2 * time.Minute))},
 			prepare: func(t *testing.T, h *harness) {
-				inserted, err := h.store.RecordThreeCommasBotEvent(activeMD, activeEvent)
+				inserted, err := h.store.RecordThreeCommasBotEvent(h.ctx, activeMD, activeEvent)
 				require.NoError(t, err)
 				require.NotZero(t, inserted)
 
@@ -130,7 +130,7 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 				}
 
 				createReq := adapter.ToCreateOrderRequest(h.deal.ToCurrency, be, activeMD)
-				require.NoError(t, h.store.RecordHyperliquidOrderRequest(activeMD, createReq, inserted))
+				require.NoError(t, h.store.RecordHyperliquidOrderRequest(h.ctx, activeMD, createReq, inserted))
 			},
 			wantActions: []recomma.ActionType{recomma.ActionCancel},
 			wantStatuses: []tc.MarketOrderStatusString{
@@ -142,7 +142,7 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 			name:   "modify emitted after local create",
 			events: []tc.BotEvent{modifyEvent},
 			prepare: func(t *testing.T, h *harness) {
-				inserted, err := h.store.RecordThreeCommasBotEvent(activeMD, activeEvent)
+				inserted, err := h.store.RecordThreeCommasBotEvent(h.ctx, activeMD, activeEvent)
 				require.NoError(t, err)
 				require.NotZero(t, inserted)
 
@@ -152,7 +152,7 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 				}
 
 				createReq := adapter.ToCreateOrderRequest(h.deal.ToCurrency, be, activeMD)
-				require.NoError(t, h.store.RecordHyperliquidOrderRequest(activeMD, createReq, inserted))
+				require.NoError(t, h.store.RecordHyperliquidOrderRequest(h.ctx, activeMD, createReq, inserted))
 			},
 			wantActions: []recomma.ActionType{recomma.ActionModify},
 			wantStatuses: []tc.MarketOrderStatusString{
@@ -186,7 +186,7 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 
 			// For history assertions, use the fingerprint of the last event we fed.
 			fp := tc.events[len(tc.events)-1].FingerprintAsID()
-			history, err := h.store.ListEventsForOrder(h.key.BotID, h.key.DealID, fp)
+			history, err := h.store.ListEventsForOrder(h.ctx, h.key.BotID, h.key.DealID, fp)
 			require.NoError(t, err)
 			require.Len(t, history, len(tc.wantStatuses))
 			for i, want := range tc.wantStatuses {
@@ -210,7 +210,7 @@ func TestProcessDeal_TakeProfitSizedFromTracker(t *testing.T) {
 	h := newHarness(t, botID, dealID)
 	defer h.store.Close()
 
-	require.NoError(t, h.store.RecordThreeCommasDeal(tc.Deal{
+	require.NoError(t, h.store.RecordThreeCommasDeal(h.ctx, tc.Deal{
 		Id:         int(dealID),
 		BotId:      int(botID),
 		CreatedAt:  base,
@@ -225,9 +225,9 @@ func TestProcessDeal_TakeProfitSizedFromTracker(t *testing.T) {
 		testutil.WithSize(5),
 		testutil.WithOrderType(tc.MarketOrderDealOrderTypeBase),
 	)
-	_, err := h.store.RecordThreeCommasBotEvent(baseMD, baseEvent)
+	_, err := h.store.RecordThreeCommasBotEvent(h.ctx, baseMD, baseEvent)
 	require.NoError(t, err)
-	require.NoError(t, h.store.RecordHyperliquidStatus(baseMD, makeWsStatus(baseMD, coin, "B", hyperliquid.OrderStatusValueFilled, 5, 0, 10, base.Add(time.Second))))
+	require.NoError(t, h.store.RecordHyperliquidStatus(h.ctx, baseMD, makeWsStatus(baseMD, coin, "B", hyperliquid.OrderStatusValueFilled, 5, 0, 10, base.Add(time.Second))))
 
 	tracker := filltracker.New(h.store, nil)
 	require.NoError(t, tracker.Rebuild(h.ctx))

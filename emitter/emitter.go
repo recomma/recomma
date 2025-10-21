@@ -120,7 +120,7 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 	// TODO: decide if we want to persist the result we get back here, it's not interesting ususally as it just states `resting`
 	switch w.Action.Type {
 	case recomma.ActionCreate:
-		if e.ws.Exists(w.MD) {
+		if e.ws.Exists(ctx, w.MD) {
 			logger.Debug("order already exists on Hyperliquid")
 			return nil
 		}
@@ -147,7 +147,7 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 
 			// we cannot submit these but we must ignore them
 			if strings.Contains(err.Error(), "Order must have minimum value") {
-				if err := e.store.RecordHyperliquidOrderRequest(w.MD, *w.Action.Create, w.BotEvent.RowID); err != nil {
+				if err := e.store.RecordHyperliquidOrderRequest(ctx, w.MD, *w.Action.Create, w.BotEvent.RowID); err != nil {
 					logger.Warn("could not add to store", slog.String("error", err.Error()))
 				}
 				logger.Warn("could not submit (order value), ignoring", slog.String("error", err.Error()))
@@ -155,7 +155,7 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 			}
 
 			if strings.Contains(err.Error(), "Reduce only order would increase position") {
-				if err := e.store.RecordHyperliquidOrderRequest(w.MD, *w.Action.Create, w.BotEvent.RowID); err != nil {
+				if err := e.store.RecordHyperliquidOrderRequest(ctx, w.MD, *w.Action.Create, w.BotEvent.RowID); err != nil {
 					logger.Warn("could not add to store", slog.String("error", err.Error()))
 				}
 				logger.Warn("could not submit (reduce only order, increase position), ignoring", slog.String("error", err.Error()))
@@ -172,7 +172,7 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 			return fmt.Errorf("could not place order: %w", err)
 		}
 
-		if err := e.store.RecordHyperliquidOrderRequest(w.MD, *w.Action.Create, w.BotEvent.RowID); err != nil {
+		if err := e.store.RecordHyperliquidOrderRequest(ctx, w.MD, *w.Action.Create, w.BotEvent.RowID); err != nil {
 			logger.Warn("could not add to store", slog.String("error", err.Error()))
 		}
 	case recomma.ActionCancel:
@@ -189,7 +189,7 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 			logger.Warn("could not cancel order", slog.String("error", err.Error()), slog.Any("action", w.Action.Cancel))
 			return fmt.Errorf("could not cancel order: %w", err)
 		}
-		if err := e.store.RecordHyperliquidCancel(w.MD, *w.Action.Cancel, w.BotEvent.RowID); err != nil {
+		if err := e.store.RecordHyperliquidCancel(ctx, w.MD, *w.Action.Cancel, w.BotEvent.RowID); err != nil {
 			logger.Warn("could not add to store", slog.String("error", err.Error()))
 		}
 	case recomma.ActionNone:
@@ -209,7 +209,7 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 			logger.Warn("could not modify order", slog.String("error", err.Error()), slog.Any("action", w.Action.Modify))
 			return fmt.Errorf("could not modify order: %w", err)
 		}
-		if err := e.store.AppendHyperliquidModify(w.MD, *w.Action.Modify, w.BotEvent.RowID); err != nil {
+		if err := e.store.AppendHyperliquidModify(ctx, w.MD, *w.Action.Modify, w.BotEvent.RowID); err != nil {
 			logger.Warn("could not add to store", slog.String("error", err.Error()))
 		}
 	}

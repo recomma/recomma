@@ -104,7 +104,7 @@ func (e *Engine) ProduceActiveDeals(ctx context.Context, q Queue) error {
 			// not a time later else we don't show that deal anymore
 			lastReq := time.Now().Add(-time.Hour * 24)
 
-			_, syncedAt, found, err := e.store.LoadBot(b.Id)
+			_, syncedAt, found, err := e.store.LoadBot(gctx, b.Id)
 			if found && err == nil {
 				lastReq = syncedAt
 			}
@@ -136,7 +136,7 @@ func (e *Engine) ProduceActiveDeals(ctx context.Context, q Queue) error {
 				}
 				minUpdatedAt = time.UnixMilli(min(minUpdatedAt.UnixMilli(), d.UpdatedAt.UnixMilli()))
 				q.Add(WorkKey{DealID: uint32(d.Id), BotID: uint32(d.BotId)})
-				err := e.store.RecordThreeCommasDeal(d)
+				err := e.store.RecordThreeCommasDeal(gctx, d)
 				if err != nil {
 					logger.Warn("could not store deal", slog.String("error", err.Error()))
 				}
@@ -154,11 +154,11 @@ func (e *Engine) ProduceActiveDeals(ctx context.Context, q Queue) error {
 				}
 			}
 
-			if err := e.store.RecordBot(b, b.UpdatedAt); err != nil {
+			if err := e.store.RecordBot(gctx, b, b.UpdatedAt); err != nil {
 				logger.Warn("could not record bot", slog.String("error", err.Error()))
 			}
 
-			e.store.TouchBot(b.Id, latest)
+			e.store.TouchBot(gctx, b.Id, latest)
 			if len(deals) > 0 {
 				logger.Info("Enqueued Deals", slog.Int("deals", len(deals)), slog.Duration("elapsed", time.Since(start)))
 			}
@@ -214,7 +214,7 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 			BotEventID: event.FingerprintAsID(),
 		}
 		// we want to store all incoming as a log
-		_, err := e.store.RecordThreeCommasBotEventLog(md, event)
+		_, err := e.store.RecordThreeCommasBotEventLog(ctx, md, event)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("record bot event log: %w", err)
@@ -231,7 +231,7 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 		// we only want to act on PLACING, CANCEL and MODIFY
 		// we assume here that when within the span of 15s (our poll time) a botevent went from PLACING to CANCEL we can ignore it
 		if event.Action == tc.BotEventActionPlace || event.Action == tc.BotEventActionCancel || event.Action == tc.BotEventActionModify {
-			lastInsertedId, err := e.store.RecordThreeCommasBotEvent(md, event)
+			lastInsertedId, err := e.store.RecordThreeCommasBotEvent(ctx, md, event)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					// this means we saw it before, no error
@@ -246,7 +246,7 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 	}
 
 	for _, md := range seen {
-		action, latestEvent, shouldEmit, err := e.reduceOrderEvents(currency, md, logger.With("botevent-id", md.BotEventID))
+		action, latestEvent, shouldEmit, err := e.reduceOrderEvents(ctx, currency, md, logger.With("botevent-id", md.BotEventID))
 		if err != nil {
 			return fmt.Errorf("reduce order %d: %w", md.BotEventID, err)
 		}
@@ -276,6 +276,7 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 // on Hyperliquid". It returns the action plus a flag telling the caller whether
 // anything needs to be emitted.
 func (e *Engine) reduceOrderEvents(
+	ctx context.Context,
 	currency string,
 	md metadata.Metadata,
 	logger *slog.Logger,
@@ -284,7 +285,7 @@ func (e *Engine) reduceOrderEvents(
 	// NB: we actually only care about the PLACING one's
 
 	// rows are already sorted by CreatedAt ASC in ListEventsForOrder.
-	events, err := e.store.ListEventsForOrder(md.BotID, md.DealID, md.BotEventID)
+	events, err := e.store.ListEventsForOrder(ctx, md.BotID, md.DealID, md.BotEventID)
 	if err != nil {
 		return recomma.Action{}, nil, false, fmt.Errorf("load event history: %w", err)
 	}
@@ -297,7 +298,7 @@ func (e *Engine) reduceOrderEvents(
 	prev := previousDistinct(events)
 
 	// Did we already create anything for this CLOID on Hyperliquid?
-	submitted, haveSubmission, err := e.store.LoadHyperliquidSubmission(md)
+	submitted, haveSubmission, err := e.store.LoadHyperliquidSubmission(ctx, md)
 	if err != nil {
 		return recomma.Action{}, nil, false, fmt.Errorf("load submission: %w", err)
 	}

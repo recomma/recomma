@@ -49,6 +49,11 @@ SELECT EXISTS(
     SELECT 1 FROM threecommas_botevents WHERE md = sqlc.arg(md)
 );
 
+-- name: GetMetadataForDeal :many
+SELECT DISTINCT md
+    FROM threecommas_botevents
+    WHERE deal_id = ?;
+
 -- name: FetchThreeCommasBotEvent :one
 SELECT payload
 FROM threecommas_botevents

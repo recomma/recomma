@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"log"
 	"log/slog"
@@ -17,12 +16,12 @@ import (
 
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/rs/cors"
-	"github.com/sonirico/go-hyperliquid"
 
 	tc "github.com/terwey/3commas-sdk-go/threecommas"
 	"github.com/terwey/recomma/cmd/recomma/internal/config"
 	"github.com/terwey/recomma/emitter"
 	"github.com/terwey/recomma/engine"
+	"github.com/terwey/recomma/filltracker"
 	"github.com/terwey/recomma/hl"
 	"github.com/terwey/recomma/hl/ws"
 	"github.com/terwey/recomma/internal/api"
@@ -69,7 +68,7 @@ func main() {
 
 	appCtx = rlog.ContextWithLogger(appCtx, logger)
 
-	store, err := storage.New(cfg.StoragePath, nil)
+	store, err := storage.New(cfg.StoragePath)
 	if err != nil {
 		fatal("storage init failed", err)
 	}
@@ -200,7 +199,12 @@ func main() {
 		fatal("Could not create Hyperliquid Exchange", err)
 	}
 
-	ws, err := ws.New(appCtx, store, secrets.Secrets.HYPERLIQUIDWALLET, secrets.Secrets.HYPERLIQUIDURL)
+	fillTracker := filltracker.New(store, logger)
+	if err := fillTracker.Rebuild(appCtx); err != nil {
+		logger.Warn("fill tracker rebuild failed", slog.String("error", err.Error()))
+	}
+
+	ws, err := ws.New(appCtx, store, fillTracker, secrets.Secrets.HYPERLIQUIDWALLET, secrets.Secrets.HYPERLIQUIDURL)
 	if err != nil {
 		fatal("Could not create Hyperliquid websocket conn", err)
 	}
@@ -230,6 +234,7 @@ func main() {
 	e := engine.NewEngine(client,
 		engine.WithStorage(store),
 		engine.WithEmitter(engineEmitter),
+		engine.WithFillTracker(fillTracker),
 	)
 
 	submitter := emitter.NewHyperLiquidEmitter(exchange, ws, store)
@@ -253,57 +258,11 @@ func main() {
 	}
 	produceOnce(appCtx)
 
-	cancelTakeProfit := func(ctx context.Context) {
-		deals, err := store.ListDealIDs(ctx)
-		if err != nil {
-			slog.Debug("cancelTakeProfit ListDeals returned an error", slog.String("error", err.Error()))
-		}
-
-		logger.Debug("checking deals if completed", slog.Any("deals", deals))
-
-		for _, d := range deals {
-			dealLogger := logger.With("deal_id", d)
-			filled, err := store.DealSafetiesFilled(uint32(d))
-			if err != nil {
-				dealLogger.Debug("cancelTakeProfit DealSafetiesFilled returned an error", slog.String("error", err.Error()))
-			}
-			if !filled {
-				continue
-			}
-
-			md, event, err := store.LoadTakeProfitForDeal(uint32(d))
-			if err != nil {
-				if errors.Is(err, sql.ErrNoRows) {
-					dealLogger.Debug("deal has no TakeProfit")
-					continue
-				}
-				dealLogger.Warn("cancelTakeProfit LoadTakeProfitForDeal returned an error", slog.String("error", err.Error()))
-				continue
-			}
-
-			cancelCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-
-			err = submitter.Emit(cancelCtx, recomma.OrderWork{
-				MD: *md,
-				Action: recomma.Action{
-					Type: recomma.ActionCancel,
-					Cancel: &hyperliquid.CancelOrderRequestByCloid{
-						Coin:  event.Coin,
-						Cloid: md.Hex(),
-					},
-					Reason: "safeties filled for deal",
-				},
-			})
-			cancel()
-			if err != nil {
-				dealLogger.Warn("could not cancel TP", slog.String("error", err.Error()))
-			} else {
-				dealLogger.Info("Safeties filled for Deal, cancelled TP")
-			}
-		}
+	reconcileTakeProfits := func(ctx context.Context) {
+		fillTracker.CancelCompletedTakeProfits(ctx, submitter)
 	}
 
-	cancelTakeProfit(appCtx)
+	reconcileTakeProfits(appCtx)
 
 	// Periodic resync; stops automatically when ctx is cancelled
 	resync := cfg.ResyncInterval
@@ -322,7 +281,7 @@ func main() {
 					return
 				}
 				produceOnce(appCtx)
-				cancelTakeProfit(appCtx)
+				reconcileTakeProfits(appCtx)
 			}
 		}
 	}()

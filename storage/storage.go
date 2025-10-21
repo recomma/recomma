@@ -31,7 +31,19 @@ type Storage struct {
 	mu      sync.Mutex
 }
 
-func New(path string, logger *slog.Logger) (*Storage, error) {
+// StorageOption configures Storage optional dependencies.
+type StorageOption func(*Storage)
+
+func WithLogger(logger *slog.Logger) StorageOption {
+	return func(s *Storage) {
+		if logger != nil {
+			wrapped := loggingDB{inner: s.db, logger: logger}
+			s.queries = sqlcgen.New(wrapped)
+		}
+	}
+}
+
+func New(path string, opts ...StorageOption) (*Storage, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite db: %w", err)
@@ -53,18 +65,16 @@ func New(path string, logger *slog.Logger) (*Storage, error) {
 		return nil, fmt.Errorf("ping sqlite db: %w", err)
 	}
 
-	if logger != nil {
-		wrapped := loggingDB{inner: db, logger: logger}
-		return &Storage{
-			db:      db,
-			queries: sqlcgen.New(wrapped),
-		}, nil
-	}
-
-	return &Storage{
+	s := &Storage{
 		db:      db,
 		queries: sqlcgen.New(db),
-	}, nil
+	}
+
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	return s, nil
 }
 
 func (s *Storage) Close() error {
@@ -305,6 +315,31 @@ func (s *Storage) ListHyperliquidStatuses(md metadata.Metadata) ([]hyperliquid.W
 	}
 
 	return out, nil
+}
+
+// ListMetadataForDeal returns the distinct metadata fingerprints observed for a deal.
+func (s *Storage) ListMetadataForDeal(ctx context.Context, dealID uint32) ([]metadata.Metadata, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.queries.GetMetadataForDeal(ctx, int64(dealID))
+	if err != nil {
+		return nil, err
+	}
+
+	var list []metadata.Metadata
+	for _, mdHex := range result {
+		if mdHex == "" {
+			continue
+		}
+		md, err := metadata.FromHexString(mdHex)
+		if err != nil {
+			return nil, fmt.Errorf("decode metadata %q: %w", mdHex, err)
+		}
+		list = append(list, *md)
+	}
+
+	return list, nil
 }
 
 // HyperliquidSafetyStatus captures the latest Hyperliquid state for a single

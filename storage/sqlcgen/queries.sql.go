@@ -188,6 +188,35 @@ func (q *Queries) FetchThreeCommasBotEvent(ctx context.Context, md string) ([]by
 	return payload, err
 }
 
+const getMetadataForDeal = `-- name: GetMetadataForDeal :many
+SELECT DISTINCT md
+    FROM threecommas_botevents
+    WHERE deal_id = ?
+`
+
+func (q *Queries) GetMetadataForDeal(ctx context.Context, dealID int64) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, getMetadataForDeal, dealID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var md string
+		if err := rows.Scan(&md); err != nil {
+			return nil, err
+		}
+		items = append(items, md)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getTPForDeal = `-- name: GetTPForDeal :one
 SELECT md,
        botevent_id,

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/sonirico/go-hyperliquid"
+	"github.com/terwey/recomma/filltracker"
 	"github.com/terwey/recomma/hl"
 	"github.com/terwey/recomma/metadata"
 	storage "github.com/terwey/recomma/storage"
@@ -17,23 +18,24 @@ type Client struct {
 	subscriptions sync.Map
 	coinBbos      sync.Map
 
-	logger *slog.Logger
-	store  *storage.Storage
+	logger  *slog.Logger
+	store   *storage.Storage
+	tracker *filltracker.Service
 }
 
 // New opens a websocket and subscribes to order updates for userAddr.
 // Pass "" for apiURL to use SDK default (mainnet).
-func New(ctx context.Context, store *storage.Storage, userAddr, apiURL string, opts ...hyperliquid.WsOpt) (*Client, error) {
+func New(ctx context.Context, store *storage.Storage, tracker *filltracker.Service, userAddr, apiURL string, opts ...hyperliquid.WsOpt) (*Client, error) {
 	ws := hyperliquid.NewWebsocketClient(apiURL, opts...)
 	if err := ws.Connect(ctx); err != nil {
 		return nil, err
 	}
 
 	c := &Client{
-		ws: ws,
-		// byCloid: make(map[string]hyperliquid.WsOrder),
-		logger: slog.Default().WithGroup("hyperliquid").WithGroup("ws"),
-		store:  store,
+		ws:      ws,
+		logger:  slog.Default().WithGroup("hyperliquid").WithGroup("ws"),
+		store:   store,
+		tracker: tracker,
 	}
 
 	orderUpdatesSub, err := ws.OrderUpdates(
@@ -50,8 +52,14 @@ func New(ctx context.Context, store *storage.Storage, userAddr, apiURL string, o
 						c.logger.Warn("could not get metadata from cloid", slog.String("cloid", *o.Order.Cloid), slog.String("error", err.Error()))
 						continue
 					}
+					if c.tracker != nil {
+						if err := c.tracker.UpdateStatus(*md, o); err != nil {
+							c.logger.Warn("could not update fill tracker", slog.String("error", err.Error()))
+						}
+					}
 					if err := c.store.RecordHyperliquidStatus(*md, o); err != nil {
 						c.logger.Warn("could not store status", slog.String("error", err.Error()))
+						continue
 					}
 				}
 			}

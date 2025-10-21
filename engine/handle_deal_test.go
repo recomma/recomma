@@ -124,7 +124,7 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 					BotEvent: activeEvent,
 				}
 
-				createReq := adapter.ToCreateOrderRequest(h.deal, be, activeMD)
+				createReq := adapter.ToCreateOrderRequest(h.deal.ToCurrency, be, activeMD)
 				require.NoError(t, h.store.RecordHyperliquidOrderRequest(activeMD, createReq, inserted))
 			},
 			wantActions: []recomma.ActionType{recomma.ActionCancel},
@@ -146,7 +146,7 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 					BotEvent: activeEvent,
 				}
 
-				createReq := adapter.ToCreateOrderRequest(h.deal, be, activeMD)
+				createReq := adapter.ToCreateOrderRequest(h.deal.ToCurrency, be, activeMD)
 				require.NoError(t, h.store.RecordHyperliquidOrderRequest(activeMD, createReq, inserted))
 			},
 			wantActions: []recomma.ActionType{recomma.ActionModify},
@@ -169,7 +169,7 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 				tc.prepare(t, h)
 			}
 
-			err := h.engine.processDeal(h.ctx, h.key, h.deal, tc.events)
+			err := h.engine.processDeal(h.ctx, h.key, h.deal.ToCurrency, tc.events)
 			require.NoError(t, err)
 
 			require.Len(t, h.emitter.items, len(tc.wantActions))

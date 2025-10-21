@@ -25,12 +25,6 @@ type HyperliquidSubmission struct {
 	BoteventRowID  int64           `json:"botevent_row_id"`
 }
 
-type KvState struct {
-	K            string `json:"k"`
-	V            []byte `json:"v"`
-	UpdatedAtUtc int64  `json:"updated_at_utc"`
-}
-
 type ThreecommasBot struct {
 	BotID         int64  `json:"bot_id"`
 	Payload       []byte `json:"payload"`

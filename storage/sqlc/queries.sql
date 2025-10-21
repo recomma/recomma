@@ -342,6 +342,19 @@ WHERE md = sqlc.arg(metadata)
   AND observed_at_utc <= COALESCE(sqlc.arg(observed_to), observed_at_utc)
 ORDER BY observed_at_utc ASC, id ASC;
 
+-- name: ListThreeCommasBotEventLogs :many
+SELECT
+    id,
+    md,
+    bot_id,
+    deal_id,
+    botevent_id,
+    created_at_utc,
+    observed_at_utc,
+    payload
+FROM threecommas_botevents_log
+ORDER BY created_at_utc ASC, id ASC;
+
 -- name: ListHyperliquidStatusesForMetadata :many
 SELECT
     id,

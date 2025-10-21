@@ -554,7 +554,7 @@ paths:
                   UTF-8 event stream. Example frame:
                   ```
                   event: three_commas_event
-                  data: {"type":"three_commas_event","metadata_hex":"0x1234","observed_at":"2025-01-02T03:04:05Z","payload":{...}}
+                  data: {"type":"three_commas_event","metadata":"0x1234","identifiers":{"hex":"0x1234","bot_id":16538545,"deal_id":2381631392,"bot_event_id":1917367905,"created_at":"2025-01-02T01:02:03Z"},"observed_at":"2025-01-02T03:04:05Z","event":{"created_at":"2025-01-02T01:02:03Z","action":"Placing","coin":"DOGE","type":"BUY","status":"Active","price":0.19788,"size":105,"order_type":"base","order_size":0,"order_position":0,"quote_volume":20.7774,"quote_currency":"USDT","is_market":false,"text":"Placing base order..."}}
                   
                   ```
         '400':
@@ -853,16 +853,47 @@ components:
     OrderRecord:
       type: object
       required:
-        - metadata_hex
+        - metadata
+        - identifiers
+        - observed_at
+        - three_commas
+      properties:
+        metadata:
+          type: string
+          description: Metadata hash (hex) as stored in `threecommas_botevents`.
+        identifiers:
+          $ref: '#/components/schemas/OrderIdentifiers'
+          description: Parsed bot/deal information derived from the metadata. `hex` repeats the `metadata` value.
+        observed_at:
+          type: string
+          format: date-time
+          description: Timestamp when Recomma observed the order update.
+        three_commas:
+          $ref: '#/components/schemas/ThreeCommasOrderState'
+          description: Latest parsed 3Commas bot-event associated with this metadata.
+        hyperliquid:
+          $ref: '#/components/schemas/HyperliquidOrderState'
+          nullable: true
+          description: Latest Hyperliquid submission/status captured for this metadata.
+        log_entries:
+          type: array
+          nullable: true
+          description: Present only when `include_log=true`. Entries follow the same structured shape as the SSE stream.
+          items:
+            $ref: '#/components/schemas/OrderLogEntry'
+
+    OrderIdentifiers:
+      type: object
+      required:
+        - hex
         - bot_id
         - deal_id
         - bot_event_id
         - created_at
-        - observed_at
-        - bot_event_payload
       properties:
-        metadata_hex:
+        hex:
           type: string
+          description: Case-insensitive hash deriving from the 3Commas metadata payload.
         bot_id:
           type: integer
           format: int64
@@ -875,39 +906,357 @@ components:
         created_at:
           type: string
           format: date-time
-        observed_at:
+          description: When the originating 3Commas event was created.
+
+    ThreeCommasOrderState:
+      type: object
+      required:
+        - event
+      properties:
+        event:
+          $ref: '#/components/schemas/ThreeCommasBotEvent'
+          description: Parsed 3Commas bot event emitted for this metadata.
+
+    ThreeCommasBotEvent:
+      type: object
+      required:
+        - created_at
+        - action
+        - coin
+        - type
+        - status
+        - price
+        - size
+        - order_type
+        - order_size
+        - order_position
+        - quote_volume
+        - quote_currency
+        - is_market
+        - text
+      properties:
+        created_at:
           type: string
           format: date-time
-        bot_event_payload:
-          type: object
-          additionalProperties: true
-          description: Raw payload from `threecommas_botevents`.
+        action:
+          type: string
+          description: High-level classification provided by the bot event parser (for example `Placing` or `Execute`).
+        coin:
+          type: string
+        type:
+          type: string
+          description: BUY/SELL side reported by 3Commas.
+        status:
+          type: string
+        price:
+          type: number
+          format: double
+        size:
+          type: number
+          format: double
+        order_type:
+          type: string
+          description: Event order type from 3Commas (base, safety, take_profit, etc).
+        order_size:
+          type: integer
+          description: Total number of orders in the group this event belongs to.
+        order_position:
+          type: integer
+          description: Position of this event inside the group (1-indexed).
+        quote_volume:
+          type: number
+          format: double
+        quote_currency:
+          type: string
+        is_market:
+          type: boolean
+        profit:
+          type: number
+          format: double
+          nullable: true
+        profit_currency:
+          type: string
+          nullable: true
+        profit_usd:
+          type: number
+          format: double
+          nullable: true
+        profit_percentage:
+          type: number
+          format: double
+          nullable: true
+        text:
+          type: string
+          description: Raw message parsed from 3Commas describing the event.
+
+    HyperliquidOrderState:
+      type: object
+      properties:
         latest_submission:
-          type: object
-          additionalProperties: true
+          $ref: '#/components/schemas/HyperliquidAction'
           nullable: true
-          description: >
-            Raw JSON from `hyperliquid_submissions` for this metadata (last write wins).
+          description: Most recent action we submitted to Hyperliquid for this metadata (last write wins).
         latest_status:
-          type: object
-          additionalProperties: true
+          $ref: '#/components/schemas/HyperliquidWsOrder'
           nullable: true
-          description: >
-            Raw JSON from the most recent `hyperliquid_status_history` row for this metadata.
-        log_entries:
-          type: array
+          description: Most recent order status update received from Hyperliquid for this metadata.
+
+    HyperliquidAction:
+      oneOf:
+        - $ref: '#/components/schemas/HyperliquidNoopAction'
+        - $ref: '#/components/schemas/HyperliquidCreateAction'
+        - $ref: '#/components/schemas/HyperliquidModifyAction'
+        - $ref: '#/components/schemas/HyperliquidCancelAction'
+      discriminator:
+        propertyName: kind
+        mapping:
+          none: '#/components/schemas/HyperliquidNoopAction'
+          create: '#/components/schemas/HyperliquidCreateAction'
+          modify: '#/components/schemas/HyperliquidModifyAction'
+          cancel: '#/components/schemas/HyperliquidCancelAction'
+
+    HyperliquidActionBase:
+      type: object
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+
+    HyperliquidNoopAction:
+      allOf:
+        - $ref: '#/components/schemas/HyperliquidActionBase'
+        - type: object
+          properties:
+            kind:
+              type: string
+              enum:
+                - none
+            reason:
+              type: string
+              nullable: true
+              description: Optional explanation when no actionable payload is available.
+
+    HyperliquidCreateAction:
+      allOf:
+        - $ref: '#/components/schemas/HyperliquidActionBase'
+        - type: object
+          required:
+            - order
+          properties:
+            kind:
+              type: string
+              enum:
+                - create
+            order:
+              $ref: '#/components/schemas/HyperliquidCreateOrder'
+
+    HyperliquidModifyAction:
+      allOf:
+        - $ref: '#/components/schemas/HyperliquidActionBase'
+        - type: object
+          required:
+            - order
+          properties:
+            kind:
+              type: string
+              enum:
+                - modify
+            oid:
+              type: integer
+              format: int64
+              nullable: true
+              description: Target order identifier when available.
+            client_order_id:
+              type: string
+              nullable: true
+              description: Client order identifier (CLOID) to target when `oid` is not available.
+            order:
+              $ref: '#/components/schemas/HyperliquidCreateOrder'
+          description: At least one of `oid` or `client_order_id` must be supplied to identify the order to modify.
+
+    HyperliquidCancelAction:
+      allOf:
+        - $ref: '#/components/schemas/HyperliquidActionBase'
+        - type: object
+          required:
+            - cancel
+          properties:
+            kind:
+              type: string
+              enum:
+                - cancel
+            cancel:
+              $ref: '#/components/schemas/HyperliquidCancelOrder'
+
+    HyperliquidCreateOrder:
+      type: object
+      required:
+        - coin
+        - is_buy
+        - price
+        - size
+        - reduce_only
+        - order_type
+      properties:
+        coin:
+          type: string
+        is_buy:
+          type: boolean
+        price:
+          type: number
+          format: double
+        size:
+          type: number
+          format: double
+        reduce_only:
+          type: boolean
+        order_type:
+          $ref: '#/components/schemas/HyperliquidOrderType'
+        client_order_id:
+          type: string
           nullable: true
-          description: Present only when `include_log=true`. Entries are filtered to the same metadata/time window.
-          items:
-            $ref: '#/components/schemas/OrderLogEntry'
+
+    HyperliquidOrderType:
+      type: object
+      properties:
+        limit:
+          $ref: '#/components/schemas/HyperliquidLimitOrder'
+        trigger:
+          $ref: '#/components/schemas/HyperliquidTriggerOrder'
+      additionalProperties: false
+
+    HyperliquidLimitOrder:
+      type: object
+      required:
+        - tif
+      properties:
+        tif:
+          type: string
+          description: Time in force. Examples include `Gtc`, `Ioc`, and `Alo`.
+
+    HyperliquidTriggerOrder:
+      type: object
+      required:
+        - trigger_px
+        - is_market
+        - tpsl
+      properties:
+        trigger_px:
+          type: number
+          format: double
+        is_market:
+          type: boolean
+        tpsl:
+          type: string
+          description: Describes whether this trigger is take-profit (`tp`) or stop-loss (`sl`).
+
+    HyperliquidCancelOrder:
+      type: object
+      required:
+        - coin
+        - client_order_id
+      properties:
+        coin:
+          type: string
+        client_order_id:
+          type: string
+
+    HyperliquidWsOrder:
+      type: object
+      required:
+        - order
+        - status
+        - status_timestamp
+      properties:
+        order:
+          $ref: '#/components/schemas/HyperliquidWsBasicOrder'
+        status:
+          $ref: '#/components/schemas/HyperliquidOrderStatus'
+        status_timestamp:
+          type: integer
+          format: int64
+
+    HyperliquidWsBasicOrder:
+      type: object
+      required:
+        - coin
+        - side
+        - limit_px
+        - size
+        - oid
+        - timestamp
+        - orig_size
+      properties:
+        coin:
+          type: string
+        side:
+          type: string
+          description: Either `A` (ask) or `B` (bid) in Hyperliquid terminology.
+        limit_px:
+          type: string
+        size:
+          type: string
+        oid:
+          type: integer
+          format: int64
+        timestamp:
+          type: integer
+          format: int64
+        orig_size:
+          type: string
+        client_order_id:
+          type: string
+          nullable: true
+
+    HyperliquidOrderStatus:
+      type: string
+      enum:
+        - open
+        - filled
+        - canceled
+        - triggered
+        - rejected
+        - marginCanceled
+        - vaultWithdrawalCanceled
+        - openInterestCapCanceled
+        - selfTradeCanceled
+        - reduceOnlyCanceled
+        - siblingFilledCanceled
+        - delistedCanceled
+        - liquidatedCanceled
+        - scheduledCancel
+        - tickRejected
+        - minTradeNtlRejected
+        - perpMarginRejected
+        - reduceOnlyRejected
+        - badAloPxRejected
+        - iocCancelRejected
+        - badTriggerPxRejected
+        - marketOrderNoLiquidityRejected
+        - positionIncreaseAtOpenInterestCapRejected
+        - positionFlipAtOpenInterestCapRejected
+        - tooAggressiveAtOpenInterestCapRejected
+        - openInterestIncreaseRejected
 
     OrderLogEntry:
+      oneOf:
+        - $ref: '#/components/schemas/ThreeCommasLogEntry'
+        - $ref: '#/components/schemas/HyperliquidSubmissionLogEntry'
+        - $ref: '#/components/schemas/HyperliquidStatusLogEntry'
+      discriminator:
+        propertyName: type
+        mapping:
+          three_commas_event: '#/components/schemas/ThreeCommasLogEntry'
+          hyperliquid_submission: '#/components/schemas/HyperliquidSubmissionLogEntry'
+          hyperliquid_status: '#/components/schemas/HyperliquidStatusLogEntry'
+
+    OrderLogEntryBase:
       type: object
       required:
         - type
-        - metadata_hex
+        - metadata
         - observed_at
-        - payload
       properties:
         type:
           type: string
@@ -915,17 +1264,52 @@ components:
             - three_commas_event
             - hyperliquid_submission
             - hyperliquid_status
-        metadata_hex:
+        metadata:
           type: string
+          description: Metadata hash (hex) identifying the order context.
+        identifiers:
+          $ref: '#/components/schemas/OrderIdentifiers'
+          nullable: true
+          description: Bot/deal identifiers derived from the metadata when available.
+        observed_at:
+          type: string
+          format: date-time
+        sequence:
+          type: integer
+          format: int64
+          nullable: true
+          description: Monotonic sequence counter assigned at publish time, useful for de-duplicating streamed events.
         bot_event_id:
           type: integer
           format: int64
           nullable: true
-          description: Bot-event ID when available (present for 3Commas rows).
-        observed_at:
-          type: string
-          format: date-time
-        payload:
-          type: object
-          additionalProperties: true
-          description: Raw JSON payload from the corresponding table.
+
+    ThreeCommasLogEntry:
+      allOf:
+        - $ref: '#/components/schemas/OrderLogEntryBase'
+        - type: object
+          required:
+            - event
+          properties:
+            event:
+              $ref: '#/components/schemas/ThreeCommasBotEvent'
+
+    HyperliquidSubmissionLogEntry:
+      allOf:
+        - $ref: '#/components/schemas/OrderLogEntryBase'
+        - type: object
+          required:
+            - action
+          properties:
+            action:
+              $ref: '#/components/schemas/HyperliquidAction'
+
+    HyperliquidStatusLogEntry:
+      allOf:
+        - $ref: '#/components/schemas/OrderLogEntryBase'
+        - type: object
+          required:
+            - status
+          properties:
+            status:
+              $ref: '#/components/schemas/HyperliquidWsOrder'

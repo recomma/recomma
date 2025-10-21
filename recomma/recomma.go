@@ -2,6 +2,7 @@ package recomma
 
 import (
 	"context"
+	"time"
 
 	"github.com/sonirico/go-hyperliquid"
 	tc "github.com/terwey/3commas-sdk-go/threecommas"
@@ -38,6 +39,17 @@ type Action struct {
 type BotEvent struct {
 	RowID int64
 	tc.BotEvent
+}
+
+type BotEventLog struct {
+	RowID      int64
+	BotEvent   tc.BotEvent
+	Md         metadata.Metadata
+	BotID      int64
+	DealID     int64
+	BoteventID int64
+	CreatedAt  time.Time
+	ObservedAt time.Time
 }
 
 func ToThreeCommasBotEvent(in []BotEvent) []tc.BotEvent {

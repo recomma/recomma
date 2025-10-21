@@ -733,6 +733,52 @@ func (q *Queries) ListLatestHyperliquidSafetyStatuses(ctx context.Context, dealI
 	return items, nil
 }
 
+const listThreeCommasBotEventLogs = `-- name: ListThreeCommasBotEventLogs :many
+SELECT
+    id,
+    md,
+    bot_id,
+    deal_id,
+    botevent_id,
+    created_at_utc,
+    observed_at_utc,
+    payload
+FROM threecommas_botevents_log
+ORDER BY created_at_utc ASC, id ASC
+`
+
+func (q *Queries) ListThreeCommasBotEventLogs(ctx context.Context) ([]ThreecommasBoteventsLog, error) {
+	rows, err := q.db.QueryContext(ctx, listThreeCommasBotEventLogs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ThreecommasBoteventsLog
+	for rows.Next() {
+		var i ThreecommasBoteventsLog
+		if err := rows.Scan(
+			&i.ID,
+			&i.Md,
+			&i.BotID,
+			&i.DealID,
+			&i.BoteventID,
+			&i.CreatedAtUtc,
+			&i.ObservedAtUtc,
+			&i.Payload,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listThreeCommasBotEventLogsForMetadata = `-- name: ListThreeCommasBotEventLogsForMetadata :many
 SELECT
     id,

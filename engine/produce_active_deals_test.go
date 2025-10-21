@@ -154,7 +154,7 @@ func TestProduceActiveDeals_TableDriven(t *testing.T) {
 
 			q := &fakeQueue{}
 			em := &fakeEmitter{}
-			e := NewEngine(client, store, em)
+			e := NewEngine(client, WithStorage(store), WithEmitter(em))
 
 			err = e.ProduceActiveDeals(ctx, q)
 			if tcse.wantErr {

@@ -38,7 +38,7 @@ func newHarness(t *testing.T, botID, dealID uint32) *harness {
 	require.NoError(t, err)
 
 	em := &capturingEmitter{}
-	engine := NewEngine(nil, store, em)
+	engine := NewEngine(nil, WithStorage(store), WithEmitter(em))
 
 	deal := &tc.Deal{
 		Id:           int(dealID),

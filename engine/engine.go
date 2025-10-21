@@ -157,10 +157,10 @@ func (e *Engine) HandleDeal(ctx context.Context, wi WorkKey) error {
 		return err
 	}
 
-	return e.processDeal(ctx, wi, deal, deal.Events())
+	return e.processDeal(ctx, wi, deal.ToCurrency, deal.Events())
 }
 
-func (e *Engine) processDeal(ctx context.Context, wi WorkKey, deal *tc.Deal, events []tc.BotEvent) error {
+func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, events []tc.BotEvent) error {
 	logger := e.logger.With("deal-id", wi.DealID).With("bot-id", wi.BotID)
 	seen := make(map[uint32]metadata.Metadata)
 
@@ -202,7 +202,7 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, deal *tc.Deal, eve
 	}
 
 	for _, md := range seen {
-		action, latestEvent, shouldEmit, err := e.reduceOrderEvents(deal, md, logger.With("botevent-id", md.BotEventID))
+		action, latestEvent, shouldEmit, err := e.reduceOrderEvents(currency, md, logger.With("botevent-id", md.BotEventID))
 		if err != nil {
 			return fmt.Errorf("reduce order %d: %w", md.BotEventID, err)
 		}
@@ -226,7 +226,7 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, deal *tc.Deal, eve
 // on Hyperliquid". It returns the action plus a flag telling the caller whether
 // anything needs to be emitted.
 func (e *Engine) reduceOrderEvents(
-	deal *tc.Deal,
+	currency string,
 	md metadata.Metadata,
 	logger *slog.Logger,
 ) (recomma.Action, *recomma.BotEvent, bool, error) {
@@ -259,7 +259,7 @@ func (e *Engine) reduceOrderEvents(
 		prev = nil
 	}
 
-	action := adapter.BuildAction(deal, prev, latest, md)
+	action := adapter.BuildAction(currency, prev, latest, md)
 
 	switch action.Type {
 	case recomma.ActionNone:
@@ -277,7 +277,7 @@ func (e *Engine) reduceOrderEvents(
 		// differ. If HL never saw the create we fall back to a create using
 		// the freshest snapshot so the venue ends up with the right values.
 		if !hasLocalOrder {
-			req := adapter.ToCreateOrderRequest(deal, latest, md)
+			req := adapter.ToCreateOrderRequest(currency, latest, md)
 			logger.Warn("modify requested before create; falling back", slog.Any("latest", latest))
 			logger.Debug("emit create", slog.Any("request", req))
 			return recomma.Action{Type: recomma.ActionCreate, Create: &req}, &latestCopy, true, nil

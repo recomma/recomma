@@ -1,4 +1,4 @@
-import { useState, useEffect, type MouseEvent } from 'react';
+import { useState, useEffect, useRef, type MouseEvent } from 'react';
 import { Card } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -82,6 +82,14 @@ export function BotsDealsExplorer({ onBotSelect, onDealSelect, selectedBotId, se
   const [isDealsOpen, setIsDealsOpen] = useState(false);
   const [botDetailDialog, setBotDetailDialog] = useState<{ open: boolean; bot: BotRecord | null }>({ open: false, bot: null });
   const [dealDetailDialog, setDealDetailDialog] = useState<{ open: boolean; deal: DealRecord | null }>({ open: false, deal: null });
+  const isMountedRef = useRef(false);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     fetchBots();
@@ -113,7 +121,7 @@ export function BotsDealsExplorer({ onBotSelect, onDealSelect, selectedBotId, se
       const params = new URLSearchParams();
       if (botId) params.append('bot_id', botId.toString());
       params.append('limit', '100');
-      
+
       const response = await fetch(buildOpsApiUrl(`/api/deals?${params}`));
       if (!response.ok) throw new Error('API not available');
       const data: ListDealsResponse = await response.json();
@@ -124,6 +132,47 @@ export function BotsDealsExplorer({ onBotSelect, onDealSelect, selectedBotId, se
       // no-op
     }
   };
+
+  // Set up SSE to refresh bots/deals when order events arrive
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    let isActive = true;
+    const url = buildOpsApiUrl('/sse/orders');
+    let eventSource: EventSource | null = null;
+
+    try {
+      eventSource = new EventSource(url, { withCredentials: true });
+
+      eventSource.onmessage = () => {
+        if (!isActive || !isMountedRef.current) {
+          return;
+        }
+
+        // Refresh bots and deals when order updates arrive
+        // This keeps the data fresh without dedicated SSE endpoints
+        void fetchBots();
+        if (selectedBotId) {
+          void fetchDeals(selectedBotId);
+        } else {
+          void fetchDeals();
+        }
+      };
+
+      eventSource.onerror = () => {
+        eventSource?.close();
+      };
+    } catch {
+      // SSE not available; continue without live updates.
+    }
+
+    return () => {
+      isActive = false;
+      eventSource?.close();
+    };
+  }, [selectedBotId]);
 
   const handleBotClick = (botId: number) => {
     if (selectedBotId === botId) {
@@ -166,26 +215,26 @@ export function BotsDealsExplorer({ onBotSelect, onDealSelect, selectedBotId, se
 
   return (
     <>
-      <BotDetailDialog 
-        bot={botDetailDialog.bot} 
-        open={botDetailDialog.open} 
-        onOpenChange={(open) => setBotDetailDialog({ open, bot: null })} 
+      <BotDetailDialog
+        bot={botDetailDialog.bot}
+        open={botDetailDialog.open}
+        onOpenChange={(open) => setBotDetailDialog({ open, bot: null })}
       />
-      <DealDetailDialog 
-        deal={dealDetailDialog.deal} 
-        open={dealDetailDialog.open} 
-        onOpenChange={(open) => setDealDetailDialog({ open, deal: null })} 
+      <DealDetailDialog
+        deal={dealDetailDialog.deal}
+        open={dealDetailDialog.open}
+        onOpenChange={(open) => setDealDetailDialog({ open, deal: null })}
       />
-      <Card>
+      <Card className="gap-0">
       <div className="divide-y">
         {/* Bots Section */}
         <Collapsible open={isBotsOpen} onOpenChange={setIsBotsOpen}>
-          <div className="p-3">
+          <div className="px-3 py-2.5">
             <CollapsibleTrigger asChild>
               <div className="flex items-center justify-between cursor-pointer">
                 <div className="flex items-center gap-2">
                   <Bot className="h-4 w-4 text-blue-600" />
-                  <span className="text-gray-900">Bots</span>
+                  <span className="text-sm font-medium">Bots</span>
                   <Badge variant="secondary" className="text-xs">{bots.length}</Badge>
                   {selectedBotId && (
                     <>
@@ -196,14 +245,14 @@ export function BotsDealsExplorer({ onBotSelect, onDealSelect, selectedBotId, se
                     </>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   {selectedBotId && selectedBot && (
                     <>
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={(event: MouseEvent<HTMLButtonElement>) => handleBotDetails(event, selectedBot)}
-                        className="h-7 text-xs"
+                        className="h-7 px-2 text-xs"
                       >
                         <Info className="h-3 w-3 mr-1" />
                         Details
@@ -215,7 +264,7 @@ export function BotsDealsExplorer({ onBotSelect, onDealSelect, selectedBotId, se
                           event.stopPropagation();
                           window.open(`https://app.3commas.io/bots/${selectedBotId}`, '_blank');
                         }}
-                        className="h-7 text-xs"
+                        className="h-7 px-2 text-xs"
                       >
                         <ExternalLink className="h-3 w-3 mr-1" />
                         3Commas
@@ -231,7 +280,7 @@ export function BotsDealsExplorer({ onBotSelect, onDealSelect, selectedBotId, se
                         onBotSelect(undefined);
                         onDealSelect(undefined);
                       }}
-                      className="h-7 text-xs"
+                      className="h-7 px-2 text-xs"
                     >
                       Clear
                     </Button>
@@ -241,10 +290,10 @@ export function BotsDealsExplorer({ onBotSelect, onDealSelect, selectedBotId, se
               </div>
             </CollapsibleTrigger>
           </div>
-          
+
           <CollapsibleContent>
             <div className="px-3 pb-3">
-              <ScrollArea className="h-[180px] rounded-md border">
+              <ScrollArea className="h-[120px] rounded-md border">
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 p-2">
                   {bots.map((bot) => {
                     const isSelected = selectedBotId === bot.bot_id;
@@ -301,12 +350,12 @@ export function BotsDealsExplorer({ onBotSelect, onDealSelect, selectedBotId, se
 
         {/* Deals Section */}
         <Collapsible open={isDealsOpen} onOpenChange={setIsDealsOpen}>
-          <div className="p-3">
+          <div className="px-3 py-2.5">
             <CollapsibleTrigger asChild>
               <div className="flex items-center justify-between cursor-pointer">
                 <div className="flex items-center gap-2">
                   <Activity className="h-4 w-4 text-purple-600" />
-                  <span className="text-gray-900">Deals</span>
+                  <span className="text-sm font-medium">Deals</span>
                   <Badge variant="secondary" className="text-xs">{filteredDeals.length}</Badge>
                   {selectedDealId && (
                     <>
@@ -317,14 +366,14 @@ export function BotsDealsExplorer({ onBotSelect, onDealSelect, selectedBotId, se
                     </>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   {selectedDealId && selectedDeal && (
                     <>
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={(event: MouseEvent<HTMLButtonElement>) => handleDealDetails(event, selectedDeal)}
-                        className="h-7 text-xs"
+                        className="h-7 px-2 text-xs"
                       >
                         <Info className="h-3 w-3 mr-1" />
                         Details
@@ -336,7 +385,7 @@ export function BotsDealsExplorer({ onBotSelect, onDealSelect, selectedBotId, se
                           event.stopPropagation();
                           window.open(`https://app.3commas.io/deals/${selectedDealId}`, '_blank');
                         }}
-                        className="h-7 text-xs"
+                        className="h-7 px-2 text-xs"
                       >
                         <ExternalLink className="h-3 w-3 mr-1" />
                         3Commas
@@ -351,7 +400,7 @@ export function BotsDealsExplorer({ onBotSelect, onDealSelect, selectedBotId, se
                         event.stopPropagation();
                         onDealSelect(undefined);
                       }}
-                      className="h-7 text-xs"
+                      className="h-7 px-2 text-xs"
                     >
                       Clear
                     </Button>
@@ -361,10 +410,10 @@ export function BotsDealsExplorer({ onBotSelect, onDealSelect, selectedBotId, se
               </div>
             </CollapsibleTrigger>
           </div>
-          
+
           <CollapsibleContent>
             <div className="px-3 pb-3">
-              <ScrollArea className="h-[180px] rounded-md border">
+              <ScrollArea className="h-[120px] rounded-md border">
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2 p-2">
                   {filteredDeals.map((deal) => {
                     const isSelected = selectedDealId === deal.deal_id;

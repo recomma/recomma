@@ -1,5 +1,6 @@
 interface RecommaRuntimeConfig {
   OPS_API_ORIGIN?: string;
+  DEBUG_LOGS?: boolean;
 }
 
 declare global {

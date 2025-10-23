@@ -48,11 +48,11 @@ func (s *Storage) ListBots(ctx context.Context, opts api.ListBotsOptions) ([]api
 	}
 	if opts.UpdatedFrom != nil {
 		conditions = append(conditions, "last_synced_utc >= ?")
-		args = append(args, opts.UpdatedFrom.UTC().Unix())
+		args = append(args, opts.UpdatedFrom.UTC().UnixMilli())
 	}
 	if opts.UpdatedTo != nil {
 		conditions = append(conditions, "last_synced_utc <= ?")
-		args = append(args, opts.UpdatedTo.UTC().Unix())
+		args = append(args, opts.UpdatedTo.UTC().UnixMilli())
 	}
 	if opts.PageToken != "" {
 		conditions = append(conditions, "(last_synced_utc < ? OR (last_synced_utc = ? AND bot_id < ?))")
@@ -147,11 +147,11 @@ func (s *Storage) ListDeals(ctx context.Context, opts api.ListDealsOptions) ([]t
 	}
 	if opts.UpdatedFrom != nil {
 		conditions = append(conditions, "updated_at_utc >= ?")
-		args = append(args, opts.UpdatedFrom.UTC().Unix())
+		args = append(args, opts.UpdatedFrom.UTC().UnixMilli())
 	}
 	if opts.UpdatedTo != nil {
 		conditions = append(conditions, "updated_at_utc <= ?")
-		args = append(args, opts.UpdatedTo.UTC().Unix())
+		args = append(args, opts.UpdatedTo.UTC().UnixMilli())
 	}
 	if opts.PageToken != "" {
 		conditions = append(conditions, "(updated_at_utc < ? OR (updated_at_utc = ? AND deal_id < ?))")
@@ -239,14 +239,14 @@ func (s *Storage) ListOrders(ctx context.Context, opts api.ListOrdersOptions) ([
 
 	logFrom := int64(math.MinInt64)
 	if opts.ObservedFrom != nil {
-		logFrom = opts.ObservedFrom.UTC().Unix()
+		logFrom = opts.ObservedFrom.UTC().UnixMilli()
 		conditions = append(conditions, "observed_at_utc >= ?")
 		args = append(args, logFrom)
 	}
 
 	logTo := int64(math.MaxInt64)
 	if opts.ObservedTo != nil {
-		logTo = opts.ObservedTo.UTC().Unix()
+		logTo = opts.ObservedTo.UTC().UnixMilli()
 		conditions = append(conditions, "observed_at_utc <= ?")
 		args = append(args, logTo)
 	}

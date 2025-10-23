@@ -244,6 +244,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/orders/{metadata}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Hyperliquid order by metadata
+         * @description Enqueues a Hyperliquid cancel action for the order identified by the supplied metadata hex. The service resolves the most recent submission for the metadata to determine the CLOID and venue coin.
+         */
+        post: operations["cancelOrderByMetadata"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sse/orders": {
         parameters: {
             query?: never;
@@ -256,6 +276,26 @@ export interface paths {
          * @description Server Sent Events channel fed by writes to `threecommas_botevents`, `hyperliquid_submissions`, and `hyperliquid_status_history`. Each `data:` frame is a JSON object containing the raw payload we stored for that update, plus the metadata hex and timestamps. Filters match the query semantics of `/api/orders`.
          */
         get: operations["streamOrders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sse/hyperliquid/prices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Hyperliquid best bid/offer quotes
+         * @description Server Sent Events channel that publishes best bid and offer updates for the requested Hyperliquid coins. Each subscription ensures the backend is listening to the venue's BBO feed (via `EnsureBBO`) and forwards normalized price levels whenever new quotes arrive. Each `data:` payload is a JSON-encoded `HyperliquidBestBidOffer`.
+         */
+        get: operations["streamHyperliquidPrices"];
         put?: never;
         post?: never;
         delete?: never;
@@ -422,47 +462,275 @@ export interface components {
             payload: components["schemas"]["Deal"];
         };
         OrderRecord: {
-            metadata_hex: string;
+            /** @description Metadata hash (hex) as stored in `threecommas_botevents`. */
+            metadata: string;
+            /** @description Parsed bot/deal information derived from the metadata. `hex` repeats the `metadata` value. */
+            identifiers: components["schemas"]["OrderIdentifiers"];
+            /**
+             * Format: date-time
+             * @description Timestamp when Recomma observed the order update.
+             */
+            observed_at: string;
+            /** @description Latest parsed 3Commas bot-event associated with this metadata. */
+            three_commas: components["schemas"]["ThreeCommasOrderState"];
+            /** @description Latest Hyperliquid submission/status captured for this metadata. */
+            hyperliquid?: components["schemas"]["HyperliquidOrderState"];
+            /** @description Present only when `include_log=true`. Entries follow the same structured shape as the SSE stream. */
+            log_entries?: components["schemas"]["OrderLogEntry"][] | null;
+        };
+        CancelOrderByMetadataRequest: {
+            /** @description Optional operator note recorded alongside the cancel request. */
+            reason?: string | null;
+            /**
+             * @description When true, validate the cancel preconditions without dispatching the Hyperliquid request.
+             * @default false
+             */
+            dry_run: boolean;
+        };
+        CancelOrderByMetadataResponse: {
+            /** @description Metadata hex identifying the targeted order. */
+            metadata: string;
+            /** @description Outcome of the cancel attempt (for example `queued`, `skipped`, or `noop`). */
+            status: string;
+            /** @description Hyperliquid cancel payload that will be submitted when applicable. */
+            cancel?: components["schemas"]["HyperliquidCancelOrder"];
+            /** @description Additional context explaining the status when relevant. */
+            message?: string | null;
+        };
+        OrderIdentifiers: {
+            /** @description Case-insensitive hash deriving from the 3Commas metadata payload. */
+            hex: string;
             /** Format: int64 */
             bot_id: number;
             /** Format: int64 */
             deal_id: number;
             /** Format: int64 */
             bot_event_id: number;
+            /**
+             * Format: date-time
+             * @description When the originating 3Commas event was created.
+             */
+            created_at: string;
+        };
+        ThreeCommasOrderState: {
+            /** @description Parsed 3Commas bot event emitted for this metadata. */
+            event: components["schemas"]["ThreeCommasBotEvent"];
+        };
+        ThreeCommasBotEvent: {
             /** Format: date-time */
             created_at: string;
-            /** Format: date-time */
-            observed_at: string;
-            /** @description Raw payload from `threecommas_botevents`. */
-            bot_event_payload: {
-                [key: string]: unknown;
-            };
-            /** @description Raw JSON from `hyperliquid_submissions` for this metadata (last write wins). */
-            latest_submission?: {
-                [key: string]: unknown;
-            } | null;
-            /** @description Raw JSON from the most recent `hyperliquid_status_history` row for this metadata. */
-            latest_status?: {
-                [key: string]: unknown;
-            } | null;
-            /** @description Present only when `include_log=true`. Entries are filtered to the same metadata/time window. */
-            log_entries?: components["schemas"]["OrderLogEntry"][] | null;
+            /** @description High-level classification provided by the bot event parser (for example `Placing` or `Execute`). */
+            action: string;
+            coin: string;
+            /** @description BUY/SELL side reported by 3Commas. */
+            type: string;
+            status: string;
+            /** Format: double */
+            price: number;
+            /** Format: double */
+            size: number;
+            /** @description Event order type from 3Commas (base, safety, take_profit, etc). */
+            order_type: string;
+            /** @description Total number of orders in the group this event belongs to. */
+            order_size: number;
+            /** @description Position of this event inside the group (1-indexed). */
+            order_position: number;
+            /** Format: double */
+            quote_volume: number;
+            quote_currency: string;
+            is_market: boolean;
+            /** Format: double */
+            profit?: number | null;
+            profit_currency?: string | null;
+            /** Format: double */
+            profit_usd?: number | null;
+            /** Format: double */
+            profit_percentage?: number | null;
+            /** @description Raw message parsed from 3Commas describing the event. */
+            text: string;
         };
-        OrderLogEntry: {
+        HyperliquidOrderState: {
+            /** @description Most recent action we submitted to Hyperliquid for this metadata (last write wins). */
+            latest_submission?: components["schemas"]["HyperliquidAction"];
+            /** @description Most recent order status update received from Hyperliquid for this metadata. */
+            latest_status?: components["schemas"]["HyperliquidWsOrder"];
+        };
+        HyperliquidAction: components["schemas"]["HyperliquidNoopAction"] | components["schemas"]["HyperliquidCreateAction"] | components["schemas"]["HyperliquidModifyAction"] | components["schemas"]["HyperliquidCancelAction"];
+        HyperliquidActionBase: {
+            kind: string;
+        };
+        HyperliquidNoopAction: components["schemas"]["HyperliquidActionBase"] & {
             /** @enum {string} */
-            type: "three_commas_event" | "hyperliquid_submission" | "hyperliquid_status";
-            metadata_hex: string;
+            kind?: "none";
+            /** @description Optional explanation when no actionable payload is available. */
+            reason?: string | null;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "none";
+        };
+        HyperliquidCreateAction: components["schemas"]["HyperliquidActionBase"] & {
+            /** @enum {string} */
+            kind?: "create";
+            order: components["schemas"]["HyperliquidCreateOrder"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "create";
+        };
+        HyperliquidModifyAction: components["schemas"]["HyperliquidActionBase"] & {
+            /** @enum {string} */
+            kind?: "modify";
             /**
              * Format: int64
-             * @description Bot-event ID when available (present for 3Commas rows).
+             * @description Target order identifier when available.
              */
-            bot_event_id?: number | null;
+            oid?: number | null;
+            /** @description Client order identifier (CLOID) to target when `oid` is not available. */
+            client_order_id?: string | null;
+            order: components["schemas"]["HyperliquidCreateOrder"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "modify";
+        };
+        HyperliquidCancelAction: components["schemas"]["HyperliquidActionBase"] & {
+            /** @enum {string} */
+            kind?: "cancel";
+            cancel: components["schemas"]["HyperliquidCancelOrder"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "cancel";
+        };
+        HyperliquidCreateOrder: {
+            coin: string;
+            is_buy: boolean;
+            /** Format: double */
+            price: number;
+            /** Format: double */
+            size: number;
+            reduce_only: boolean;
+            order_type: components["schemas"]["HyperliquidOrderType"];
+            client_order_id?: string | null;
+        };
+        HyperliquidOrderType: {
+            limit?: components["schemas"]["HyperliquidLimitOrder"];
+            trigger?: components["schemas"]["HyperliquidTriggerOrder"];
+        };
+        HyperliquidLimitOrder: {
+            /** @description Time in force. Examples include `Gtc`, `Ioc`, and `Alo`. */
+            tif: string;
+        };
+        HyperliquidTriggerOrder: {
+            /** Format: double */
+            trigger_px: number;
+            is_market: boolean;
+            /** @description Describes whether this trigger is take-profit (`tp`) or stop-loss (`sl`). */
+            tpsl: string;
+        };
+        HyperliquidCancelOrder: {
+            coin: string;
+            client_order_id: string;
+        };
+        HyperliquidBestBidOffer: {
+            /** @description Hyperliquid coin ticker (for example `ETH`). */
+            coin: string;
+            /**
+             * Format: date-time
+             * @description Timestamp (ISO-8601) when the quote snapshot was observed.
+             */
+            time: string;
+            /** @description Best bid level reported by Hyperliquid at `time`. */
+            bid: components["schemas"]["HyperliquidPriceLevel"];
+            /** @description Best ask level reported by Hyperliquid at `time`. */
+            ask: components["schemas"]["HyperliquidPriceLevel"];
+        };
+        HyperliquidPriceLevel: {
+            /**
+             * Format: double
+             * @description Price level denominated in USD.
+             */
+            price: number;
+            /**
+             * Format: double
+             * @description Available size at this price level.
+             */
+            size: number;
+        };
+        HyperliquidWsOrder: {
+            order: components["schemas"]["HyperliquidWsBasicOrder"];
+            status: components["schemas"]["HyperliquidOrderStatus"];
+            /** Format: int64 */
+            status_timestamp: number;
+        };
+        HyperliquidWsBasicOrder: {
+            coin: string;
+            /** @description Either `A` (ask) or `B` (bid) in Hyperliquid terminology. */
+            side: string;
+            limit_px: string;
+            size: string;
+            /** Format: int64 */
+            oid: number;
+            /** Format: int64 */
+            timestamp: number;
+            orig_size: string;
+            client_order_id?: string | null;
+        };
+        /** @enum {string} */
+        HyperliquidOrderStatus: "open" | "filled" | "canceled" | "triggered" | "rejected" | "marginCanceled" | "vaultWithdrawalCanceled" | "openInterestCapCanceled" | "selfTradeCanceled" | "reduceOnlyCanceled" | "siblingFilledCanceled" | "delistedCanceled" | "liquidatedCanceled" | "scheduledCancel" | "tickRejected" | "minTradeNtlRejected" | "perpMarginRejected" | "reduceOnlyRejected" | "badAloPxRejected" | "iocCancelRejected" | "badTriggerPxRejected" | "marketOrderNoLiquidityRejected" | "positionIncreaseAtOpenInterestCapRejected" | "positionFlipAtOpenInterestCapRejected" | "tooAggressiveAtOpenInterestCapRejected" | "openInterestIncreaseRejected";
+        OrderLogEntry: components["schemas"]["ThreeCommasLogEntry"] | components["schemas"]["HyperliquidSubmissionLogEntry"] | components["schemas"]["HyperliquidStatusLogEntry"];
+        OrderLogEntryBase: {
+            /** @enum {string} */
+            type: "three_commas_event" | "hyperliquid_submission" | "hyperliquid_status";
+            /** @description Metadata hash (hex) identifying the order context. */
+            metadata: string;
+            /** @description Bot/deal identifiers derived from the metadata when available. */
+            identifiers?: components["schemas"]["OrderIdentifiers"];
             /** Format: date-time */
             observed_at: string;
-            /** @description Raw JSON payload from the corresponding table. */
-            payload: {
-                [key: string]: unknown;
-            };
+            /**
+             * Format: int64
+             * @description Monotonic sequence counter assigned at publish time, useful for de-duplicating streamed events.
+             */
+            sequence?: number | null;
+            /** Format: int64 */
+            bot_event_id?: number | null;
+        };
+        ThreeCommasLogEntry: components["schemas"]["OrderLogEntryBase"] & {
+            event: components["schemas"]["ThreeCommasBotEvent"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "three_commas_event";
+        };
+        HyperliquidSubmissionLogEntry: components["schemas"]["OrderLogEntryBase"] & {
+            action: components["schemas"]["HyperliquidAction"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "hyperliquid_submission";
+        };
+        HyperliquidStatusLogEntry: components["schemas"]["OrderLogEntryBase"] & {
+            status: components["schemas"]["HyperliquidWsOrder"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "hyperliquid_status";
         };
         /**
          * @description Trading pair(s) in 3Commas format.
@@ -1474,6 +1742,61 @@ export interface operations {
             };
         };
     };
+    cancelOrderByMetadata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Order metadata identifier (case-insensitive hex string with optional `0x` prefix). */
+                metadata: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CancelOrderByMetadataRequest"];
+            };
+        };
+        responses: {
+            /** @description Cancel action accepted for processing. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CancelOrderByMetadataResponse"];
+                };
+            };
+            /** @description Invalid metadata or payload */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Metadata not found or no cancellable order present */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Order already completed or cancel currently in progress */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     streamOrders: {
         parameters: {
             query?: {
@@ -1495,6 +1818,43 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description text/event-stream; each frame carries a JSON object with order-change details. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Invalid parameters */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    streamHyperliquidPrices: {
+        parameters: {
+            query: {
+                /** @description One or more Hyperliquid coin tickers to subscribe to. Repeat the parameter to request multiple coins. */
+                coin: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description text/event-stream; each frame encodes the latest best bid/offer snapshot for the subscribed coins. */
             200: {
                 headers: {
                     [name: string]: unknown;

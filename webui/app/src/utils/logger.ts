@@ -25,22 +25,30 @@ declare global {
   }
 }
 
-const isDebugEnabled = (): boolean => {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-  const enabled = window.__RECOMMA_CONFIG__?.DEBUG_LOGS ?? false;
+type DebugFlagChecker = (() => boolean) & { hasLoggedInit: boolean };
 
-  // One-time initialization log (always shown to verify logger is loaded)
-  if (!isDebugEnabled.hasLoggedInit) {
-    isDebugEnabled.hasLoggedInit = true;
-    console.log('[Logger] Initialized. DEBUG_LOGS =', enabled, 'Config:', window.__RECOMMA_CONFIG__);
-  }
+const createDebugChecker = (): DebugFlagChecker => {
+  const checker: DebugFlagChecker = () => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
 
-  return enabled;
+    const enabled = window.__RECOMMA_CONFIG__?.DEBUG_LOGS ?? false;
+
+    // One-time initialization log (always shown to verify logger is loaded)
+    if (!checker.hasLoggedInit) {
+      checker.hasLoggedInit = true;
+      console.log('[Logger] Initialized. DEBUG_LOGS =', enabled, 'Config:', window.__RECOMMA_CONFIG__);
+    }
+
+    return enabled;
+  };
+
+  checker.hasLoggedInit = false;
+  return checker;
 };
-// Static property to track initialization
-(isDebugEnabled as any).hasLoggedInit = false;
+
+const isDebugEnabled = createDebugChecker();
 
 export const logger = {
   /**

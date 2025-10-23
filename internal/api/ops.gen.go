@@ -115,6 +115,29 @@ type BotRecord struct {
 	Payload      externalRef0.Bot `json:"payload"`
 }
 
+// CancelOrderByMetadataRequest defines model for CancelOrderByMetadataRequest.
+type CancelOrderByMetadataRequest struct {
+	// DryRun When true, validate the cancel preconditions without dispatching the Hyperliquid request.
+	DryRun *bool `json:"dry_run,omitempty"`
+
+	// Reason Optional operator note recorded alongside the cancel request.
+	Reason *string `json:"reason"`
+}
+
+// CancelOrderByMetadataResponse defines model for CancelOrderByMetadataResponse.
+type CancelOrderByMetadataResponse struct {
+	Cancel *HyperliquidCancelOrder `json:"cancel,omitempty"`
+
+	// Message Additional context explaining the status when relevant.
+	Message *string `json:"message"`
+
+	// Metadata Metadata hex identifying the targeted order.
+	Metadata string `json:"metadata"`
+
+	// Status Outcome of the cancel attempt (for example `queued`, `skipped`, or `noop`).
+	Status string `json:"status"`
+}
+
 // DealRecord defines model for DealRecord.
 type DealRecord struct {
 	BotId     int64     `json:"bot_id"`
@@ -602,6 +625,12 @@ type ListOrdersParams struct {
 	PageToken *string `form:"page_token,omitempty" json:"page_token,omitempty"`
 }
 
+// StreamHyperliquidPricesParams defines parameters for StreamHyperliquidPrices.
+type StreamHyperliquidPricesParams struct {
+	// Coin One or more Hyperliquid coin tickers to subscribe to. Repeat the parameter to request multiple coins.
+	Coin []string `form:"coin" json:"coin"`
+}
+
 // StreamOrdersParams defines parameters for StreamOrders.
 type StreamOrdersParams struct {
 	// Metadata Case-insensitive prefix match; only events for matching metadata are emitted.
@@ -619,6 +648,9 @@ type StreamOrdersParams struct {
 	// ObservedFrom If supplied, drop events older than this timestamp (useful for resume).
 	ObservedFrom *time.Time `form:"observed_from,omitempty" json:"observed_from,omitempty"`
 }
+
+// CancelOrderByMetadataJSONRequestBody defines body for CancelOrderByMetadata for application/json ContentType.
+type CancelOrderByMetadataJSONRequestBody = CancelOrderByMetadataRequest
 
 // SetupVaultJSONRequestBody defines body for SetupVault for application/json ContentType.
 type SetupVaultJSONRequestBody = VaultSetupRequest
@@ -917,6 +949,12 @@ type ServerInterface interface {
 	// List acted-on bot events with Hyperliquid context
 	// (GET /api/orders)
 	ListOrders(w http.ResponseWriter, r *http.Request, params ListOrdersParams)
+	// Cancel Hyperliquid order by metadata
+	// (POST /api/orders/{metadata}/cancel)
+	CancelOrderByMetadata(w http.ResponseWriter, r *http.Request, metadata string)
+	// Stream Hyperliquid best bid/offer quotes
+	// (GET /sse/hyperliquid/prices)
+	StreamHyperliquidPrices(w http.ResponseWriter, r *http.Request, params StreamHyperliquidPricesParams)
 	// Stream live changes to acted-on orders
 	// (GET /sse/orders)
 	StreamOrders(w http.ResponseWriter, r *http.Request, params StreamOrdersParams)
@@ -1184,6 +1222,77 @@ func (siw *ServerInterfaceWrapper) ListOrders(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListOrders(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelOrderByMetadata operation middleware
+func (siw *ServerInterfaceWrapper) CancelOrderByMetadata(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "metadata" -------------
+	var metadata string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "metadata", r.PathValue("metadata"), &metadata, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "metadata", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelOrderByMetadata(w, r, metadata)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StreamHyperliquidPrices operation middleware
+func (siw *ServerInterfaceWrapper) StreamHyperliquidPrices(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params StreamHyperliquidPricesParams
+
+	// ------------- Required query parameter "coin" -------------
+
+	if paramValue := r.URL.Query().Get("coin"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "coin"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "coin", r.URL.Query(), &params.Coin)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "coin", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StreamHyperliquidPrices(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1519,6 +1628,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/api/bots", wrapper.ListBots)
 	m.HandleFunc("GET "+options.BaseURL+"/api/deals", wrapper.ListDeals)
 	m.HandleFunc("GET "+options.BaseURL+"/api/orders", wrapper.ListOrders)
+	m.HandleFunc("POST "+options.BaseURL+"/api/orders/{metadata}/cancel", wrapper.CancelOrderByMetadata)
+	m.HandleFunc("GET "+options.BaseURL+"/sse/hyperliquid/prices", wrapper.StreamHyperliquidPrices)
 	m.HandleFunc("GET "+options.BaseURL+"/sse/orders", wrapper.StreamOrders)
 	m.HandleFunc("GET "+options.BaseURL+"/vault/payload", wrapper.GetVaultPayload)
 	m.HandleFunc("POST "+options.BaseURL+"/vault/seal", wrapper.SealVault)
@@ -1637,6 +1748,99 @@ type ListOrders500Response struct {
 }
 
 func (response ListOrders500Response) VisitListOrdersResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type CancelOrderByMetadataRequestObject struct {
+	Metadata string `json:"metadata"`
+	Body     *CancelOrderByMetadataJSONRequestBody
+}
+
+type CancelOrderByMetadataResponseObject interface {
+	VisitCancelOrderByMetadataResponse(w http.ResponseWriter) error
+}
+
+type CancelOrderByMetadata202JSONResponse CancelOrderByMetadataResponse
+
+func (response CancelOrderByMetadata202JSONResponse) VisitCancelOrderByMetadataResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CancelOrderByMetadata400Response struct {
+}
+
+func (response CancelOrderByMetadata400Response) VisitCancelOrderByMetadataResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type CancelOrderByMetadata404Response struct {
+}
+
+func (response CancelOrderByMetadata404Response) VisitCancelOrderByMetadataResponse(w http.ResponseWriter) error {
+	w.WriteHeader(404)
+	return nil
+}
+
+type CancelOrderByMetadata409Response struct {
+}
+
+func (response CancelOrderByMetadata409Response) VisitCancelOrderByMetadataResponse(w http.ResponseWriter) error {
+	w.WriteHeader(409)
+	return nil
+}
+
+type CancelOrderByMetadata500Response struct {
+}
+
+func (response CancelOrderByMetadata500Response) VisitCancelOrderByMetadataResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type StreamHyperliquidPricesRequestObject struct {
+	Params StreamHyperliquidPricesParams
+}
+
+type StreamHyperliquidPricesResponseObject interface {
+	VisitStreamHyperliquidPricesResponse(w http.ResponseWriter) error
+}
+
+type StreamHyperliquidPrices200TexteventStreamResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response StreamHyperliquidPrices200TexteventStreamResponse) VisitStreamHyperliquidPricesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "text/event-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type StreamHyperliquidPrices400Response struct {
+}
+
+func (response StreamHyperliquidPrices400Response) VisitStreamHyperliquidPricesResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type StreamHyperliquidPrices500Response struct {
+}
+
+func (response StreamHyperliquidPrices500Response) VisitStreamHyperliquidPricesResponse(w http.ResponseWriter) error {
 	w.WriteHeader(500)
 	return nil
 }
@@ -2093,6 +2297,12 @@ type StrictServerInterface interface {
 	// List acted-on bot events with Hyperliquid context
 	// (GET /api/orders)
 	ListOrders(ctx context.Context, request ListOrdersRequestObject) (ListOrdersResponseObject, error)
+	// Cancel Hyperliquid order by metadata
+	// (POST /api/orders/{metadata}/cancel)
+	CancelOrderByMetadata(ctx context.Context, request CancelOrderByMetadataRequestObject) (CancelOrderByMetadataResponseObject, error)
+	// Stream Hyperliquid best bid/offer quotes
+	// (GET /sse/hyperliquid/prices)
+	StreamHyperliquidPrices(ctx context.Context, request StreamHyperliquidPricesRequestObject) (StreamHyperliquidPricesResponseObject, error)
 	// Stream live changes to acted-on orders
 	// (GET /sse/orders)
 	StreamOrders(ctx context.Context, request StreamOrdersRequestObject) (StreamOrdersResponseObject, error)
@@ -2225,6 +2435,65 @@ func (sh *strictHandler) ListOrders(w http.ResponseWriter, r *http.Request, para
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ListOrdersResponseObject); ok {
 		if err := validResponse.VisitListOrdersResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CancelOrderByMetadata operation middleware
+func (sh *strictHandler) CancelOrderByMetadata(w http.ResponseWriter, r *http.Request, metadata string) {
+	var request CancelOrderByMetadataRequestObject
+
+	request.Metadata = metadata
+
+	var body CancelOrderByMetadataJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CancelOrderByMetadata(ctx, request.(CancelOrderByMetadataRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CancelOrderByMetadata")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CancelOrderByMetadataResponseObject); ok {
+		if err := validResponse.VisitCancelOrderByMetadataResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StreamHyperliquidPrices operation middleware
+func (sh *strictHandler) StreamHyperliquidPrices(w http.ResponseWriter, r *http.Request, params StreamHyperliquidPricesParams) {
+	var request StreamHyperliquidPricesRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StreamHyperliquidPrices(ctx, request.(StreamHyperliquidPricesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StreamHyperliquidPrices")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StreamHyperliquidPricesResponseObject); ok {
+		if err := validResponse.VisitStreamHyperliquidPricesResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

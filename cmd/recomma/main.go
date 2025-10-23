@@ -171,10 +171,29 @@ func main() {
 	}()
 
 	logger.Debug("Waiting for vault to be unsealed")
-	err = vaultController.WaitUntilUnsealed(appCtx)
-	if err != nil {
-		logger.Warn("vaultController WaitUntilUnsealed returned an error", slog.String("error", err.Error()))
+	unsealedCh := make(chan error, 1)
+	go func() {
+		unsealedCh <- vaultController.WaitUntilUnsealed(appCtx)
+	}()
+
+	select {
+	case err := <-apiErrCh:
+		if err != nil {
+			logger.Error("HTTP server failed before unseal", slog.String("error", err.Error()))
+			os.Exit(1)
+		}
+		logger.Info("HTTP server closed before unseal")
 		os.Exit(0)
+	case <-appCtx.Done():
+		logger.Warn("context cancelled while waiting for vault unseal", slog.String("error", appCtx.Err().Error()))
+		os.Exit(0)
+	case err := <-unsealedCh:
+		if err != nil {
+			if !errors.Is(err, context.Canceled) {
+				logger.Warn("vaultController WaitUntilUnsealed returned an error", slog.String("error", err.Error()))
+			}
+			os.Exit(0)
+		}
 	}
 
 	// we can now access the secrets
@@ -211,6 +230,7 @@ func main() {
 		fatal("Could not create Hyperliquid websocket conn", err)
 	}
 	defer ws.Close()
+	api.WithHyperliquidPriceSource(ws)(apiHandler)
 
 	logger.Info("Service ready", slog.String("baseurl", secrets.Secrets.HYPERLIQUIDURL))
 
@@ -233,6 +253,7 @@ func main() {
 	oq := workqueue.NewTypedRateLimitingQueueWithConfig(rlOrders, oqCfg)
 
 	engineEmitter := emitter.NewQueueEmitter(oq)
+	api.WithOrderEmitter(engineEmitter)(apiHandler)
 	e := engine.NewEngine(client,
 		engine.WithStorage(store),
 		engine.WithEmitter(engineEmitter),

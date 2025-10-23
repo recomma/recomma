@@ -4,15 +4,20 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
+	"sync"
 	"time"
 
 	hyperliquid "github.com/sonirico/go-hyperliquid"
 	tc "github.com/terwey/3commas-sdk-go/threecommas"
+	"github.com/terwey/recomma/hl"
 	"github.com/terwey/recomma/internal/vault"
 	"github.com/terwey/recomma/metadata"
+	"github.com/terwey/recomma/recomma"
 )
 
 const (
@@ -26,6 +31,8 @@ type Store interface {
 	ListBots(ctx context.Context, opts ListBotsOptions) ([]BotItem, *string, error)
 	ListDeals(ctx context.Context, opts ListDealsOptions) ([]tc.Deal, *string, error)
 	ListOrders(ctx context.Context, opts ListOrdersOptions) ([]OrderItem, *string, error)
+	LoadHyperliquidSubmission(ctx context.Context, md metadata.Metadata) (recomma.Action, bool, error)
+	LoadHyperliquidStatus(ctx context.Context, md metadata.Metadata) (*hyperliquid.WsOrder, bool, error)
 }
 
 // StreamSource publishes live order mutations for the SSE endpoint.
@@ -42,6 +49,9 @@ type ApiHandler struct {
 	webauthn *WebAuthnService
 	vault    *vault.Controller
 	session  *vaultSessionManager
+
+	orders recomma.Emitter
+	prices HyperliquidPriceSource
 }
 
 // NewHandler wires everything together.
@@ -51,6 +61,7 @@ func NewHandler(store Store, stream StreamSource, opts ...HandlerOption) *ApiHan
 		stream:  stream,
 		now:     time.Now,
 		session: newVaultSessionManager(),
+		prices:  newPriceSourceProxy(),
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -65,6 +76,57 @@ func NewHandler(store Store, stream StreamSource, opts ...HandlerOption) *ApiHan
 
 // HandlerOption configures ApiHandler optional dependencies.
 type HandlerOption func(*ApiHandler)
+
+// HyperliquidPriceSource provides subscription access to Hyperliquid BBO updates.
+type HyperliquidPriceSource interface {
+	SubscribeBBO(ctx context.Context, coin string) (<-chan hl.BestBidOffer, error)
+}
+
+var ErrPriceSourceNotReady = errors.New("hyperliquid price source not ready")
+
+type priceSourceProxy struct {
+	mu    sync.RWMutex
+	src   HyperliquidPriceSource
+	ready chan struct{}
+}
+
+func newPriceSourceProxy() *priceSourceProxy {
+	return &priceSourceProxy{ready: make(chan struct{})}
+}
+
+func (p *priceSourceProxy) Set(source HyperliquidPriceSource) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.src = source
+	if source != nil {
+		select {
+		case <-p.ready:
+		default:
+			close(p.ready)
+		}
+	}
+}
+
+func (p *priceSourceProxy) SubscribeBBO(ctx context.Context, coin string) (<-chan hl.BestBidOffer, error) {
+	p.mu.RLock()
+	source := p.src
+	ready := p.ready
+	p.mu.RUnlock()
+	if source == nil {
+		select {
+		case <-ready:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		p.mu.RLock()
+		source = p.src
+		p.mu.RUnlock()
+		if source == nil {
+			return nil, ErrPriceSourceNotReady
+		}
+	}
+	return source.SubscribeBBO(ctx, coin)
+}
 
 // WithWebAuthnService injects the WebAuthn service used for registration/login flows.
 func WithWebAuthnService(service *WebAuthnService) HandlerOption {
@@ -83,6 +145,26 @@ func WithVaultController(controller *vault.Controller) HandlerOption {
 func WithLogger(logger *slog.Logger) HandlerOption {
 	return func(h *ApiHandler) {
 		h.logger = logger
+	}
+}
+
+// WithOrderEmitter wires the queue-backed emitter used for manual order actions.
+func WithOrderEmitter(emitter recomma.Emitter) HandlerOption {
+	return func(h *ApiHandler) {
+		h.orders = emitter
+	}
+}
+
+// WithHyperliquidPriceSource attaches the Hyperliquid price stream source used for SSE.
+func WithHyperliquidPriceSource(source HyperliquidPriceSource) HandlerOption {
+	return func(h *ApiHandler) {
+		switch proxy := h.prices.(type) {
+		case *priceSourceProxy:
+			proxy.Set(source)
+			h.prices = proxy
+		default:
+			h.prices = source
+		}
 	}
 }
 
@@ -238,6 +320,138 @@ func (h *ApiHandler) orderRecordFromItem(ctx context.Context, row OrderItem, inc
 	return record, true
 }
 
+// CancelOrderByMetadata satisfies StrictServerInterface.
+func (h *ApiHandler) CancelOrderByMetadata(ctx context.Context, req CancelOrderByMetadataRequestObject) (CancelOrderByMetadataResponseObject, error) {
+	if h.orders == nil {
+		if h.logger != nil {
+			h.logger.Warn("CancelOrderByMetadata requested but emitter not configured")
+		}
+		return CancelOrderByMetadata500Response{}, nil
+	}
+
+	rawMetadata := strings.TrimSpace(req.Metadata)
+	if rawMetadata == "" {
+		return CancelOrderByMetadata400Response{}, nil
+	}
+
+	md, err := metadata.FromHexString(rawMetadata)
+	if err != nil {
+		if h.logger != nil {
+			h.logger.Warn("CancelOrderByMetadata invalid metadata", slog.String("metadata", rawMetadata), slog.String("error", err.Error()))
+		}
+		return CancelOrderByMetadata400Response{}, nil
+	}
+
+	action, found, err := h.store.LoadHyperliquidSubmission(ctx, *md)
+	if err != nil {
+		if h.logger != nil {
+			h.logger.Error("CancelOrderByMetadata load submission failed", slog.String("metadata", md.Hex()), slog.String("error", err.Error()))
+		}
+		return CancelOrderByMetadata500Response{}, nil
+	}
+	if !found || (action.Create == nil && action.Modify == nil) {
+		if h.logger != nil {
+			h.logger.Info("CancelOrderByMetadata submission not found", slog.String("metadata", md.Hex()))
+		}
+		return CancelOrderByMetadata404Response{}, nil
+	}
+	if action.Cancel != nil {
+		if h.logger != nil {
+			h.logger.Info("CancelOrderByMetadata cancel already recorded", slog.String("metadata", md.Hex()))
+		}
+		return CancelOrderByMetadata409Response{}, nil
+	}
+
+	coin := ""
+	if action.Create != nil && strings.TrimSpace(action.Create.Coin) != "" {
+		coin = strings.ToUpper(strings.TrimSpace(action.Create.Coin))
+	} else if action.Modify != nil && strings.TrimSpace(action.Modify.Order.Coin) != "" {
+		coin = strings.ToUpper(strings.TrimSpace(action.Modify.Order.Coin))
+	}
+	if coin == "" {
+		if h.logger != nil {
+			h.logger.Info("CancelOrderByMetadata missing coin", slog.String("metadata", md.Hex()))
+		}
+		return CancelOrderByMetadata404Response{}, nil
+	}
+
+	status, haveStatus, err := h.store.LoadHyperliquidStatus(ctx, *md)
+	if err != nil {
+		if h.logger != nil {
+			h.logger.Error("CancelOrderByMetadata load status failed", slog.String("metadata", md.Hex()), slog.String("error", err.Error()))
+		}
+		return CancelOrderByMetadata500Response{}, nil
+	}
+	if haveStatus && !isCancelableStatus(status) {
+		if h.logger != nil {
+			h.logger.Info("CancelOrderByMetadata order not cancelable", slog.String("metadata", md.Hex()), slog.String("status", string(status.Status)))
+		}
+		return CancelOrderByMetadata409Response{}, nil
+	}
+
+	var (
+		dryRun bool
+		reason string
+	)
+	if req.Body != nil {
+		if req.Body.DryRun != nil {
+			dryRun = *req.Body.DryRun
+		}
+		if req.Body.Reason != nil {
+			reason = strings.TrimSpace(*req.Body.Reason)
+		}
+	}
+
+	cancelPayload := hyperliquid.CancelOrderRequestByCloid{
+		Coin:  coin,
+		Cloid: md.Hex(),
+	}
+	resp := CancelOrderByMetadataResponse{
+		Metadata: md.Hex(),
+		Cancel: &HyperliquidCancelOrder{
+			Coin:          cancelPayload.Coin,
+			ClientOrderId: cancelPayload.Cloid,
+		},
+	}
+
+	if dryRun {
+		resp.Status = "validated"
+		resp.Message = strPtr("dry-run requested; cancel not enqueued")
+		return CancelOrderByMetadata202JSONResponse(resp), nil
+	}
+
+	work := recomma.OrderWork{
+		MD: *md,
+		Action: recomma.Action{
+			Type:   recomma.ActionCancel,
+			Cancel: &cancelPayload,
+		},
+	}
+	if reason != "" {
+		work.Action.Reason = reason
+	}
+
+	if err := h.orders.Emit(ctx, work); err != nil {
+		if h.logger != nil {
+			h.logger.Error("CancelOrderByMetadata emit failed", slog.String("metadata", md.Hex()), slog.String("error", err.Error()))
+		}
+		return CancelOrderByMetadata500Response{}, nil
+	}
+
+	resp.Status = "queued"
+	if reason != "" {
+		resp.Message = strPtr(reason)
+	} else if haveStatus && status != nil {
+		resp.Message = strPtr(fmt.Sprintf("latest status: %s", status.Status))
+	}
+
+	if h.logger != nil {
+		h.logger.Info("CancelOrderByMetadata queued", slog.String("metadata", md.Hex()), slog.String("coin", coin))
+	}
+
+	return CancelOrderByMetadata202JSONResponse(resp), nil
+}
+
 // StreamOrders satisfies StrictServerInterface.
 func (h *ApiHandler) StreamOrders(ctx context.Context, req StreamOrdersRequestObject) (StreamOrdersResponseObject, error) {
 	if h.stream == nil {
@@ -283,9 +497,112 @@ func (h *ApiHandler) StreamOrders(ctx context.Context, req StreamOrdersRequestOb
 	}, nil
 }
 
+// StreamHyperliquidPrices satisfies StrictServerInterface.
+func (h *ApiHandler) StreamHyperliquidPrices(ctx context.Context, req StreamHyperliquidPricesRequestObject) (StreamHyperliquidPricesResponseObject, error) {
+	if h.prices == nil {
+		if h.logger != nil {
+			h.logger.Warn("StreamHyperliquidPrices requested but price source not configured")
+		}
+		return StreamHyperliquidPrices500Response{}, nil
+	}
+
+	coins := dedupeCoins(req.Params.Coin)
+	if len(coins) == 0 {
+		return StreamHyperliquidPrices400Response{}, nil
+	}
+
+	type subscription struct {
+		cancel context.CancelFunc
+		ch     <-chan hl.BestBidOffer
+	}
+
+	subs := make([]subscription, 0, len(coins))
+	for _, coin := range coins {
+		subCtx, cancel := context.WithCancel(ctx)
+		stream, err := h.prices.SubscribeBBO(subCtx, coin)
+		if err != nil {
+			cancel()
+			for _, s := range subs {
+				s.cancel()
+			}
+			if h.logger != nil {
+				h.logger.Error("StreamHyperliquidPrices subscribe failed", slog.String("coin", coin), slog.String("error", err.Error()))
+			}
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrPriceSourceNotReady) {
+				return StreamHyperliquidPrices500Response{}, nil
+			}
+			return StreamHyperliquidPrices500Response{}, nil
+		}
+		if h.logger != nil {
+			h.logger.Debug("StreamHyperliquidPrices subscribed coin", slog.String("coin", coin))
+		}
+		subs = append(subs, subscription{cancel: cancel, ch: stream})
+	}
+
+	pr, pw := io.Pipe()
+
+	go func() {
+		defer pw.Close()
+		defer func() {
+			for _, s := range subs {
+				s.cancel()
+			}
+		}()
+
+		updates := make(chan hl.BestBidOffer, len(subs)*4)
+		var wg sync.WaitGroup
+
+		for _, sub := range subs {
+			wg.Add(1)
+			s := sub
+			go func() {
+				defer wg.Done()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case bbo, ok := <-s.ch:
+						if !ok {
+							return
+						}
+						select {
+						case updates <- bbo:
+						case <-ctx.Done():
+							return
+						}
+					}
+				}
+			}()
+		}
+
+		go func() {
+			wg.Wait()
+			close(updates)
+		}()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case bbo, ok := <-updates:
+				if !ok {
+					return
+				}
+				if err := h.writeBBOFrame(pw, bbo); err != nil {
+					if h.logger != nil {
+						h.logger.Warn("StreamHyperliquidPrices write frame", slog.String("coin", bbo.Coin), slog.String("error", err.Error()))
+					}
+					return
+				}
+			}
+		}
+	}()
+
+	return StreamHyperliquidPrices200TexteventStreamResponse{Body: pr}, nil
+}
+
 // writeSSEFrame marshals the event payload and writes an SSE-formatted frame.
 func (h *ApiHandler) writeSSEFrame(ctx context.Context, w io.Writer, evt StreamEvent) error {
-	h.logger.Debug("sending SSE", slog.Any("event", evt))
 	ident := makeOrderIdentifiers(evt.Metadata, evt.BotEvent, evt.ObservedAt)
 
 	entry, ok := h.makeOrderLogEntry(ctx, evt.Metadata, evt.ObservedAt, evt.Type, evt.BotEvent, evt.Submission, evt.Status, &ident, evt.Sequence)
@@ -310,6 +627,98 @@ func (h *ApiHandler) writeSSEFrame(ctx context.Context, w io.Writer, evt StreamE
 		return fmt.Errorf("write SSE payload: %w", err)
 	}
 	return nil
+}
+
+func (h *ApiHandler) writeBBOFrame(w io.Writer, bbo hl.BestBidOffer) error {
+	ts := bbo.Time
+	if ts.IsZero() {
+		if h.now != nil {
+			ts = h.now()
+		} else {
+			ts = time.Now()
+		}
+	}
+
+	payload := bboFramePayload{
+		Coin: bbo.Coin,
+		Time: ts.UTC(),
+		Bid: priceLevelPayload{
+			Price: bbo.Bid.Price,
+			Size:  bbo.Bid.Size,
+		},
+		Ask: priceLevelPayload{
+			Price: bbo.Ask.Price,
+			Size:  bbo.Ask.Size,
+		},
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal bbo frame: %w", err)
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString("event: bbo\n")
+	buf.WriteString("data: ")
+	buf.Write(data)
+	buf.WriteString("\n\n")
+
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		return fmt.Errorf("write bbo payload: %w", err)
+	}
+
+	return nil
+}
+
+func isCancelableStatus(status *hyperliquid.WsOrder) bool {
+	if status == nil {
+		return true
+	}
+	value := strings.TrimSpace(string(status.Status))
+	if value == "" {
+		return true
+	}
+	return strings.EqualFold(value, "open")
+}
+
+func strPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	copy := s
+	return &copy
+}
+
+func dedupeCoins(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		normalized := strings.ToUpper(strings.TrimSpace(value))
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	return out
+}
+
+type priceLevelPayload struct {
+	Price float64 `json:"price"`
+	Size  float64 `json:"size"`
+}
+
+type bboFramePayload struct {
+	Coin string            `json:"coin"`
+	Time time.Time         `json:"time"`
+	Bid  priceLevelPayload `json:"bid"`
+	Ask  priceLevelPayload `json:"ask"`
 }
 
 func clampPageSize(v *int32) int {

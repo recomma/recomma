@@ -499,6 +499,42 @@ paths:
         '500':
           description: Internal server error
 
+  /api/orders/{metadata}/cancel:
+    post:
+      operationId: cancelOrderByMetadata
+      summary: Cancel Hyperliquid order by metadata
+      description: >
+        Enqueues a Hyperliquid cancel action for the order identified by the supplied metadata hex.
+        The service resolves the most recent submission for the metadata to determine the CLOID and venue coin.
+      parameters:
+        - name: metadata
+          in: path
+          required: true
+          description: Order metadata identifier (case-insensitive hex string with optional `0x` prefix).
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelOrderByMetadataRequest'
+      responses:
+        '202':
+          description: Cancel action accepted for processing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelOrderByMetadataResponse'
+        '400':
+          description: Invalid metadata or payload
+        '404':
+          description: Metadata not found or no cancellable order present
+        '409':
+          description: Order already completed or cancel currently in progress
+        '500':
+          description: Internal server error
+
   /sse/orders:
     get:
       operationId: streamOrders
@@ -555,6 +591,45 @@ paths:
                   ```
                   event: three_commas_event
                   data: {"type":"three_commas_event","metadata":"0x1234","identifiers":{"hex":"0x1234","bot_id":16538545,"deal_id":2381631392,"bot_event_id":1917367905,"created_at":"2025-01-02T01:02:03Z"},"observed_at":"2025-01-02T03:04:05Z","event":{"created_at":"2025-01-02T01:02:03Z","action":"Placing","coin":"DOGE","type":"BUY","status":"Active","price":0.19788,"size":105,"order_type":"base","order_size":0,"order_position":0,"quote_volume":20.7774,"quote_currency":"USDT","is_market":false,"text":"Placing base order..."}}
+                  
+                  ```
+        '400':
+          description: Invalid parameters
+        '500':
+          description: Internal server error
+
+  /sse/hyperliquid/prices:
+    get:
+      operationId: streamHyperliquidPrices
+      summary: Stream Hyperliquid best bid/offer quotes
+      description: >
+        Server Sent Events channel that publishes best bid and offer updates for the requested Hyperliquid coins.
+        Each subscription ensures the backend is listening to the venue's BBO feed (via `EnsureBBO`) and forwards
+        normalized price levels whenever new quotes arrive. Each `data:` payload is a JSON-encoded
+        `HyperliquidBestBidOffer`.
+      parameters:
+        - name: coin
+          in: query
+          required: true
+          description: >
+            One or more Hyperliquid coin tickers to subscribe to. Repeat the parameter to request multiple coins.
+          schema:
+            type: array
+            items:
+              type: string
+            minItems: 1
+      responses:
+        '200':
+          description: text/event-stream; each frame encodes the latest best bid/offer snapshot for the subscribed coins.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: >
+                  UTF-8 event stream. Frames use `event: bbo` and `data:` to carry JSON payloads.
+                  ```
+                  event: bbo
+                  data: {"coin":"ETH","time":"2025-01-02T03:04:05Z","bid":{"price":2123.45,"size":1.2},"ask":{"price":2123.55,"size":0.9}}
                   
                   ```
         '400':
@@ -882,6 +957,42 @@ components:
           items:
             $ref: '#/components/schemas/OrderLogEntry'
 
+    CancelOrderByMetadataRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          nullable: true
+          description: Optional operator note recorded alongside the cancel request.
+        dry_run:
+          type: boolean
+          description: >
+            When true, validate the cancel preconditions without dispatching the Hyperliquid request.
+          default: false
+      additionalProperties: false
+
+    CancelOrderByMetadataResponse:
+      type: object
+      required:
+        - metadata
+        - status
+      properties:
+        metadata:
+          type: string
+          description: Metadata hex identifying the targeted order.
+        status:
+          type: string
+          description: Outcome of the cancel attempt (for example `queued`, `skipped`, or `noop`).
+        cancel:
+          $ref: '#/components/schemas/HyperliquidCancelOrder'
+          nullable: true
+          description: Hyperliquid cancel payload that will be submitted when applicable.
+        message:
+          type: string
+          nullable: true
+          description: Additional context explaining the status when relevant.
+      additionalProperties: false
+
     OrderIdentifiers:
       type: object
       required:
@@ -1161,6 +1272,43 @@ components:
           type: string
         client_order_id:
           type: string
+
+    HyperliquidBestBidOffer:
+      type: object
+      required:
+        - coin
+        - time
+        - bid
+        - ask
+      properties:
+        coin:
+          type: string
+          description: Hyperliquid coin ticker (for example `ETH`).
+        time:
+          type: string
+          format: date-time
+          description: Timestamp (ISO-8601) when the quote snapshot was observed.
+        bid:
+          $ref: '#/components/schemas/HyperliquidPriceLevel'
+          description: Best bid level reported by Hyperliquid at `time`.
+        ask:
+          $ref: '#/components/schemas/HyperliquidPriceLevel'
+          description: Best ask level reported by Hyperliquid at `time`.
+
+    HyperliquidPriceLevel:
+      type: object
+      required:
+        - price
+        - size
+      properties:
+        price:
+          type: number
+          format: double
+          description: Price level denominated in USD.
+        size:
+          type: number
+          format: double
+          description: Available size at this price level.
 
     HyperliquidWsOrder:
       type: object

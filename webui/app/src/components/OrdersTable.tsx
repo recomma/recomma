@@ -437,42 +437,44 @@ export function OrdersTable({ filters }: OrdersTableProps) {
     });
   }, [groupedOrders]);
 
-  const simpleRows = useMemo<OrderRow[]>(() => {
-    return orders.map((order) => {
-      const identifiers = getIdentifiers(order);
-      const metadataHex = getMetadataHex(order);
-      const side = extractSide(order);
-      const priceValue = getNumericPrice(order);
-      const quantityValue = getNumericQuantity(order);
-      const { label: statusLabel, tone: statusTone } = getStatusInfo(order);
-      const coin = extractCoin(order);
-      const isBuy = extractIsBuy(order);
+  const simpleRows = useMemo<OrderRow[]>(
+    () =>
+      orders.map(order => {
+        const identifiers = getIdentifiers(order);
+        const metadataHex = getMetadataHex(order);
+        const side = extractSide(order);
+        const priceValue = getNumericPrice(order);
+        const quantityValue = getNumericQuantity(order);
+        const { label: statusLabel, tone: statusTone } = getStatusInfo(order);
+        const coin = extractCoin(order);
+        const isBuy = extractIsBuy(order);
 
-      return {
-        rowType: 'order' as const,
-        id: metadataHex,
-        metadata: metadataHex,
-        botId: identifiers.bot_id?.toString() ?? '—',
-        dealId: identifiers.deal_id?.toString() ?? '—',
-        orderType: extractOrderType(order),
-        orderPosition: extractOrderPosition(order),
-        side,
-        sideVariant: getSideVariant(side),
-        price: priceValue ?? null,
-        quantity: quantityValue ?? null,
-        observedAt: formatDate(order.observed_at ?? identifiers.created_at),
-        observedAtTs: getOrderTimestamp(order),
-        status: statusLabel,
-        statusTone,
-        historyCount: 0,
-        actions: '',
-        coin,
-        isBuy,
-        latest: order,
-        history: [],
-      };
-    });
-  }, [orders]);
+        return {
+          rowType: 'order' as const,
+          id: metadataHex,
+          metadata: metadataHex,
+          botId: identifiers.bot_id?.toString() ?? '—',
+          dealId: identifiers.deal_id?.toString() ?? '—',
+          orderType: extractOrderType(order),
+          orderPosition: extractOrderPosition(order),
+          side,
+          sideVariant: getSideVariant(side),
+          price: priceValue ?? null,
+          quantity: quantityValue ?? null,
+          observedAt: formatDate(order.observed_at ?? identifiers.created_at),
+          observedAtTs: getOrderTimestamp(order),
+          status: statusLabel,
+          statusTone,
+          historyCount: 0,
+          actions: '',
+          coin,
+          isBuy,
+          latest: order,
+          history: [],
+        };
+      }),
+    [orders],
+  );
 
   const minimalColumns = useMemo<Column<OrderRow>[]>(
     () => [
@@ -482,6 +484,8 @@ export function OrdersTable({ filters }: OrdersTableProps) {
       { id: 'side', name: 'Side', width: 100 },
       { id: 'coin', name: 'Market', width: 140 },
       { id: 'price', name: 'Price', type: 'number', width: 140 },
+      { id: 'quantity', name: 'Qty', type: 'number', width: 120 },
+      { id: 'observedAt', name: 'Observed', width: 180 },
       { id: 'status', name: 'Status', width: 140 },
     ],
     [],
@@ -489,7 +493,7 @@ export function OrdersTable({ filters }: OrdersTableProps) {
 
   const minimalDataSource = useClientRowDataSource<OrderRow>({
     data: simpleRows,
-    rowIdLeaf: (row) => row.id,
+    rowIdLeaf: (row, index) => `${index}-${row.id}`,
     reflectData: true,
   });
 
@@ -497,7 +501,7 @@ export function OrdersTable({ filters }: OrdersTableProps) {
     gridId: 'orders-table-simple',
     columns: minimalColumns,
     rowDataSource: minimalDataSource,
-    rowHeight: 72,
+    rowHeight: 20,
   });
 
   const minimalView = minimalGrid.view.useValue();
@@ -1208,7 +1212,7 @@ export function OrdersTable({ filters }: OrdersTableProps) {
     }
 
     return (
-      <div className="lng-grid" style={{ width: '100%', height: 400 }}>
+      <div className="lng-grid" style={{ width: '100%', height: 2000 }}>
         <Grid.Root grid={minimalGrid}>
           <Grid.Viewport>
             <Grid.Header>

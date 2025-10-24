@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   CancelOrderByMetadataResponse,
+  DealRecord,
   HyperliquidAction,
   HyperliquidCancelAction,
   HyperliquidCreateAction,
   HyperliquidCreateOrder,
   HyperliquidModifyAction,
+  ListDealsResponse,
   ListOrdersResponse,
   OrderFilterState,
   OrderIdentifiers,
@@ -15,7 +17,7 @@ import type {
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { toast } from 'sonner';
-import { Eye, SlidersHorizontal, XCircle, TrendingUp, TrendingDown, Activity } from 'lucide-react';
+import { Eye, SlidersHorizontal, XCircle, TrendingUp, TrendingDown, Activity, ChevronDown, ChevronRight, ExternalLink, Bot as BotIcon, AlertCircle } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,13 +32,20 @@ import { useHyperliquidPrices } from '../hooks/useHyperliquidPrices';
 import { buildOpsApiUrl } from '../config/opsApi';
 import { logger } from '../utils/logger';
 import {
-  RevoGrid,
-  Template,
-  type ColumnDataSchemaModel,
-  type ColumnRegular,
-  type ColumnTemplateProp,
-} from '@revolist/react-datagrid';
+  Grid,
+  useClientRowDataSource,
+} from '@1771technologies/lytenyte-core';
+import type {
+  Column,
+  CellRendererFn,
+  RowFullWidthRendererFn,
+  RowFullWidthPredicate,
+  CellRendererParams,
+  RowFullWidthRendererParams,
+  RowFullWidthPredicateParams,
+} from '@1771technologies/lytenyte-core/types';
 import { OrderDetailDialog } from './OrderDetailDialog';
+import { DealDetailDialog } from './DealDetailDialog';
 import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip';
 
 interface OrdersTableProps {
@@ -103,6 +112,7 @@ const REQUIRED_COLUMNS = new Set<OrderColumnKey>(['metadata', 'actions']);
 const DEFAULT_VISIBLE_COLUMNS: OrderColumnKey[] = [...COLUMN_ORDER];
 
 type OrderRow = {
+  rowType: 'order';
   id: string;
   metadata: string;
   botId: string;
@@ -125,9 +135,32 @@ type OrderRow = {
   history: OrderRecord[];
 };
 
-const isDataModelProps = (
-  props: ColumnDataSchemaModel | ColumnTemplateProp,
-): props is ColumnDataSchemaModel => 'model' in props;
+type DealGroupRow = {
+  rowType: 'deal-header';
+  id: string;
+  dealId: string;
+  botId: string;
+  deal: DealRecord | null;
+  orderCount: number;
+  metadataHashes: Set<string>;
+  metadata: string; // For column compatibility
+  orderType: string;
+  orderPosition: string;
+  side: string;
+  sideVariant: SideVariant;
+  price: number | null;
+  quantity: number | null;
+  observedAt: string;
+  observedAtTs: number;
+  status: string;
+  statusTone: StatusTone;
+  historyCount: number;
+  actions: string;
+  coin: string;
+  isBuy: boolean | null;
+};
+
+type TableRow = OrderRow | DealGroupRow;
 
 interface OrderGroup {
   key: string;
@@ -142,26 +175,22 @@ interface FetchOrdersOptions {
 
 const DEFAULT_FETCH_LIMIT = 100;
 
-// Shared cell properties for consistent centering across all columns
-const centerCellProps = () => ({
-  style: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
-
 export function OrdersTable({ filters }: OrdersTableProps) {
   const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [deals, setDeals] = useState<DealRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedOrder, setSelectedOrder] = useState<OrderRecord | null>(null);
+  const [selectedDeal, setSelectedDeal] = useState<DealRecord | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [dealDetailDialogOpen, setDealDetailDialogOpen] = useState(false);
   const [visibleColumns, setVisibleColumns] =
     useState<OrderColumnKey[]>(DEFAULT_VISIBLE_COLUMNS);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [orderToCancel, setOrderToCancel] = useState<OrderRecord | null>(null);
   const [isCanceling, setIsCanceling] = useState(false);
   const [columnsDropdownOpen, setColumnsDropdownOpen] = useState(false);
+  const [expandedDeals, setExpandedDeals] = useState<Map<string, boolean>>(new Map());
+  const [allExpanded, setAllExpanded] = useState(true);
 
   const isMountedRef = useRef(false);
   const columnsButtonRef = useRef<HTMLButtonElement>(null);
@@ -220,6 +249,28 @@ export function OrdersTable({ filters }: OrdersTableProps) {
     [filters],
   );
 
+  const fetchDeals = useCallback(async () => {
+    try {
+      const response = await fetch(buildOpsApiUrl('/api/deals?limit=1000'), {
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        throw new Error('API not available');
+      }
+
+      const data: ListDealsResponse = await response.json();
+
+      if (isMountedRef.current) {
+        setDeals(data.items ?? []);
+      }
+    } catch {
+      if (isMountedRef.current) {
+        setDeals([]);
+      }
+    }
+  }, []);
+
   const refreshOrdersForMetadata = useCallback(
     async (metadata: string) => {
       const params = createOrderQueryParams(filters, { includeLimit: false });
@@ -260,6 +311,9 @@ export function OrdersTable({ filters }: OrdersTableProps) {
 
           return [...remaining, ...updatedItems];
         });
+
+        // Refresh deals when orders change
+        void fetchDeals();
       } catch (error) {
         if (
           (error instanceof DOMException || error instanceof Error) &&
@@ -273,7 +327,7 @@ export function OrdersTable({ filters }: OrdersTableProps) {
         }
       }
     },
-    [fetchOrders, filters],
+    [fetchOrders, fetchDeals, filters],
   );
 
   useEffect(() => {
@@ -281,6 +335,7 @@ export function OrdersTable({ filters }: OrdersTableProps) {
     let isActive = true;
 
     void fetchOrders({ showSpinner: true, signal: abortController.signal });
+    void fetchDeals();
 
     if (typeof window === 'undefined') {
       return () => {
@@ -314,6 +369,7 @@ export function OrdersTable({ filters }: OrdersTableProps) {
           void refreshOrdersForMetadata(metadata);
         } else {
           void fetchOrders({ showSpinner: false });
+          void fetchDeals();
         }
       };
 
@@ -329,11 +385,19 @@ export function OrdersTable({ filters }: OrdersTableProps) {
       abortController.abort();
       eventSource?.close();
     };
-  }, [fetchOrders, filters, refreshOrdersForMetadata]);
+  }, [fetchOrders, fetchDeals, filters, refreshOrdersForMetadata]);
 
   const groupedOrders = useMemo(() => groupOrders(orders), [orders]);
 
-  const rows: OrderRow[] = useMemo(() => {
+  const dealsMap = useMemo(() => {
+    const map = new Map<string, DealRecord>();
+    deals.forEach((deal) => {
+      map.set(deal.deal_id.toString(), deal);
+    });
+    return map;
+  }, [deals]);
+
+  const orderRows: OrderRow[] = useMemo(() => {
     return groupedOrders.map((group) => {
       const order = group.latest;
       const identifiers = getIdentifiers(order);
@@ -346,6 +410,7 @@ export function OrdersTable({ filters }: OrdersTableProps) {
       const isBuy = extractIsBuy(order);
 
       return {
+        rowType: 'order' as const,
         id: group.key,
         metadata: metadataHex,
         botId: identifiers.bot_id?.toString() ?? '—',
@@ -370,16 +435,87 @@ export function OrdersTable({ filters }: OrdersTableProps) {
     });
   }, [groupedOrders]);
 
+  const rows: TableRow[] = useMemo(() => {
+    // Group order rows by deal ID
+    const dealGroups = new Map<string, OrderRow[]>();
+    orderRows.forEach((row) => {
+      const dealId = row.dealId;
+      if (!dealGroups.has(dealId)) {
+        dealGroups.set(dealId, []);
+      }
+      dealGroups.get(dealId)!.push(row);
+    });
+
+    const result: TableRow[] = [];
+
+    // Sort deals by the latest order timestamp in each deal
+    const sortedDeals = Array.from(dealGroups.entries()).sort((a, b) => {
+      const aLatest = Math.max(...a[1].map((row) => row.observedAtTs));
+      const bLatest = Math.max(...b[1].map((row) => row.observedAtTs));
+      return bLatest - aLatest;
+    });
+
+    // For each deal, add a deal header row and then the order rows
+    sortedDeals.forEach(([dealId, orders]) => {
+      const deal = dealsMap.get(dealId) ?? null;
+      const firstOrder = orders[0];
+      const metadataHashes = new Set(orders.map((o) => o.metadata));
+
+      // Create deal header row
+      const dealRow: DealGroupRow = {
+        rowType: 'deal-header' as const,
+        id: `deal-${dealId}`,
+        dealId,
+        botId: firstOrder?.botId ?? '—',
+        deal,
+        orderCount: orders.length,
+        metadataHashes,
+        metadata: '',
+        orderType: '',
+        orderPosition: '',
+        side: '',
+        sideVariant: 'neutral' as const,
+        price: null,
+        quantity: null,
+        observedAt: '',
+        observedAtTs: 0,
+        status: '',
+        statusTone: 'neutral' as const,
+        historyCount: 0,
+        actions: '',
+        coin: '',
+        isBuy: null,
+      };
+
+      result.push(dealRow);
+
+      // Add order rows if deal is expanded
+      const isExpanded = expandedDeals.get(dealId) ?? allExpanded;
+      if (isExpanded) {
+        result.push(...orders);
+      }
+    });
+
+    logger.debug('[OrdersTable] Generated rows:', {
+      totalRows: result.length,
+      dealHeaders: result.filter(r => r.rowType === 'deal-header').length,
+      orders: result.filter(r => r.rowType === 'order').length,
+      sampleDealHeader: result.find(r => r.rowType === 'deal-header'),
+    });
+
+    return result;
+  }, [orderRows, dealsMap, expandedDeals, allExpanded]);
+
   const uniqueCoins = useMemo(() => {
     const coins = new Set<string>();
     rows.forEach((row) => {
-      if (row.coin && row.coin !== 'N/A') {
+      if (row.rowType === 'order' && row.coin && row.coin !== 'N/A') {
         coins.add(row.coin);
       }
     });
     const result = Array.from(coins);
     logger.debug('[OrdersTable] Extracted unique coins:', result);
-    logger.debug('[OrdersTable] Sample rows with coins:', rows.slice(0, 3).map(r => ({ coin: r.coin, metadata: r.metadata })));
+    logger.debug('[OrdersTable] Sample order rows with coins:', rows.filter(r => r.rowType === 'order').slice(0, 3).map(r => ({ coin: r.coin, metadata: r.metadata })));
     return result;
   }, [rows]);
 
@@ -390,6 +526,25 @@ export function OrdersTable({ filters }: OrdersTableProps) {
   const viewDetails = useCallback((order: OrderRecord) => {
     setSelectedOrder(order);
     setDetailDialogOpen(true);
+  }, []);
+
+  const viewDealDetails = useCallback((deal: DealRecord) => {
+    setSelectedDeal(deal);
+    setDealDetailDialogOpen(true);
+  }, []);
+
+  const toggleDeal = useCallback((dealId: string) => {
+    setExpandedDeals((prev) => {
+      const next = new Map(prev);
+      const current = next.get(dealId) ?? allExpanded;
+      next.set(dealId, !current);
+      return next;
+    });
+  }, [allExpanded]);
+
+  const toggleAllDeals = useCallback(() => {
+    setAllExpanded((prev) => !prev);
+    setExpandedDeals(new Map()); // Clear individual overrides
   }, []);
 
   const handleCancelOrder = useCallback(async () => {
@@ -440,345 +595,451 @@ export function OrdersTable({ filters }: OrdersTableProps) {
     setCancelDialogOpen(true);
   }, []);
 
-  const metadataTemplate = useMemo(
-    () =>
-      Template((props: ColumnDataSchemaModel | ColumnTemplateProp) => {
-        if (!isDataModelProps(props)) {
-          return null;
-        }
-        const { value } = props;
-        return (
-          <code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono">
-            {value as string}
-          </code>
+  const handleCancelAllOrders = useCallback(async (metadataHashes: Set<string>, dealId: string) => {
+    const hashArray = Array.from(metadataHashes);
+    const totalCount = hashArray.length;
+
+    toast.info(`Canceling ${totalCount} order${totalCount === 1 ? '' : 's'}...`, {
+      description: `Deal #${dealId}`,
+    });
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const metadata of hashArray) {
+      try {
+        const response = await fetch(
+          buildOpsApiUrl(`/api/orders/${metadata}/cancel`),
+          {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ dry_run: false }),
+          },
         );
-      }),
-    [],
-  );
 
-  const orderTypeTemplate = useMemo(
-    () =>
-      Template((props: ColumnDataSchemaModel | ColumnTemplateProp) => {
-        if (!isDataModelProps(props)) {
-          return null;
-        }
-        const { value } = props;
-        return getOrderTypeBadge(typeof value === 'string' ? value : '-');
-      }),
-    [],
-  );
-
-  const sideTemplate = useMemo(
-    () =>
-      Template((props: ColumnDataSchemaModel | ColumnTemplateProp) => {
-        if (!isDataModelProps(props)) {
-          return null;
-        }
-        const row = props.model as unknown as OrderRow;
-
-        if (row.sideVariant === 'buy') {
-          return (
-            <Badge className="bg-green-100 text-green-800 border-green-200 text-xs">
-              BUY
-            </Badge>
-          );
+        if (!response.ok) {
+          throw new Error(`Failed to cancel order: ${response.statusText}`);
         }
 
-        if (row.sideVariant === 'sell') {
-          return (
-            <Badge className="bg-red-100 text-red-800 border-red-200 text-xs">
-              SELL
-            </Badge>
-          );
-        }
+        successCount++;
+      } catch (error) {
+        failCount++;
+        logger.error('[OrdersTable] Failed to cancel order:', metadata, error);
+      }
+    }
 
-        return <span className="text-xs text-gray-600">{props.value as string}</span>;
-      }),
-    [],
-  );
+    if (successCount > 0) {
+      toast.success(`Canceled ${successCount} order${successCount === 1 ? '' : 's'}`, {
+        description: failCount > 0 ? `${failCount} failed` : undefined,
+      });
 
-  const priceTemplate = useMemo(
-    () =>
-      Template((props: ColumnDataSchemaModel | ColumnTemplateProp) => {
-        if (!isDataModelProps(props)) {
-          return null;
-        }
-        if (typeof props.value !== 'number') {
-          return <span className="text-xs text-gray-400">—</span>;
-        }
+      // Refresh orders for all affected metadata
+      for (const metadata of hashArray) {
+        void refreshOrdersForMetadata(metadata);
+      }
+    }
 
-        const row = props.model as unknown as OrderRow;
-        const orderPrice = props.value;
-        const isOpen = row.status.toLowerCase() === 'open';
-        const bbo = bboPrices.get(row.coin);
+    if (failCount > 0 && successCount === 0) {
+      toast.error('Failed to cancel orders', {
+        description: `All ${failCount} cancellation attempts failed`,
+      });
+    }
+  }, [refreshOrdersForMetadata]);
 
-        logger.debug('[priceTemplate] Rendering price cell:', {
-          coin: row.coin,
-          status: row.status,
-          isOpen,
-          hasBBO: !!bbo,
-          bboPricesSize: bboPrices.size,
-        });
+  // Deal header renderer for full-width rows
+  const dealHeaderRenderer: RowFullWidthRendererFn<TableRow> = useCallback((params: RowFullWidthRendererParams<TableRow>) => {
+    const row = params.row.data;
+    if (!row || row.rowType !== 'deal-header') {
+      return null;
+    }
 
-        // Only show market price for open orders with BBO data
-        if (!isOpen || !bbo) {
-          return <span className="text-xs text-gray-900">${formatPrice(orderPrice)}</span>;
-        }
+    const dealRow = row as DealGroupRow;
+    const deal = dealRow.deal;
+    const dealPayload = deal?.payload;
+    const isExpanded = expandedDeals.get(dealRow.dealId) ?? allExpanded;
 
-        // Determine market price based on order side
-        const marketPrice = row.isBuy ? bbo.ask.price : bbo.bid.price;
-        const priceDiff = marketPrice - orderPrice;
+    const dealUrl = `https://app.3commas.io/deals/${dealRow.dealId}`;
+    const botUrl = `https://app.3commas.io/bots/${dealRow.botId}`;
 
-        // Determine if movement is favorable
-        // For BUY: favorable if ask < order (can buy cheaper)
-        // For SELL: favorable if bid > order (can sell higher)
-        const isFavorable = row.isBuy ? priceDiff < 0 : priceDiff > 0;
+    const profit = deal ? parseFloat(String(dealPayload?.actual_profit || dealPayload?.final_profit || '0')) : 0;
+    const status = dealPayload?.status || 'unknown';
+    const pair = dealPayload?.pair || 'N/A';
 
-        return (
-          <div className="flex flex-col gap-1">
-            <div className="text-xs text-gray-900 font-medium">
-              ${formatPrice(orderPrice)}
-            </div>
-            <div className={`text-xs flex items-center gap-1 font-medium ${isFavorable ? 'text-green-600' : 'text-red-600'}`}>
-              <span>${formatPrice(marketPrice)}</span>
-              {row.isBuy ? (
-                isFavorable ? (
-                  <TrendingDown className="h-3.5 w-3.5" />
-                ) : (
-                  <TrendingUp className="h-3.5 w-3.5" />
-                )
-              ) : isFavorable ? (
-                <TrendingUp className="h-3.5 w-3.5" />
-              ) : (
-                <TrendingDown className="h-3.5 w-3.5" />
+    return (
+      <div
+        className="flex items-center gap-2 py-1 px-2 bg-gradient-to-r from-purple-50 to-blue-50 border-l-4 border-purple-400 cursor-pointer hover:from-purple-100 hover:to-blue-100"
+        onClick={() => toggleDeal(dealRow.dealId)}
+        style={{ minHeight: '60px' }}
+      >
+        {isExpanded ? (
+          <ChevronDown className="h-4 w-4 flex-shrink-0" />
+        ) : (
+          <ChevronRight className="h-4 w-4 flex-shrink-0" />
+        )}
+
+        <div className="flex items-center gap-1.5 flex-wrap text-xs">
+          <Activity className="h-3.5 w-3.5 text-purple-600" />
+          <span className="font-semibold">Deal #{dealRow.dealId}</span>
+          {deal && (
+            <>
+              <Badge className="text-xs bg-gray-100 text-gray-700 border-gray-200 px-1 py-0">
+                {pair}
+              </Badge>
+              <Badge className={`text-xs px-1 py-0 ${
+                status === 'completed' ? 'bg-green-100 text-green-800' :
+                status === 'failed' ? 'bg-red-100 text-red-800' :
+                status === 'bought' ? 'bg-blue-100 text-blue-800' :
+                'bg-gray-100 text-gray-600'
+              }`}>
+                {status}
+              </Badge>
+              {profit !== 0 && (
+                <span className={`font-medium ${profit > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {profit > 0 ? <TrendingUp className="h-3 w-3 inline" /> : <TrendingDown className="h-3 w-3 inline" />}
+                  ${Math.abs(profit).toFixed(2)}
+                </span>
               )}
-            </div>
-          </div>
-        );
-      }),
-    [bboPrices],
-  );
+            </>
+          )}
+          <Badge variant="outline" className="text-xs px-1 py-0">
+            {dealRow.orderCount} orders
+          </Badge>
+          <span className="text-gray-400">•</span>
+          <a
+            href={botUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-gray-600 hover:underline flex items-center gap-0.5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <BotIcon className="h-3 w-3" />
+            Bot {dealRow.botId}
+          </a>
+          <span className="text-gray-400">•</span>
+          <a
+            href={dealUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-600 hover:underline flex items-center gap-0.5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <ExternalLink className="h-3 w-3" />
+            3Commas
+          </a>
+          {deal && (
+            <>
+              <span className="text-gray-400">•</span>
+              <button
+                className="text-purple-600 hover:underline"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  viewDealDetails(deal);
+                }}
+              >
+                <Eye className="h-3 w-3 inline mr-0.5" />
+                Details
+              </button>
+            </>
+          )}
+          <span className="text-gray-400">•</span>
+          <button
+            className="text-red-600 hover:underline"
+            onClick={(e) => {
+              e.stopPropagation();
+              void handleCancelAllOrders(dealRow.metadataHashes, dealRow.dealId);
+            }}
+          >
+            <AlertCircle className="h-3 w-3 inline mr-0.5" />
+            Cancel All
+          </button>
+        </div>
+      </div>
+    );
+  }, [expandedDeals, allExpanded, toggleDeal, viewDealDetails, handleCancelAllOrders]);
 
-  const quantityTemplate = useMemo(
-    () =>
-      Template((props: ColumnDataSchemaModel | ColumnTemplateProp) => {
-        if (!isDataModelProps(props)) {
-          return null;
-        }
-        if (typeof props.value !== 'number') {
-          return <span className="text-xs text-gray-400">—</span>;
-        }
-        return <span className="text-xs text-gray-900">{formatQuantity(props.value)}</span>;
-      }),
-    [],
-  );
+  // Metadata cell renderer for regular order rows
+  const metadataCellRenderer: CellRendererFn<TableRow> = useCallback((params: CellRendererParams<TableRow>) => {
+    const row = params.row.data;
+    if (!row || row.rowType === 'deal-header') {
+      return null;
+    }
+    return (
+      <code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono">
+        {String(row.metadata)}
+      </code>
+    );
+  }, []);
 
-  const observedAtTemplate = useMemo(
-    () =>
-      Template((props: ColumnDataSchemaModel | ColumnTemplateProp) => {
-        if (!isDataModelProps(props)) {
-          return null;
-        }
-        return <span className="text-xs text-gray-600">{props.value as string}</span>;
-      }),
-    [],
-  );
+  // Predicate to determine which rows should be full-width
+  const rowFullWidthPredicate: RowFullWidthPredicate<TableRow> = useCallback((params: RowFullWidthPredicateParams<TableRow>) => {
+    return params.row.data?.rowType === 'deal-header';
+  }, []);
 
-  const statusTemplate = useMemo(
-    () =>
-      Template((props: ColumnDataSchemaModel | ColumnTemplateProp) => {
-        if (!isDataModelProps(props)) {
-          return null;
-        }
-        const row = props.model as unknown as OrderRow;
-        const tone = statusToneClasses[row.statusTone];
-        return <Badge className={tone}>{props.value as string}</Badge>;
-      }),
-    [],
-  );
+  const orderTypeCellRenderer: CellRendererFn<TableRow> = useCallback((params: CellRendererParams<TableRow>) => {
+    const row = params.row.data;
+    if (!row || row.rowType === 'deal-header') {
+      return null;
+    }
+    const value = row.orderType;
+    return getOrderTypeBadge(typeof value === 'string' ? value : '-');
+  }, []);
 
-  const historyTemplate = useMemo(
-    () =>
-      Template((props: ColumnDataSchemaModel | ColumnTemplateProp) => {
-        if (!isDataModelProps(props)) {
-          return null;
-        }
-        const count = typeof props.value === 'number' ? props.value : 0;
-        if (count === 0) {
-          return <span className="text-xs text-gray-500">—</span>;
-        }
-        return (
-          <span className="text-xs text-gray-900">
-            {count} update{count === 1 ? '' : 's'}
-          </span>
-        );
-      }),
-    [],
-  );
+  const sideCellRenderer: CellRendererFn<TableRow> = useCallback((params: CellRendererParams<TableRow>) => {
+    const row = params.row.data;
+    if (!row || row.rowType === 'deal-header') {
+      return null;
+    }
 
-  const actionsTemplate = useMemo(
-    () =>
-      Template((props: ColumnDataSchemaModel | ColumnTemplateProp) => {
-        if (!isDataModelProps(props)) {
-          return null;
-        }
-        const row = props.model as unknown as OrderRow;
-        const isOpen = row.status.toLowerCase() === 'open';
+    if (row.sideVariant === 'buy') {
+      return (
+        <Badge className="bg-green-100 text-green-800 border-green-200 text-xs">
+          BUY
+        </Badge>
+      );
+    }
 
-        return (
-          <div className="flex items-center gap-1">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 w-8 p-0"
-                  onClick={() => viewDetails(row.latest)}
-                >
-                  <Eye className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent sideOffset={5}>View Details</TooltipContent>
-            </Tooltip>
-            {isOpen && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    className="h-8 w-8 p-0"
-                    onClick={() => promptCancelOrder(row.latest)}
-                  >
-                    <XCircle className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent sideOffset={5}>Cancel Order</TooltipContent>
-              </Tooltip>
-            )}
-          </div>
-        );
-      }),
-    [viewDetails, promptCancelOrder],
-  );
+    if (row.sideVariant === 'sell') {
+      return (
+        <Badge className="bg-red-100 text-red-800 border-red-200 text-xs">
+          SELL
+        </Badge>
+      );
+    }
 
-  const columnDefinitions = useMemo<Record<OrderColumnKey, ColumnRegular>>(
+    return <span className="text-xs text-gray-600">{String(row.side)}</span>;
+  }, []);
+
+  const priceCellRenderer: CellRendererFn<TableRow> = useCallback((params: CellRendererParams<TableRow>) => {
+    const row = params.row.data;
+    if (!row || row.rowType === 'deal-header') {
+      return null;
+    }
+
+    if (typeof row.price !== 'number') {
+      return <span className="text-xs text-gray-400">—</span>;
+    }
+    const orderPrice = row.price;
+    const isOpen = String(row.status).toLowerCase() === 'open';
+    const bbo = bboPrices.get(String(row.coin));
+
+    logger.debug('[priceCellRenderer] Rendering price cell:', {
+      coin: row.coin,
+      status: row.status,
+      isOpen,
+      hasBBO: !!bbo,
+      bboPricesSize: bboPrices.size,
+    });
+
+    // Only show market price for open orders with BBO data
+    if (!isOpen || !bbo) {
+      return <span className="text-xs text-gray-900">${formatPrice(orderPrice)}</span>;
+    }
+
+    // Determine market price based on order side
+    const marketPrice = row.isBuy ? bbo.ask.price : bbo.bid.price;
+    const priceDiff = marketPrice - orderPrice;
+
+    // Determine if movement is favorable
+    // For BUY: favorable if ask < order (can buy cheaper)
+    // For SELL: favorable if bid > order (can sell higher)
+    const isFavorable = row.isBuy ? priceDiff < 0 : priceDiff > 0;
+
+    return (
+      <div className="flex flex-col gap-1">
+        <div className="text-xs text-gray-900 font-medium">
+          ${formatPrice(orderPrice)}
+        </div>
+        <div className={`text-xs flex items-center gap-1 font-medium ${isFavorable ? 'text-green-600' : 'text-red-600'}`}>
+          <span>${formatPrice(marketPrice)}</span>
+          {row.isBuy ? (
+            isFavorable ? (
+              <TrendingDown className="h-3.5 w-3.5" />
+            ) : (
+              <TrendingUp className="h-3.5 w-3.5" />
+            )
+          ) : isFavorable ? (
+            <TrendingUp className="h-3.5 w-3.5" />
+          ) : (
+            <TrendingDown className="h-3.5 w-3.5" />
+          )}
+        </div>
+      </div>
+    );
+  }, [bboPrices]);
+
+  const quantityCellRenderer: CellRendererFn<TableRow> = useCallback((params: CellRendererParams<TableRow>) => {
+    const row = params.row.data;
+    if (!row || row.rowType === 'deal-header') {
+      return null;
+    }
+    if (typeof row.quantity !== 'number') {
+      return <span className="text-xs text-gray-400">—</span>;
+    }
+    return <span className="text-xs text-gray-900">{formatQuantity(row.quantity)}</span>;
+  }, []);
+
+  const observedAtCellRenderer: CellRendererFn<TableRow> = useCallback((params: CellRendererParams<TableRow>) => {
+    const row = params.row.data;
+    if (!row || row.rowType === 'deal-header') {
+      return null;
+    }
+    return <span className="text-xs text-gray-600">{String(row.observedAt)}</span>;
+  }, []);
+
+  const statusCellRenderer: CellRendererFn<TableRow> = useCallback((params: CellRendererParams<TableRow>) => {
+    const row = params.row.data;
+    if (!row || row.rowType === 'deal-header') {
+      return null;
+    }
+    const orderRow = row as OrderRow;
+    const tone = statusToneClasses[orderRow.statusTone];
+    return <Badge className={tone}>{String(orderRow.status)}</Badge>;
+  }, []);
+
+  const historyCellRenderer: CellRendererFn<TableRow> = useCallback((params: CellRendererParams<TableRow>) => {
+    const row = params.row.data;
+    if (!row || row.rowType === 'deal-header') {
+      return null;
+    }
+    const count = typeof row.historyCount === 'number' ? row.historyCount : 0;
+    if (count === 0) {
+      return <span className="text-xs text-gray-500">—</span>;
+    }
+    return (
+      <span className="text-xs text-gray-900">
+        {count} update{count === 1 ? '' : 's'}
+      </span>
+    );
+  }, []);
+
+  const actionsCellRenderer: CellRendererFn<TableRow> = useCallback((params: CellRendererParams<TableRow>) => {
+    const row = params.row.data;
+    if (!row || row.rowType === 'deal-header') {
+      return null;
+    }
+
+    const orderRow = row as OrderRow;
+    const isOpen = String(orderRow.status).toLowerCase() === 'open';
+
+    return (
+      <div className="flex items-center gap-1">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 w-8 p-0"
+              onClick={() => viewDetails(orderRow.latest)}
+            >
+              <Eye className="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent sideOffset={5}>View Details</TooltipContent>
+        </Tooltip>
+        {isOpen && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="h-8 w-8 p-0"
+                onClick={() => promptCancelOrder(orderRow.latest)}
+              >
+                <XCircle className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent sideOffset={5}>Cancel Order</TooltipContent>
+          </Tooltip>
+        )}
+      </div>
+    );
+  }, [viewDetails, promptCancelOrder]);
+
+  const columnDefinitions = useMemo<Record<OrderColumnKey, Column<TableRow>>>(
     () => ({
       metadata: {
-        prop: 'metadata',
+        id: 'metadata',
         name: COLUMN_LABELS.metadata,
-        size: 220,
-        sortable: true,
-        cellTemplate: metadataTemplate,
-        cellProperties: centerCellProps,
+        width: 600,
+        cellRenderer: metadataCellRenderer,
       },
       botId: {
-        prop: 'botId',
+        id: 'botId',
         name: COLUMN_LABELS.botId,
-        size: 110,
-        sortable: true,
-        cellProperties: centerCellProps,
+        width: 110,
       },
       dealId: {
-        prop: 'dealId',
+        id: 'dealId',
         name: COLUMN_LABELS.dealId,
-        size: 110,
-        sortable: true,
-        cellProperties: centerCellProps,
+        width: 110,
       },
       orderType: {
-        prop: 'orderType',
+        id: 'orderType',
         name: COLUMN_LABELS.orderType,
-        size: 110,
-        sortable: true,
-        cellTemplate: orderTypeTemplate,
-        cellProperties: centerCellProps,
+        width: 110,
+        cellRenderer: orderTypeCellRenderer,
       },
       orderPosition: {
-        prop: 'orderPosition',
+        id: 'orderPosition',
         name: COLUMN_LABELS.orderPosition,
-        size: 80,
-        sortable: true,
-        cellProperties: centerCellProps,
+        width: 80,
       },
       side: {
-        prop: 'side',
+        id: 'side',
         name: COLUMN_LABELS.side,
-        size: 100,
-        sortable: true,
-        cellTemplate: sideTemplate,
-        cellProperties: centerCellProps,
+        width: 100,
+        cellRenderer: sideCellRenderer,
       },
       price: {
-        prop: 'price',
+        id: 'price',
         name: COLUMN_LABELS.price,
-        size: 150,
-        sortable: true,
-        cellTemplate: priceTemplate,
-        cellProperties: centerCellProps,
-        cellCompare: (_prop, a, b) =>
-          (a.price ?? Number.NEGATIVE_INFINITY) -
-          (b.price ?? Number.NEGATIVE_INFINITY),
+        width: 150,
+        cellRenderer: priceCellRenderer,
       },
       quantity: {
-        prop: 'quantity',
+        id: 'quantity',
         name: COLUMN_LABELS.quantity,
-        size: 140,
-        sortable: true,
-        cellTemplate: quantityTemplate,
-        cellProperties: centerCellProps,
-        cellCompare: (_prop, a, b) =>
-          (a.quantity ?? Number.NEGATIVE_INFINITY) -
-          (b.quantity ?? Number.NEGATIVE_INFINITY),
+        width: 140,
+        cellRenderer: quantityCellRenderer,
       },
       observedAt: {
-        prop: 'observedAt',
+        id: 'observedAt',
         name: COLUMN_LABELS.observedAt,
-        size: 200,
-        sortable: true,
-        order: 'desc',
-        cellTemplate: observedAtTemplate,
-        cellProperties: centerCellProps,
-        cellCompare: (_prop, a, b) =>
-          (a.observedAtTs ?? Number.NEGATIVE_INFINITY) -
-          (b.observedAtTs ?? Number.NEGATIVE_INFINITY),
+        width: 200,
+        cellRenderer: observedAtCellRenderer,
       },
       status: {
-        prop: 'status',
+        id: 'status',
         name: COLUMN_LABELS.status,
-        size: 150,
-        sortable: true,
-        cellTemplate: statusTemplate,
-        cellProperties: centerCellProps,
+        width: 150,
+        cellRenderer: statusCellRenderer,
       },
       historyCount: {
-        prop: 'historyCount',
+        id: 'historyCount',
         name: COLUMN_LABELS.historyCount,
-        size: 130,
-        sortable: true,
-        cellTemplate: historyTemplate,
-        cellProperties: centerCellProps,
-        cellCompare: (_prop, a, b) =>
-          (a.historyCount ?? 0) - (b.historyCount ?? 0),
+        width: 130,
+        cellRenderer: historyCellRenderer,
       },
       actions: {
-        prop: 'actions',
+        id: 'actions',
         name: COLUMN_LABELS.actions,
-        size: 100,
-        sortable: false,
-        cellTemplate: actionsTemplate,
-        cellProperties: centerCellProps,
+        width: 100,
+        cellRenderer: actionsCellRenderer,
       },
     }),
     [
-      actionsTemplate,
-      historyTemplate,
-      metadataTemplate,
-      observedAtTemplate,
-      orderTypeTemplate,
-      priceTemplate,
-      quantityTemplate,
-      sideTemplate,
-      statusTemplate,
+      metadataCellRenderer,
+      orderTypeCellRenderer,
+      sideCellRenderer,
+      priceCellRenderer,
+      quantityCellRenderer,
+      observedAtCellRenderer,
+      statusCellRenderer,
+      historyCellRenderer,
+      actionsCellRenderer,
     ],
   );
 
@@ -794,6 +1055,48 @@ export function OrdersTable({ filters }: OrdersTableProps) {
       ),
     [columnDefinitions, visibleColumnSet],
   );
+
+  // Setup LyteNyte Grid
+  const dataSource = useClientRowDataSource({
+    data: rows,
+    rowIdLeaf: (d) => d.id,
+  });
+
+  logger.debug('[LyteNyte] Created dataSource:', {
+    rowCount: rows.length,
+    hasData: rows.length > 0,
+    sampleIds: rows.slice(0, 3).map(r => r.id),
+    rowTypes: rows.slice(0, 3).map(r => r.rowType),
+    allRowIds: rows.map(r => r.id),
+  });
+
+  const grid = Grid.useLyteNyte<TableRow>({
+    gridId: 'orders-table',
+    columns,
+    rowDataSource: dataSource,
+    rowHeight: 80,
+    rowFullWidthPredicate,
+    rowFullWidthRenderer: dealHeaderRenderer,
+  });
+
+  logger.debug('[LyteNyte] Initialized grid:', {
+    gridId: 'orders-table',
+    columnCount: columns.length,
+    columnIds: columns.map(c => c.id),
+    rowHeight: 80,
+    grid: grid,
+  });
+
+  const view = grid.view.useValue();
+
+  logger.debug('[LyteNyte] View state:', {
+    headerRows: view.header.layout.length,
+    centerRows: view.rows.center.length,
+    centerRowKinds: view.rows.center.map(r => r.kind),
+    centerRowIds: view.rows.center.slice(0, 5).map(r => r.id),
+    allCenterRowIds: view.rows.center.map(r => r.id),
+    view: view,
+  });
 
   const handleColumnVisibilityChange = useCallback(
     (column: OrderColumnKey, value: boolean | 'indeterminate') => {
@@ -828,22 +1131,51 @@ export function OrdersTable({ filters }: OrdersTableProps) {
     );
   }
 
+  console.log("orders", orderRows)
+
   return (
     <div className="h-full flex flex-col">
-      <div className="flex-1 flex flex-col gap-0 bg-white min-h-0">
+      <div className="halloikwrapook" style={{ width: '100%', height: '100%' }}>
         <div className="px-4 py-2 border-b flex items-center justify-between shrink-0 relative z-10 bg-white">
-          <h2 className="text-gray-900">Orders ({rows.length})</h2>
-          <div className="relative">
+          <h2 className="text-gray-900">
+            {orderRows.length > 0 ? (
+              <>
+                {Array.from(new Set(orderRows.map(r => r.dealId))).length} Deal{Array.from(new Set(orderRows.map(r => r.dealId))).length === 1 ? '' : 's'} • {orderRows.length} Order{orderRows.length === 1 ? '' : 's'}
+              </>
+            ) : (
+              'No orders'
+            )}
+          </h2>
+          <div className="flex items-center gap-2">
             <Button
-              ref={columnsButtonRef}
               variant="outline"
               size="sm"
               className="h-8 px-2 text-xs"
-              onClick={() => setColumnsDropdownOpen(!columnsDropdownOpen)}
+              onClick={toggleAllDeals}
             >
-              <SlidersHorizontal className="h-3.5 w-3.5 mr-1" />
-              Columns
+              {allExpanded ? (
+                <>
+                  <ChevronDown className="h-3.5 w-3.5 mr-1" />
+                  Collapse All
+                </>
+              ) : (
+                <>
+                  <ChevronRight className="h-3.5 w-3.5 mr-1" />
+                  Expand All
+                </>
+              )}
             </Button>
+            <div className="relative">
+              <Button
+                ref={columnsButtonRef}
+                variant="outline"
+                size="sm"
+                className="h-8 px-2 text-xs"
+                onClick={() => setColumnsDropdownOpen(!columnsDropdownOpen)}
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5 mr-1" />
+                Columns
+              </Button>
             {columnsDropdownOpen && (
               <>
                 <div
@@ -874,6 +1206,7 @@ export function OrdersTable({ filters }: OrdersTableProps) {
                 </div>
               </>
             )}
+            </div>
           </div>
         </div>
 
@@ -882,19 +1215,50 @@ export function OrdersTable({ filters }: OrdersTableProps) {
             No orders found
           </div>
         ) : (
-          <div className="flex-1 min-h-0 revogrid-wrapper">
-            <RevoGrid
-              theme="default"
-              columns={columns}
-              source={rows}
-              readonly={true}
-              canMoveColumns={true}
-              resize={true}
-              range={true}
-              autoSizeColumn={false}
-              rowSize={60}
-              style={{ height: '100%', width: '100%' }}
-            />
+          <div className="wrappervandecontainereen" style={{ position: 'relative', width: '100%', height: '100%' }}>
+            <div className="wrappervandecontainertwee" style={{ position: 'absolute', width: '100%', height: '100%' }}>
+              {(() => {
+                logger.debug('[LyteNyte] Rendering grid:', {
+                  hasView: !!view,
+                  headerLayoutLength: view.header.layout.length,
+                  centerRowsLength: view.rows.center.length,
+                  view: view,
+                  grid: grid,
+                });
+                return null;
+              })()}
+              <Grid.Root grid={grid}>
+                <Grid.Viewport>
+                  <Grid.Header>
+                    {view.header.layout.map((row, i) => (
+                      <Grid.HeaderRow key={i} headerRowIndex={i}>
+                        {row.map((c) => {
+                          if (c.kind === 'group') {
+                            return <Grid.HeaderGroupCell key={c.idOccurrence} cell={c} />;
+                          }
+                          return <Grid.HeaderCell key={c.column.id} cell={c} />;
+                        })}
+                      </Grid.HeaderRow>
+                    ))}
+                  </Grid.Header>
+                  <Grid.RowsContainer>
+                    <Grid.RowsCenter>
+                      {view.rows.center.map((row) =>
+                        row.kind === 'full-width' ? (
+                          <Grid.RowFullWidth key={row.id} row={row} />
+                        ) : (
+                          <Grid.Row key={row.id} row={row}>
+                            {row.cells.map((cell) => (
+                              <Grid.Cell key={cell.id} cell={cell} />
+                            ))}
+                          </Grid.Row>
+                        ),
+                      )}
+                    </Grid.RowsCenter>
+                  </Grid.RowsContainer>
+                </Grid.Viewport>
+              </Grid.Root>
+            </div>
           </div>
         )}
       </div>
@@ -904,6 +1268,14 @@ export function OrdersTable({ filters }: OrdersTableProps) {
           order={selectedOrder}
           open={detailDialogOpen}
           onOpenChange={setDetailDialogOpen}
+        />
+      )}
+
+      {selectedDeal && (
+        <DealDetailDialog
+          deal={selectedDeal}
+          open={dealDetailDialogOpen}
+          onOpenChange={setDealDetailDialogOpen}
         />
       )}
 

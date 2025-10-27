@@ -174,8 +174,6 @@ interface FetchOrdersOptions {
 }
 
 const DEFAULT_FETCH_LIMIT = 100;
-// Temporary lightweight render path while rebuilding the grid integration.
-const SIMPLE_MODE = true;
 
 export function OrdersTable({ filters }: OrdersTableProps) {
   const [orders, setOrders] = useState<OrderRecord[]>([]);
@@ -436,76 +434,6 @@ export function OrdersTable({ filters }: OrdersTableProps) {
       };
     });
   }, [groupedOrders]);
-
-  const simpleRows = useMemo<OrderRow[]>(
-    () =>
-      orders.map(order => {
-        const identifiers = getIdentifiers(order);
-        const metadataHex = getMetadataHex(order);
-        const side = extractSide(order);
-        const priceValue = getNumericPrice(order);
-        const quantityValue = getNumericQuantity(order);
-        const { label: statusLabel, tone: statusTone } = getStatusInfo(order);
-        const coin = extractCoin(order);
-        const isBuy = extractIsBuy(order);
-
-        return {
-          rowType: 'order' as const,
-          id: metadataHex,
-          metadata: metadataHex,
-          botId: identifiers.bot_id?.toString() ?? '—',
-          dealId: identifiers.deal_id?.toString() ?? '—',
-          orderType: extractOrderType(order),
-          orderPosition: extractOrderPosition(order),
-          side,
-          sideVariant: getSideVariant(side),
-          price: priceValue ?? null,
-          quantity: quantityValue ?? null,
-          observedAt: formatDate(order.observed_at ?? identifiers.created_at),
-          observedAtTs: getOrderTimestamp(order),
-          status: statusLabel,
-          statusTone,
-          historyCount: 0,
-          actions: '',
-          coin,
-          isBuy,
-          latest: order,
-          history: [],
-        };
-      }),
-    [orders],
-  );
-
-  const minimalColumns = useMemo<Column<OrderRow>[]>(
-    () => [
-      { id: 'metadata', name: 'Metadata', width: 160 },
-      { id: 'botId', name: 'Bot', width: 140 },
-      { id: 'dealId', name: 'Deal', width: 120 },
-      { id: 'side', name: 'Side', width: 100 },
-      { id: 'coin', name: 'Market', width: 140 },
-      { id: 'price', name: 'Price', type: 'number', width: 140 },
-      { id: 'quantity', name: 'Qty', type: 'number', width: 120 },
-      { id: 'observedAt', name: 'Observed', width: 180 },
-      { id: 'status', name: 'Status', width: 140 },
-    ],
-    [],
-  );
-
-  const minimalDataSource = useClientRowDataSource<OrderRow>({
-    data: simpleRows,
-    rowIdLeaf: (row, index) => `${index}-${row.id}`,
-    reflectData: true,
-  });
-
-  const minimalGrid = Grid.useLyteNyte<OrderRow>({
-    gridId: 'orders-table-simple',
-    columns: minimalColumns,
-    rowDataSource: minimalDataSource,
-    rowHeight: 20,
-  });
-
-  const minimalView = minimalGrid.view.useValue();
-
   const rows: TableRow[] = useMemo(() => {
     // Group order rows by deal ID
     const dealGroups = new Map<string, OrderRow[]>();
@@ -1130,7 +1058,8 @@ export function OrdersTable({ filters }: OrdersTableProps) {
   // Setup LyteNyte Grid
   const dataSource = useClientRowDataSource({
     data: rows,
-    rowIdLeaf: (d) => d.id,
+    rowIdLeaf: (d, index) => `${index}-${d.id}`,
+    reflectData: true,
   });
 
   logger.debug('[LyteNyte] Created dataSource:', {
@@ -1145,7 +1074,7 @@ export function OrdersTable({ filters }: OrdersTableProps) {
     gridId: 'orders-table',
     columns,
     rowDataSource: dataSource,
-    rowHeight: 80,
+    rowHeight: 60,
     rowFullWidthPredicate,
     rowFullWidthRenderer: dealHeaderRenderer,
   });
@@ -1154,20 +1083,11 @@ export function OrdersTable({ filters }: OrdersTableProps) {
     gridId: 'orders-table',
     columnCount: columns.length,
     columnIds: columns.map(c => c.id),
-    rowHeight: 80,
+    rowHeight: 60,
     grid: grid,
   });
 
   const view = grid.view.useValue();
-
-  logger.debug('[LyteNyte] View state:', {
-    headerRows: view.header.layout.length,
-    centerRows: view.rows.center.length,
-    centerRowKinds: view.rows.center.map(r => r.kind),
-    centerRowIds: view.rows.center.slice(0, 5).map(r => r.id),
-    allCenterRowIds: view.rows.center.map(r => r.id),
-    view: view,
-  });
 
   const handleColumnVisibilityChange = useCallback(
     (column: OrderColumnKey, value: boolean | 'indeterminate') => {
@@ -1198,67 +1118,6 @@ export function OrdersTable({ filters }: OrdersTableProps) {
             <span className="text-gray-600">Loading orders...</span>
           </div>
         </div>
-      </div>
-    );
-  }
-
-  if (SIMPLE_MODE) {
-    if (simpleRows.length === 0) {
-      return (
-        <div className="flex h-full items-center justify-center text-gray-500">
-          No orders found
-        </div>
-      );
-    }
-
-    return (
-      <div className="lng-grid" style={{ width: '100%', height: 2000 }}>
-        <Grid.Root grid={minimalGrid}>
-          <Grid.Viewport>
-            <Grid.Header>
-              {minimalView.header.layout.map((row, index) => (
-                <Grid.HeaderRow headerRowIndex={index} key={index}>
-                  {row.map((cell) => {
-                    if (cell.kind === 'group') {
-                      return (
-                        <Grid.HeaderGroupCell
-                          cell={cell}
-                          key={cell.idOccurrence}
-                        />
-                      );
-                    }
-
-                    return (
-                      <Grid.HeaderCell
-                        cell={cell}
-                        key={cell.column.id}
-                        className="flex h-full items-center px-2"
-                      />
-                    );
-                  })}
-                </Grid.HeaderRow>
-              ))}
-            </Grid.Header>
-
-            <Grid.RowsContainer>
-              <Grid.RowsCenter>
-                {minimalView.rows.center.map((row) => {
-                  if (row.kind === 'full-width') {
-                    return <Grid.RowFullWidth key={row.id} row={row} />;
-                  }
-
-                  return (
-                    <Grid.Row key={row.id} row={row} accepted={['row']}>
-                      {row.cells.map((cell) => (
-                        <Grid.Cell cell={cell} key={cell.id} />
-                      ))}
-                    </Grid.Row>
-                  );
-                })}
-              </Grid.RowsCenter>
-            </Grid.RowsContainer>
-          </Grid.Viewport>
-        </Grid.Root>
       </div>
     );
   }

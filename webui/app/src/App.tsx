@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-// Temporary MVP grid until OrdersTable is fixed
 import { OrdersTable } from './components/OrdersTable';
-import { OrdersGridMvp } from './components/OrdersGridMvp';
 import { FilterBar } from './components/FilterBar';
 import { StatsCards } from './components/StatsCards';
 import { BotsDealsExplorer } from './components/BotsDealsExplorer';
@@ -126,7 +124,6 @@ export default function App() {
           />
           <FilterBar filters={filters} onFiltersChange={setFilters} />
         </div>
-        <OrdersGridMvp />
         <OrdersTable filters={filters} />
       </div>
 

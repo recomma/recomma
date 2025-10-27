@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   CancelOrderByMetadataResponse,
   DealRecord,
@@ -7,6 +7,7 @@ import type {
 } from '../../types/api';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
+import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { toast } from 'sonner';
 import { SlidersHorizontal, ChevronDown, ChevronRight, Activity } from 'lucide-react';
 import {
@@ -66,12 +67,18 @@ import {
   createActionsCellRenderer,
 } from './renderers/cellRenderers';
 import { DealHeaderRenderer } from './renderers/DealHeaderRenderer';
+import { FilterControls } from './FilterControls';
 
 export interface OrdersTableProps {
   filters: OrderFilterState;
+  selectedBotId?: number;
+  selectedDealId?: number;
+  onBotSelect: (botId: number | undefined) => void;
+  onDealSelect: (dealId: number | undefined) => void;
+  onFiltersChange: (filters: OrderFilterState) => void;
 }
 
-export function OrdersTable({ filters }: OrdersTableProps) {
+export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelect, onDealSelect, onFiltersChange }: OrdersTableProps) {
   const { orders, deals, loading, refreshOrdersForMetadata } = useOrdersData(filters);
 
   const [selectedOrder, setSelectedOrder] = useState<OrderRecord | null>(null);
@@ -83,11 +90,9 @@ export function OrdersTable({ filters }: OrdersTableProps) {
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [orderToCancel, setOrderToCancel] = useState<OrderRecord | null>(null);
   const [isCanceling, setIsCanceling] = useState(false);
-  const [columnsDropdownOpen, setColumnsDropdownOpen] = useState(false);
+  const [columnsPopoverOpen, setColumnsPopoverOpen] = useState(false);
   const [expandedDeals, setExpandedDeals] = useState<Map<string, boolean>>(new Map());
   const [allExpanded, setAllExpanded] = useState(true);
-
-  const columnsButtonRef = useRef<HTMLButtonElement>(null);
 
   const groupedOrders = useMemo(() => groupOrders(orders), [orders]);
 
@@ -364,87 +369,95 @@ export function OrdersTable({ filters }: OrdersTableProps) {
       metadata: {
         id: 'metadata',
         name: COLUMN_LABELS.metadata,
-        width: 600,
+        width: 200,
+        widthMin: 150,
         cellRenderer: metadataCellRenderer,
       },
       botId: {
         id: 'botId',
         name: COLUMN_LABELS.botId,
-        width: 110,
+        width: 90,
+        widthMin: 70,
       },
       dealId: {
         id: 'dealId',
         name: COLUMN_LABELS.dealId,
-        width: 110,
+        width: 90,
+        widthMin: 70,
       },
       orderType: {
         id: 'orderType',
         name: COLUMN_LABELS.orderType,
-        width: 110,
+        width: 120,
+        widthMin: 100,
         cellRenderer: orderTypeCellRenderer,
       },
       orderPosition: {
         id: 'orderPosition',
         name: COLUMN_LABELS.orderPosition,
-        width: 80,
+        width: 90,
+        widthMin: 80,
       },
       side: {
         id: 'side',
         name: COLUMN_LABELS.side,
-        width: 100,
+        width: 80,
+        widthMin: 60,
         cellRenderer: sideCellRenderer,
       },
       price: {
         id: 'price',
         name: COLUMN_LABELS.price,
-        width: 150,
+        width: 120,
+        widthMin: 100,
         cellRenderer: priceCellRenderer,
       },
       quantity: {
         id: 'quantity',
         name: COLUMN_LABELS.quantity,
-        width: 140,
+        width: 100,
+        widthMin: 80,
         cellRenderer: quantityCellRenderer,
       },
       observedAt: {
         id: 'observedAt',
         name: COLUMN_LABELS.observedAt,
-        width: 200,
+        width: 160,
+        widthMin: 140,
         cellRenderer: observedAtCellRenderer,
       },
       status: {
         id: 'status',
         name: COLUMN_LABELS.status,
-        width: 150,
+        width: 100,
+        widthMin: 80,
         cellRenderer: statusCellRenderer,
       },
       historyCount: {
         id: 'historyCount',
         name: COLUMN_LABELS.historyCount,
-        width: 130,
+        width: 90,
+        widthMin: 70,
         cellRenderer: historyCellRenderer,
       },
       actions: {
         id: 'actions',
         name: COLUMN_LABELS.actions,
         width: 100,
+        widthMin: 80,
         cellRenderer: actionsCellRenderer,
       },
     }),
     [priceCellRenderer, statusCellRenderer, actionsCellRenderer],
   );
 
-  const visibleColumnSet = useMemo(
-    () => new Set<OrderColumnKey>(visibleColumns),
-    [visibleColumns],
-  );
-
   const columns = useMemo(
     () =>
-      COLUMN_ORDER.filter((key) => visibleColumnSet.has(key)).map(
-        (key) => columnDefinitions[key],
-      ),
-    [columnDefinitions, visibleColumnSet],
+      COLUMN_ORDER.map((key) => ({
+        ...columnDefinitions[key],
+        hide: !visibleColumns.includes(key),
+      })),
+    [columnDefinitions, visibleColumns],
   );
 
   const dataSource = useClientRowDataSource({
@@ -456,6 +469,11 @@ export function OrdersTable({ filters }: OrdersTableProps) {
   const grid = Grid.useLyteNyte<TableRow>({
     gridId: 'orders-table',
     columns,
+    columnBase: {
+      uiHints: {
+        movable: true,
+      },
+    },
     rowDataSource: dataSource,
     rowHeight: 60,
     rowFullWidthPredicate,
@@ -463,6 +481,18 @@ export function OrdersTable({ filters }: OrdersTableProps) {
   });
 
   const view = grid.view.useValue();
+
+  // Auto-size columns after grid renders
+  useEffect(() => {
+    if (rows.length > 0) {
+      // Delay to ensure grid has rendered rows before measuring
+      const timeoutId = setTimeout(() => {
+        grid.api.columnAutosize({ includeHeader: true });
+      }, 100);
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [rows.length, grid.api]);
 
   const handleColumnVisibilityChange = useCallback(
     (column: OrderColumnKey, value: boolean | 'indeterminate') => {
@@ -480,8 +510,13 @@ export function OrdersTable({ filters }: OrdersTableProps) {
         REQUIRED_COLUMNS.forEach((required) => next.add(required));
         return COLUMN_ORDER.filter((key) => next.has(key));
       });
+
+      // Update the grid to show/hide the column
+      grid.api.columnUpdate({
+        [column]: { hide: !value },
+      });
     },
-    [],
+    [grid.api],
   );
 
   if (loading) {
@@ -510,6 +545,14 @@ export function OrdersTable({ filters }: OrdersTableProps) {
           )}
         </h2>
         <div className="flex items-center gap-2">
+          <FilterControls
+            selectedBotId={selectedBotId}
+            selectedDealId={selectedDealId}
+            onBotSelect={onBotSelect}
+            onDealSelect={onDealSelect}
+            filters={filters}
+            onFiltersChange={onFiltersChange}
+          />
           <Button
             variant="outline"
             size="sm"
@@ -528,48 +571,46 @@ export function OrdersTable({ filters }: OrdersTableProps) {
               </>
             )}
           </Button>
-          <div className="relative">
-            <Button
-              ref={columnsButtonRef}
-              variant="outline"
-              size="sm"
-              className="h-8 px-2 text-xs"
-              onClick={() => setColumnsDropdownOpen(!columnsDropdownOpen)}
+          <Popover open={columnsPopoverOpen} onOpenChange={setColumnsPopoverOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2 text-xs"
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5 mr-1" />
+                Columns
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              sideOffset={8}
+              className="w-48 p-0 border-gray-200"
             >
-              <SlidersHorizontal className="h-3.5 w-3.5 mr-1" />
-              Columns
-            </Button>
-            {columnsDropdownOpen && (
-              <>
-                <div
-                  className="fixed inset-0 z-40"
-                  onClick={() => setColumnsDropdownOpen(false)}
-                />
-                <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-gray-200 rounded-md shadow-lg z-50 py-1">
-                  <div className="px-3 py-2 text-sm font-semibold border-b">
-                    Visible Columns
-                  </div>
-                  {COLUMN_ORDER.map((key) => (
-                    <label
-                      key={key}
-                      className={`flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-100 cursor-pointer ${
-                        REQUIRED_COLUMNS.has(key) ? 'opacity-50 cursor-not-allowed' : ''
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={visibleColumnSet.has(key)}
-                        disabled={REQUIRED_COLUMNS.has(key)}
-                        onChange={(e) => handleColumnVisibilityChange(key, e.target.checked)}
-                        className="rounded border-gray-300"
-                      />
-                      <span>{COLUMN_LABELS[key]}</span>
-                    </label>
-                  ))}
+              <div className="py-1">
+                <div className="px-3 py-2 text-sm font-semibold border-b">
+                  Visible Columns
                 </div>
-              </>
-            )}
-          </div>
+                {COLUMN_ORDER.map((key) => (
+                  <label
+                    key={key}
+                    className={`flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-100 cursor-pointer ${
+                      REQUIRED_COLUMNS.has(key) ? 'opacity-50 cursor-not-allowed' : ''
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={visibleColumns.includes(key)}
+                      disabled={REQUIRED_COLUMNS.has(key)}
+                      onChange={(e) => handleColumnVisibilityChange(key, e.target.checked)}
+                      className="rounded border-gray-300"
+                    />
+                    <span>{COLUMN_LABELS[key]}</span>
+                  </label>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
       </div>
 

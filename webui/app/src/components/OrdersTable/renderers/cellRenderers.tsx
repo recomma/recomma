@@ -3,7 +3,7 @@ import { Eye, XCircle, TrendingUp, TrendingDown } from 'lucide-react';
 import { Badge } from '../../ui/badge';
 import { Button } from '../../ui/button';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../ui/tooltip';
-import type { OrderRecord } from '../../../types/api';
+import type { HyperliquidBestBidOffer, OrderRecord } from '../../../types/api';
 import type { OrderRow, TableRow } from '../types';
 import { formatPrice, formatQuantity } from '../utils/orderFormatters';
 import { getOrderTypeBadge } from './statusBadges';
@@ -66,7 +66,7 @@ export function sideCellRenderer(params: CellRendererParams<TableRow>) {
 /**
  * Renders price cell with optional BBO market price comparison
  */
-export function createPriceCellRenderer(bboPrices: Map<string, { bid: { price: number }; ask: { price: number } }>) {
+export function createPriceCellRenderer(bboPrices: Map<string, HyperliquidBestBidOffer>) {
   return function priceCellRenderer(params: CellRendererParams<TableRow>) {
     const row = params.row.data;
     if (!row || row.rowType === 'deal-header') {
@@ -79,20 +79,29 @@ export function createPriceCellRenderer(bboPrices: Map<string, { bid: { price: n
     const orderPrice = row.price;
     const isOpen = String(row.status).toLowerCase() === 'open';
     const bbo = bboPrices.get(String(row.coin));
+    const isBuyOrder = typeof row.isBuy === 'boolean' ? row.isBuy : null;
 
-    // Only show market price for open orders with BBO data
-    if (!isOpen || !bbo) {
+    // Only show market price for open orders with BBO data and known side
+    if (!isOpen || !bbo || isBuyOrder === null) {
       return <span className="text-xs text-gray-900">${formatPrice(orderPrice)}</span>;
     }
 
     // Determine market price based on order side
-    const marketPrice = row.isBuy ? bbo.ask.price : bbo.bid.price;
+    const priceLevel = isBuyOrder ? bbo.ask : bbo.bid;
+    const marketPrice =
+      priceLevel && typeof priceLevel.price === 'number' && Number.isFinite(priceLevel.price)
+        ? priceLevel.price
+        : null;
+
+    if (marketPrice === null) {
+      return <span className="text-xs text-gray-900">${formatPrice(orderPrice)}</span>;
+    }
     const priceDiff = marketPrice - orderPrice;
 
     // Determine if movement is favorable
     // For BUY: favorable if ask < order (can buy cheaper)
     // For SELL: favorable if bid > order (can sell higher)
-    const isFavorable = row.isBuy ? priceDiff < 0 : priceDiff > 0;
+    const isFavorable = isBuyOrder ? priceDiff < 0 : priceDiff > 0;
 
     return (
       <div className="flex flex-col gap-1">
@@ -101,7 +110,7 @@ export function createPriceCellRenderer(bboPrices: Map<string, { bid: { price: n
         </div>
         <div className={`text-xs flex items-center gap-1 font-medium ${isFavorable ? 'text-green-600' : 'text-red-600'}`}>
           <span>${formatPrice(marketPrice)}</span>
-          {row.isBuy ? (
+          {isBuyOrder ? (
             isFavorable ? (
               <TrendingDown className="h-3.5 w-3.5" />
             ) : (

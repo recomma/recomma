@@ -67,7 +67,7 @@ export function FilterBar({ filters, onFiltersChange }: FilterBarProps) {
           <div className="px-3 pb-3 border-t">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-3">
               <div>
-                <label className="text-xs text-gray-600 block mb-1.5">Metadata Hex</label>
+                <label className="text-xs text-gray-600 block mb-1.5">Client Order ID</label>
                 <Input
                   placeholder="0x..."
                   value={filters.metadata || ''}

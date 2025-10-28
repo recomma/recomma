@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { OrdersTable } from './components/OrdersTable';
-import { FilterBar } from './components/FilterBar';
 import { StatsCards } from './components/StatsCards';
-import { BotsDealsExplorer } from './components/BotsDealsExplorer';
 import { Toaster } from './components/ui/sonner';
 import { SetupWizard } from './components/setupwizard/SetupWizard';
 import { Login } from './components/Login';
@@ -114,19 +112,17 @@ export default function App() {
       </div>
 
       <div className="flex-1 flex flex-col min-h-0">
-        <div className="container mx-auto px-4 py-3 space-y-3 flex-shrink-0">
+        <div className="container mx-auto px-4 py-3 flex-shrink-0">
           <StatsCards />
-          <BotsDealsExplorer
-            onBotSelect={handleBotSelect}
-            onDealSelect={handleDealSelect}
-            selectedBotId={selectedBotId}
-            selectedDealId={selectedDealId}
-          />
-          <FilterBar filters={filters} onFiltersChange={setFilters} />
         </div>
-        <div className="flex-1 min-h-0">
-          <OrdersTable filters={filters} />
-        </div>
+        <OrdersTable
+          filters={filters}
+          selectedBotId={selectedBotId}
+          selectedDealId={selectedDealId}
+          onBotSelect={handleBotSelect}
+          onDealSelect={handleDealSelect}
+          onFiltersChange={setFilters}
+        />
       </div>
 
       <Toaster />

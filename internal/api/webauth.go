@@ -17,7 +17,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	webauthnlib "github.com/go-webauthn/webauthn/webauthn"
 
-	"github.com/terwey/recomma/internal/vault"
+	"github.com/recomma/recomma/internal/vault"
 )
 
 const (

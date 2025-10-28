@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/terwey/recomma/storage/sqlcgen"
+	"github.com/recomma/recomma/storage/sqlcgen"
 )
 
 type loggingDB struct {

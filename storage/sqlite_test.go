@@ -10,11 +10,11 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/oapi-codegen/nullable"
+	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/recomma"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
 	"github.com/stretchr/testify/require"
 	tc "github.com/terwey/3commas-sdk-go/threecommas"
-	"github.com/terwey/recomma/metadata"
-	"github.com/terwey/recomma/recomma"
 )
 
 func newTestStorage(t *testing.T) *Storage {
@@ -597,10 +597,10 @@ func TestStorageBotOperations(t *testing.T) {
 				t.Fatalf("syncedAt mismatch after initial record: want %s got %s", want, gotSync)
 			}
 
-				if scenario.upsert != nil {
-					if err := store.RecordBot(ctx, *scenario.upsert, scenario.upsertSync); err != nil {
-						t.Fatalf("RecordBot upsert: %v", err)
-					}
+			if scenario.upsert != nil {
+				if err := store.RecordBot(ctx, *scenario.upsert, scenario.upsertSync); err != nil {
+					t.Fatalf("RecordBot upsert: %v", err)
+				}
 				expected = *scenario.upsert
 
 				gotBot, gotSync, found, err = store.LoadBot(ctx, scenario.bot.Id)

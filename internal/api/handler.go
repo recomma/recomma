@@ -12,12 +12,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/recomma/recomma/hl"
+	"github.com/recomma/recomma/internal/vault"
+	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/recomma"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
 	tc "github.com/terwey/3commas-sdk-go/threecommas"
-	"github.com/terwey/recomma/hl"
-	"github.com/terwey/recomma/internal/vault"
-	"github.com/terwey/recomma/metadata"
-	"github.com/terwey/recomma/recomma"
 )
 
 const (

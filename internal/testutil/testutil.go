@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/recomma/recomma/metadata"
 	tc "github.com/terwey/3commas-sdk-go/threecommas"
-	"github.com/terwey/recomma/metadata"
 )
 
 type EventOpt func(*tc.BotEvent)

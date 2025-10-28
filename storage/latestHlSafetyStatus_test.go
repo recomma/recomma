@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/recomma/recomma/metadata"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
 	"github.com/stretchr/testify/require"
 	tc "github.com/terwey/3commas-sdk-go/threecommas"
-	"github.com/terwey/recomma/metadata"
 )
 
 func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {

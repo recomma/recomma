@@ -106,23 +106,27 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="border-b bg-white shadow-sm">
-        <div className="container mx-auto px-4 py-4">
+    <div className="h-full bg-gray-50 flex flex-col">
+      <div className="border-b bg-white shadow-sm flex-shrink-0">
+        <div className="container mx-auto px-4 py-3">
           <h1 className="text-gray-900">Recomma - 3Commas → Hyperliquid Trade Replay</h1>
         </div>
       </div>
 
-      <div className="container mx-auto px-4 py-4 space-y-4">
-        <StatsCards />
-        <BotsDealsExplorer 
-          onBotSelect={handleBotSelect}
-          onDealSelect={handleDealSelect}
-          selectedBotId={selectedBotId}
-          selectedDealId={selectedDealId}
-        />
-        <FilterBar filters={filters} onFiltersChange={setFilters} />
-        <OrdersTable filters={filters} />
+      <div className="flex-1 flex flex-col min-h-0">
+        <div className="container mx-auto px-4 py-3 space-y-3 flex-shrink-0">
+          <StatsCards />
+          <BotsDealsExplorer
+            onBotSelect={handleBotSelect}
+            onDealSelect={handleDealSelect}
+            selectedBotId={selectedBotId}
+            selectedDealId={selectedDealId}
+          />
+          <FilterBar filters={filters} onFiltersChange={setFilters} />
+        </div>
+        <div className="flex-1 min-h-0">
+          <OrdersTable filters={filters} />
+        </div>
       </div>
 
       <Toaster />

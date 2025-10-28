@@ -34,21 +34,37 @@ export type ListDealsQuery = operations['listDeals']['parameters']['query'];
 export type ListOrdersQuery = operations['listOrders']['parameters']['query'];
 
 export type OrderRecord = components['schemas']['OrderRecord'];
+export type OrderIdentifiers = components['schemas']['OrderIdentifiers'];
 export type OrderLogEntry = components['schemas']['OrderLogEntry'];
 export type BotRecord = components['schemas']['BotRecord'];
 export type DealRecord = components['schemas']['DealRecord'];
+export type ThreeCommasOrderState = components['schemas']['ThreeCommasOrderState'];
+export type ThreeCommasBotEvent = components['schemas']['ThreeCommasBotEvent'];
+export type HyperliquidOrderState = components['schemas']['HyperliquidOrderState'];
+export type HyperliquidAction = components['schemas']['HyperliquidAction'];
+export type HyperliquidCreateAction = components['schemas']['HyperliquidCreateAction'];
+export type HyperliquidModifyAction = components['schemas']['HyperliquidModifyAction'];
+export type HyperliquidCancelAction = components['schemas']['HyperliquidCancelAction'];
+export type HyperliquidCreateOrder = components['schemas']['HyperliquidCreateOrder'];
+export type HyperliquidCancelOrder = components['schemas']['HyperliquidCancelOrder'];
+export type HyperliquidWsOrder = components['schemas']['HyperliquidWsOrder'];
+export type HyperliquidWsBasicOrder = components['schemas']['HyperliquidWsBasicOrder'];
+export type HyperliquidOrderStatus = components['schemas']['HyperliquidOrderStatus'];
+export type HyperliquidBestBidOffer = components['schemas']['HyperliquidBestBidOffer'];
+export type HyperliquidPriceLevel = components['schemas']['HyperliquidPriceLevel'];
+
+export type CancelOrderByMetadataRequest =
+  components['schemas']['CancelOrderByMetadataRequest'];
+export type CancelOrderByMetadataResponse =
+  components['schemas']['CancelOrderByMetadataResponse'];
 
 export type OrderFilterState = {
   metadata?: string;
-  metadata_hex?: string;
   bot_id?: string;
   deal_id?: string;
   bot_event_id?: string;
   observed_from?: string;
   observed_to?: string;
-  include_log?: string;
-  limit?: string;
-  page_token?: string;
 };
 
 export type UnknownRecord = Record<string, unknown>;

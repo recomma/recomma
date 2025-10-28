@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Card } from './ui/card';
 import { ArrowUpRight, Activity, CheckCircle2, XCircle } from 'lucide-react';
 import type { ListOrdersResponse, OrderRecord } from '../types/api';
@@ -18,21 +18,32 @@ export function StatsCards() {
     failed: 0,
     pending: 0
   });
+  const isMountedRef = useRef(false);
 
-  const classifyOrderStatus = (order: OrderRecord): 'successful' | 'failed' | 'pending' => {
-    const rawStatusCandidates = [
-      order?.latest_status?.status,
-      order?.bot_event_payload?.Status,
-      order?.bot_event_payload?.status
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const classifyOrderStatus = useCallback((order: OrderRecord): 'successful' | 'failed' | 'pending' => {
+    const statusCandidates = [
+      order?.hyperliquid?.latest_status?.status,
+      order?.three_commas?.event?.status
     ];
 
     let normalized =
-      rawStatusCandidates
+      statusCandidates
         .map((value) => (typeof value === 'string' ? value.toLowerCase() : ''))
         .find((value) => value.length > 0) || '';
 
+    if (!normalized && order?.hyperliquid?.latest_submission?.kind === 'cancel') {
+      normalized = 'cancelled';
+    }
+
     if (!normalized) {
-      const action = order?.bot_event_payload?.Action;
+      const action = order?.three_commas?.event?.action;
       if (typeof action === 'string' && action.toLowerCase().includes('cancel')) {
         normalized = 'cancelled';
       }
@@ -47,32 +58,38 @@ export function StatsCards() {
     }
 
     return 'pending';
-  };
+  }, []);
 
-  useEffect(() => {
-    // Fetch stats from API
-    fetch(buildOpsApiUrl('/api/orders?limit=500'))
-      .then(async response => {
-        if (!response.ok) throw new Error('API not available');
-        const data: ListOrdersResponse = await response.json();
-        const orders = data.items ?? [];
-        const tally = orders.reduce(
-          (acc: { successful: number; failed: number; pending: number }, order: OrderRecord) => {
-            const bucket = classifyOrderStatus(order);
-            acc[bucket] += 1;
-            return acc;
-          },
-          { successful: 0, failed: 0, pending: 0 }
-        );
+  const calculateStats = useCallback((orders: OrderRecord[]) => {
+    const tally = orders.reduce(
+      (acc: { successful: number; failed: number; pending: number }, order: OrderRecord) => {
+        const bucket = classifyOrderStatus(order);
+        acc[bucket] += 1;
+        return acc;
+      },
+      { successful: 0, failed: 0, pending: 0 }
+    );
 
-        setStats({
-          total_orders: orders.length,
-          successful: tally.successful,
-          failed: tally.failed,
-          pending: tally.pending
-        });
-      })
-      .catch(() => {
+    return {
+      total_orders: orders.length,
+      successful: tally.successful,
+      failed: tally.failed,
+      pending: tally.pending
+    };
+  }, [classifyOrderStatus]);
+
+  const fetchStats = useCallback(async () => {
+    try {
+      const response = await fetch(buildOpsApiUrl('/api/orders?limit=500'));
+      if (!response.ok) throw new Error('API not available');
+      const data: ListOrdersResponse = await response.json();
+      const orders = data.items ?? [];
+
+      if (isMountedRef.current) {
+        setStats(calculateStats(orders));
+      }
+    } catch {
+      if (isMountedRef.current) {
         // Use mock data stats when API is unavailable
         setStats({
           total_orders: 3,
@@ -80,8 +97,49 @@ export function StatsCards() {
           failed: 1,
           pending: 1
         });
-      });
-  }, []);
+      }
+    }
+  }, [calculateStats]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    // Initial fetch
+    void fetchStats();
+
+    if (typeof window === 'undefined') {
+      return () => {
+        isActive = false;
+      };
+    }
+
+    // Set up SSE for real-time updates
+    const url = buildOpsApiUrl('/sse/orders');
+    let eventSource: EventSource | null = null;
+
+    try {
+      eventSource = new EventSource(url, { withCredentials: true });
+
+      eventSource.onmessage = () => {
+        if (!isActive || !isMountedRef.current) {
+          return;
+        }
+        // Refetch stats when order updates arrive
+        void fetchStats();
+      };
+
+      eventSource.onerror = () => {
+        eventSource?.close();
+      };
+    } catch {
+      // SSE not available; continue without live updates.
+    }
+
+    return () => {
+      isActive = false;
+      eventSource?.close();
+    };
+  }, [fetchStats]);
 
   const cards = [
     {

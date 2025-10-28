@@ -187,3 +187,53 @@
 html {
   font-size: var(--font-size);
 }
+
+/* Removed @layer - these need to be outside layers to avoid being stripped */
+
+/* RevoGrid Custom Styling */
+.revogrid-wrapper {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  --rgRow-color: var(--foreground);
+  --rgRow-bgColor: var(--background);
+  --rgRow-hoverBgColor: var(--accent);
+  --rgHeader-bgColor: #f8f9fa;
+  --rgHeader-color: var(--foreground);
+  --rgBorder-color: var(--border);
+  --rgCell-padding: 8px 12px;
+  font-family: inherit;
+  font-size: 0.875rem;
+}
+
+.revogrid-wrapper > * {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Ensure the RevoGrid web component itself takes full height */
+.revogrid-wrapper > revo-grid {
+  height: 100%;
+  width: 100%;
+}
+
+/* Dark mode adjustments */
+.dark .revogrid-wrapper {
+  --rgRow-bgColor: var(--background);
+  --rgRow-hoverBgColor: var(--accent);
+  --rgHeader-bgColor: oklch(0.22 0 0);
+  --rgBorder-color: var(--border);
+}
+
+/* Ensure dropdowns appear above RevoGrid */
+[data-radix-popper-content-wrapper] {
+  z-index: 10000 !important;
+}
+
+/* Full viewport height chain - MUST be outside @layer to work */
+html, body, #root {
+  height: 100% !important;
+  margin: 0;
+  padding: 0;
+}

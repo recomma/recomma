@@ -48,7 +48,7 @@ Recomma bridges your 3Commas bots to Hyperliquid. It watches every order 3Commas
 
 Copy it next to your `.env`, then launch with:
 ```bash
-docker compose up -d recomma-ghcr
+docker compose --profile ghcr up recomma-ghcr
 ```
 Mounts and environment variables match the quick-start above, so `RECOMMA_PUBLIC_ORIGIN` still needs to reflect the exact URL you will open in the browser.
 

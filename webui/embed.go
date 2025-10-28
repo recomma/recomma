@@ -10,6 +10,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/vearutop/statigz"
+	"github.com/vearutop/statigz/brotli"
+	"github.com/vearutop/statigz/zstd"
 )
 
 var (
@@ -36,7 +40,11 @@ func mustSubFS(fsys embed.FS, dir string) fs.FS {
 func Handler(listen string, publicOrigin string, tls bool) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/config.js", configHandler(resolveOpsAPIOrigin(listen, publicOrigin, tls)))
-	mux.Handle("/", http.FileServer(http.FS(distFS)))
+	mux.Handle("/", statigz.FileServer(content,
+		statigz.EncodeOnInit,
+		brotli.AddEncoding,
+		zstd.AddEncoding,
+		statigz.FSPrefix("app/dist")))
 
 	return mux
 }

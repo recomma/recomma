@@ -554,12 +554,17 @@ export function Login({ initialUsername = '', onAuthenticated }: LoginProps) {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex flex-col items-center justify-center gap-6 p-4">
+      <img
+        src="/favicon.svg"
+        alt="Recomma logo"
+        className="h-48 w-48"
+      />
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-slate-900">
             <KeyRound className="h-5 w-5" />
-            Unlock Vault
+            Unlock Recomma Vault
           </CardTitle>
           <CardDescription>
             Sign in with your registered passkey to load trade secrets securely.

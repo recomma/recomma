@@ -107,7 +107,14 @@ export default function App() {
     <div className="h-full bg-gray-50 flex flex-col">
       <div className="border-b bg-white shadow-sm flex-shrink-0">
         <div className="container mx-auto px-4 py-3">
-          <h1 className="text-gray-900">Recomma - 3Commas → Hyperliquid Trade Replay</h1>
+          <div className="flex items-center gap-3">
+            <img
+              src="/favicon.svg"
+              alt="Recomma logo"
+              className="h-8 w-8"
+            />
+            <h1 className="text-gray-900">Recomma - 3Commas to Hyperliquid trade replay</h1>
+          </div>
         </div>
       </div>
 

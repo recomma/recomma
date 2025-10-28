@@ -3,6 +3,7 @@ import { Card } from './ui/card';
 import { ArrowUpRight, Activity, CheckCircle2, XCircle } from 'lucide-react';
 import type { ListOrdersResponse, OrderRecord } from '../types/api';
 import { buildOpsApiUrl } from '../config/opsApi';
+import { attachOrderStreamHandlers } from '../utils/orderStream';
 
 interface Stats {
   total_orders: number;
@@ -117,10 +118,12 @@ export function StatsCards() {
     const url = buildOpsApiUrl('/sse/orders');
     let eventSource: EventSource | null = null;
 
+    let detachHandlers: (() => void) | undefined;
+
     try {
       eventSource = new EventSource(url, { withCredentials: true });
 
-      eventSource.onmessage = () => {
+      const handleOrderEvent = (_event: MessageEvent<string>) => {
         if (!isActive || !isMountedRef.current) {
           return;
         }
@@ -128,6 +131,7 @@ export function StatsCards() {
         void fetchStats();
       };
 
+      detachHandlers = attachOrderStreamHandlers(eventSource, handleOrderEvent);
       eventSource.onerror = () => {
         eventSource?.close();
       };
@@ -137,6 +141,7 @@ export function StatsCards() {
 
     return () => {
       isActive = false;
+      detachHandlers?.();
       eventSource?.close();
     };
   }, [fetchStats]);

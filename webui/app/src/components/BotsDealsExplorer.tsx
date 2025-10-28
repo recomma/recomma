@@ -24,6 +24,7 @@ import type {
 } from '../types/api';
 import { asRecord, coerceNumber, coerceString } from '../types/api';
 import { buildOpsApiUrl } from '../config/opsApi';
+import { attachOrderStreamHandlers } from '../utils/orderStream';
 
 const pickNumber = (fallback: number, ...values: unknown[]): number => {
   for (const value of values) {
@@ -143,10 +144,12 @@ export function BotsDealsExplorer({ onBotSelect, onDealSelect, selectedBotId, se
     const url = buildOpsApiUrl('/sse/orders');
     let eventSource: EventSource | null = null;
 
+    let detachHandlers: (() => void) | undefined;
+
     try {
       eventSource = new EventSource(url, { withCredentials: true });
 
-      eventSource.onmessage = () => {
+      const handleOrderEvent = (_event: MessageEvent<string>) => {
         if (!isActive || !isMountedRef.current) {
           return;
         }
@@ -161,6 +164,7 @@ export function BotsDealsExplorer({ onBotSelect, onDealSelect, selectedBotId, se
         }
       };
 
+      detachHandlers = attachOrderStreamHandlers(eventSource, handleOrderEvent);
       eventSource.onerror = () => {
         eventSource?.close();
       };
@@ -170,6 +174,7 @@ export function BotsDealsExplorer({ onBotSelect, onDealSelect, selectedBotId, se
 
     return () => {
       isActive = false;
+      detachHandlers?.();
       eventSource?.close();
     };
   }, [selectedBotId]);

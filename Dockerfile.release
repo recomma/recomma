@@ -1,8 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
-ARG TARGETARCH
-
 FROM gcr.io/distroless/static-debian12:nonroot
+ARG TARGETARCH
 WORKDIR /
 COPY dist/linux-${TARGETARCH}/recomma /usr/local/bin/recomma
 USER nonroot:nonroot

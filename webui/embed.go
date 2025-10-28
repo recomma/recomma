@@ -16,6 +16,7 @@ var (
 	//go:embed app/dist/*
 	content embed.FS
 	distFS  = mustSubFS(content, "app/dist")
+	debug   = false
 )
 
 func FS() fs.FS {
@@ -41,7 +42,7 @@ func Handler(listen string, publicOrigin string, tls bool) http.Handler {
 }
 
 func configHandler(origin string) http.Handler {
-	script := fmt.Sprintf("window.__RECOMMA_CONFIG__ = { OPS_API_ORIGIN: %q };\n", origin)
+	script := fmt.Sprintf("window.__RECOMMA_CONFIG__ = { OPS_API_ORIGIN: %q, DEBUG_LOGS: %t };\n", origin, debug)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")

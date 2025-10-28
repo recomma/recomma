@@ -4,7 +4,7 @@ import { Badge } from '../../ui/badge';
 import { Button } from '../../ui/button';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../ui/tooltip';
 import type { OrderRecord } from '../../../types/api';
-import type { OrderRow, TableRow, statusToneClasses } from '../types';
+import type { OrderRow, TableRow } from '../types';
 import { formatPrice, formatQuantity } from '../utils/orderFormatters';
 import { getOrderTypeBadge } from './statusBadges';
 

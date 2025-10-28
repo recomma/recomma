@@ -4,7 +4,7 @@ info:
   version: 0.2.1
   license:
     name: Apache 2.0
-    url: https://github.com/terwey/recomma/blob/main/LICENSE.txt
+    url: https://github.com/recomma/recomma/blob/main/LICENSE.txt
 
 servers:
   - url: http://localhost:8080

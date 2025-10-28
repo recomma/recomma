@@ -16,9 +16,9 @@ import (
 	hyperliquid "github.com/sonirico/go-hyperliquid"
 	tc "github.com/terwey/3commas-sdk-go/threecommas"
 
-	api "github.com/terwey/recomma/internal/api"
-	"github.com/terwey/recomma/metadata"
-	"github.com/terwey/recomma/storage/sqlcgen"
+	api "github.com/recomma/recomma/internal/api"
+	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/storage/sqlcgen"
 )
 
 const cursorSeparator = ":"

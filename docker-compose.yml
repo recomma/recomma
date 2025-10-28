@@ -22,7 +22,7 @@ services:
   # Alternative: consume published image
   recomma-ghcr:
     profiles: ["ghcr"]
-    image: ghcr.io/terwey/recomma:latest
+    image: ghcr.io/recomma/recomma:latest
     env_file:
       - .env
     environment:

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/terwey/recomma/internal/vault"
+	"github.com/recomma/recomma/internal/vault"
 )
 
 const (

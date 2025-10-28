@@ -3,10 +3,10 @@ package adapter
 import (
 	"math"
 
+	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/recomma"
 	"github.com/sonirico/go-hyperliquid"
 	tc "github.com/terwey/3commas-sdk-go/threecommas"
-	"github.com/terwey/recomma/metadata"
-	"github.com/terwey/recomma/recomma"
 )
 
 // ToCreateOrderRequest converts one 3Commas BotEvent + its Deal metadata

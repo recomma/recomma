@@ -7,10 +7,10 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/recomma/recomma/recomma"
+	"github.com/recomma/recomma/storage"
 	"github.com/stretchr/testify/require"
 	tc "github.com/terwey/3commas-sdk-go/threecommas"
-	"github.com/terwey/recomma/recomma"
-	"github.com/terwey/recomma/storage"
 )
 
 // fakeQueue implements Queue by collecting added keys.

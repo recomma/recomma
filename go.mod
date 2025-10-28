@@ -1,4 +1,4 @@
-module github.com/terwey/recomma
+module github.com/recomma/recomma
 
 go 1.25.0
 

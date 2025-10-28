@@ -1,15 +1,15 @@
-# .github/workflows/webui-ci.yml
+# .github/workflows/webui-lint.yml
 name: WebUI Lint & Typecheck
 
 on:
   push:
     paths:
       - "webui/app/**"
-      - ".github/workflows/webui-ci.yml"
+      - ".github/workflows/webui-lint.yml"
   pull_request:
     paths:
       - "webui/app/**"
-      - ".github/workflows/webui-ci.yml"
+      - ".github/workflows/webui-lint.yml"
 
 jobs:
   lint-typecheck:

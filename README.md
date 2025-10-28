@@ -16,7 +16,7 @@ Recomma bridges your 3Commas bots to Hyperliquid. It watches every order 3Commas
 ## Quick Start (Docker)
 1. Pull the container image:
    ```bash
-   docker pull ghcr.io/terwey/recomma:latest
+   docker pull ghcr.io/recomma/recomma:latest
    ```
 2. Create a `.env` file next to where you run Docker:
    ```env
@@ -35,7 +35,7 @@ Recomma bridges your 3Commas bots to Hyperliquid. It watches every order 3Commas
      --env-file .env \
      -p 8080:8080 \
      -v $(pwd)/data:/var/lib/recomma \
-     ghcr.io/terwey/recomma:latest
+     ghcr.io/recomma/recomma:latest
    ```
    The first time you visit the UI you’ll register a passkey and paste in your 3Commas and Hyperliquid credentials. They are encrypted in your browser before being stored on the server.
 
@@ -60,7 +60,7 @@ Mounts and environment variables match the quick-start above, so `RECOMMA_PUBLIC
 You can reseal the vault or rotate credentials at any time from the UI. If the process restarts, it will wait for you to log in again before resuming order replication.
 
 ## Getting Releases
-- **Docker image**: [`ghcr.io/terwey/recomma`](https://github.com/orgs/terwey/packages/container/package/recomma)
-- **Binary archives and checksums**: [GitHub Releases](https://github.com/terwey/recomma/releases)
+- **Docker image**: [`ghcr.io/recomma/recomma`](https://github.com/orgs/recomma/packages/container/package/recomma)
+- **Binary archives and checksums**: [GitHub Releases](https://github.com/recomma/recomma/releases)
 
 Download the format that suits your setup; every artifact bundles the web UI and API so nothing else is required.

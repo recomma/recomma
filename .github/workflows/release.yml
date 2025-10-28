@@ -7,8 +7,45 @@ on:
   workflow_dispatch:
 
 jobs:
+  webui-build:
+    name: Build WebUI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: webui/app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: webui/app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript (no emit)
+        run: npx tsc --noEmit
+
+      - name: ESLint
+        run: npx eslint .
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload WebUI dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: webui-dist
+          path: webui/app/dist
+          if-no-files-found: error
+
   build:
     name: Build binaries
+    needs: webui-build
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -23,6 +60,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Prepare WebUI assets
+        run: rm -rf webui/app/dist
+
+      - name: Download WebUI dist
+        uses: actions/download-artifact@v4
+        with:
+          name: webui-dist
+          path: webui/app/dist
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -48,9 +94,72 @@ jobs:
           path: dist/recomma-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
           if-no-files-found: error
 
+  docker-image:
+    name: Docker Image
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download linux/amd64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: recomma-linux-amd64
+          path: dist/linux-amd64
+
+      - name: Download linux/arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: recomma-linux-arm64
+          path: dist/linux-arm64
+
+      - name: Extract binaries
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            tar -xzf dist/linux-${arch}/recomma-linux-${arch}.tar.gz -C dist/linux-${arch}
+            mv dist/linux-${arch}/recomma-linux-${arch} dist/linux-${arch}/recomma
+          done
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest,enable=${{ github.event_name == 'push' }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.release
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   release:
     name: Release
-    needs: build
+    needs:
+      - build
+      - docker-image
     runs-on: ubuntu-latest
     permissions:
       contents: write

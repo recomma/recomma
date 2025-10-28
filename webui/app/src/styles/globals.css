@@ -231,6 +231,15 @@ html {
   z-index: 10000 !important;
 }
 
+/* LyteNyte grid row alignment overrides */
+.lng-grid [data-ln-row="true"]:not([data-ln-rowtype="full-width"]) [data-ln-cell="true"] {
+  @apply flex items-center justify-center px-3 py-2 text-center;
+}
+
+.lng-grid [data-ln-row="true"]:not([data-ln-rowtype="full-width"]) [data-ln-cell="true"] > * {
+  @apply w-full;
+}
+
 /* Full viewport height chain - MUST be outside @layer to work */
 html, body, #root {
   height: 100% !important;

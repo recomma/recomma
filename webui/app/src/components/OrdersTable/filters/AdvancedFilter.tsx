@@ -58,7 +58,7 @@ export function AdvancedFilter({ filters, onFiltersChange }: AdvancedFilterProps
       <div className="p-3">
         <div className="grid grid-cols-1 gap-3">
           <div>
-            <label className="text-xs text-gray-600 block mb-1.5">Metadata Hex</label>
+            <label className="text-xs text-gray-600 block mb-1.5">Client Order ID</label>
             <Input
               placeholder="0x..."
               value={filters.metadata || ''}

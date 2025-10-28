@@ -35,14 +35,17 @@ export function FilterControls({
   ).length;
 
   return (
-    <>
+    <div
+      role="group"
+      className="inline-flex shrink-0 items-stretch divide-x divide-border overflow-hidden rounded-md border border-border bg-background shadow-xs"
+    >
       {/* Bots Button */}
-      <Popover open={botsOpen} onOpenChange={setBotsOpen}>
+      <Popover open={botsOpen} onOpenChange={setBotsOpen} modal={false}>
         <PopoverTrigger asChild>
           <Button
             variant="outline"
             size="sm"
-            className="h-8 px-2 text-xs"
+            className="h-8 rounded-none border-0 px-3 text-xs shadow-none focus-visible:z-10 data-[state=open]:bg-accent data-[state=open]:text-accent-foreground"
           >
             <Bot className="h-3.5 w-3.5 mr-1" />
             Bots
@@ -72,12 +75,12 @@ export function FilterControls({
       </Popover>
 
       {/* Deals Button */}
-      <Popover open={dealsOpen} onOpenChange={setDealsOpen}>
+      <Popover open={dealsOpen} onOpenChange={setDealsOpen} modal={false}>
         <PopoverTrigger asChild>
           <Button
             variant="outline"
             size="sm"
-            className="h-8 px-2 text-xs"
+            className="h-8 rounded-none border-0 px-3 text-xs shadow-none focus-visible:z-10 data-[state=open]:bg-accent data-[state=open]:text-accent-foreground"
           >
             <Activity className="h-3.5 w-3.5 mr-1" />
             Deals
@@ -103,12 +106,12 @@ export function FilterControls({
       </Popover>
 
       {/* Advanced Filters Button */}
-      <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>
+      <Popover open={advancedOpen} onOpenChange={setAdvancedOpen} modal={false}>
         <PopoverTrigger asChild>
           <Button
             variant="outline"
             size="sm"
-            className="h-8 px-2 text-xs"
+            className="h-8 rounded-none border-0 px-3 text-xs shadow-none focus-visible:z-10 data-[state=open]:bg-accent data-[state=open]:text-accent-foreground"
           >
             <Filter className="h-3.5 w-3.5 mr-1" />
             Advanced
@@ -130,6 +133,6 @@ export function FilterControls({
           />
         </PopoverContent>
       </Popover>
-    </>
+    </div>
   );
 }

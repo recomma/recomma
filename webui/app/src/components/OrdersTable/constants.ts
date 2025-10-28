@@ -2,8 +2,6 @@ import type { OrderColumnKey } from './types';
 
 export const COLUMN_ORDER: OrderColumnKey[] = [
   'metadata',
-  'botId',
-  'dealId',
   'orderType',
   'orderPosition',
   'side',
@@ -16,7 +14,7 @@ export const COLUMN_ORDER: OrderColumnKey[] = [
 ];
 
 export const COLUMN_LABELS: Record<OrderColumnKey, string> = {
-  metadata: 'Metadata Hex',
+  metadata: 'Client Order ID',
   botId: 'Bot ID',
   dealId: 'Deal ID',
   orderType: 'Order Type',

@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
+  BotRecord,
   CancelOrderByMetadataResponse,
   DealRecord,
+  ListBotsResponse,
   OrderFilterState,
   OrderRecord,
 } from '../../types/api';
-import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
+import { Card } from '../ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { toast } from 'sonner';
 import { SlidersHorizontal, ChevronDown, ChevronRight, Activity } from 'lucide-react';
@@ -33,6 +35,7 @@ import type {
 } from '@1771technologies/lytenyte-core/types';
 import { OrderDetailDialog } from '../OrderDetailDialog';
 import { DealDetailDialog } from '../DealDetailDialog';
+import { BotDetailDialog } from '../BotDetailDialog';
 
 // Local imports from extracted modules
 import type { OrderColumnKey, OrderRow, TableRow, DealGroupRow } from './types';
@@ -85,6 +88,11 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
   const [selectedDeal, setSelectedDeal] = useState<DealRecord | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
   const [dealDetailDialogOpen, setDealDetailDialogOpen] = useState(false);
+  const [selectedBot, setSelectedBot] = useState<BotRecord | null>(null);
+  const [botDetailDialogOpen, setBotDetailDialogOpen] = useState(false);
+  const [bulkCancelDialogOpen, setBulkCancelDialogOpen] = useState(false);
+  const [bulkCancelContext, setBulkCancelContext] = useState<{ dealId: string; metadataHashes: string[] } | null>(null);
+  const [isBulkCanceling, setIsBulkCanceling] = useState(false);
   const [visibleColumns, setVisibleColumns] =
     useState<OrderColumnKey[]>(DEFAULT_VISIBLE_COLUMNS);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
@@ -223,6 +231,47 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
     setDealDetailDialogOpen(true);
   }, []);
 
+  const viewBotDetails = useCallback(async (botId: string) => {
+    const numericId = Number(botId);
+    if (!Number.isFinite(numericId)) {
+      toast.error('Bot details unavailable', {
+        description: 'Bot identifier is missing for this deal.',
+      });
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        buildOpsApiUrl(`/api/bots?bot_id=${numericId}`),
+        {
+          credentials: 'include',
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to load bot ${numericId}`);
+      }
+
+      const data: ListBotsResponse = await response.json();
+      const bot = data.items?.[0] ?? null;
+
+      if (!bot) {
+        toast.error('Bot details unavailable', {
+          description: `No bot found for #${numericId}.`,
+        });
+        return;
+      }
+
+      setSelectedBot(bot);
+      setBotDetailDialogOpen(true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      toast.error('Failed to load bot details', {
+        description: message,
+      });
+    }
+  }, []);
+
   const toggleDeal = useCallback((dealId: string) => {
     setExpandedDeals((prev) => {
       const next = new Map(prev);
@@ -284,7 +333,23 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
     setCancelDialogOpen(true);
   }, []);
 
-  const handleCancelAllOrders = useCallback(async (metadataHashes: Set<string>, dealId: string) => {
+  const promptCancelAllOrders = useCallback((metadataHashes: Set<string>, dealId: string) => {
+    const hashArray = Array.from(metadataHashes);
+    if (hashArray.length === 0) {
+      toast.info('No orders to cancel for this deal.', {
+        description: `Deal #${dealId}`,
+      });
+      return;
+    }
+
+    setBulkCancelContext({
+      dealId,
+      metadataHashes: hashArray,
+    });
+    setBulkCancelDialogOpen(true);
+  }, []);
+
+  const executeCancelAllOrders = useCallback(async (metadataHashes: Set<string>, dealId: string) => {
     const hashArray = Array.from(metadataHashes);
     const totalCount = hashArray.length;
 
@@ -336,6 +401,21 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
     }
   }, [refreshOrdersForMetadata]);
 
+  const handleConfirmBulkCancel = useCallback(async () => {
+    if (!bulkCancelContext) {
+      return;
+    }
+
+    setIsBulkCanceling(true);
+    try {
+      await executeCancelAllOrders(new Set(bulkCancelContext.metadataHashes), bulkCancelContext.dealId);
+      setBulkCancelDialogOpen(false);
+      setBulkCancelContext(null);
+    } finally {
+      setIsBulkCanceling(false);
+    }
+  }, [bulkCancelContext, executeCancelAllOrders]);
+
   // Row full-width predicate
   const rowFullWidthPredicate: RowFullWidthPredicate<TableRow> = useCallback((params: RowFullWidthPredicateParams<TableRow>) => {
     return params.row.data?.rowType === 'deal-header';
@@ -358,10 +438,11 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
         allExpanded={allExpanded}
         onToggleDeal={toggleDeal}
         onViewDealDetails={viewDealDetails}
-        onCancelAllOrders={handleCancelAllOrders}
+        onCancelAllOrders={promptCancelAllOrders}
+        onViewBotDetails={viewBotDetails}
       />
     ),
-    [expandedDeals, allExpanded, toggleDeal, viewDealDetails, handleCancelAllOrders],
+    [expandedDeals, allExpanded, toggleDeal, viewDealDetails, viewBotDetails, promptCancelAllOrders],
   );
 
   const columnDefinitions = useMemo<Record<OrderColumnKey, Column<TableRow>>>(
@@ -474,8 +555,8 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
         movable: true,
       },
     },
+    columnSizeToFit: true,
     rowDataSource: dataSource,
-    rowHeight: 60,
     rowFullWidthPredicate,
     rowFullWidthRenderer: dealHeaderRenderer,
   });
@@ -521,142 +602,168 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
 
   if (loading) {
     return (
-      <div className="flex h-full flex-col">
-        <div className="flex-1 flex items-center justify-center p-8 bg-white">
-          <div className="flex items-center justify-center">
-            <Activity className="h-6 w-6 animate-pulse text-gray-400 mr-2" />
-            <span className="text-gray-600">Loading orders...</span>
-          </div>
+      <div className="container mx-auto flex h-full flex-col">
+        <div className="flex flex-1 justify-center overflow-hidden px-4 py-6">
+          <Card className="flex h-full w-full flex-col items-center justify-center gap-3 p-8">
+            <div className="flex items-center justify-center text-gray-600">
+              <Activity className="mr-2 h-6 w-6 animate-pulse text-gray-400" />
+              <span>Loading orders...</span>
+            </div>
+          </Card>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="px-4 py-2 border-b flex items-center justify-between flex-shrink-0 bg-white">
-        <h2 className="text-gray-900">
-          {orderRows.length > 0 ? (
-            <>
-              {Array.from(new Set(orderRows.map(r => r.dealId))).length} Deal{Array.from(new Set(orderRows.map(r => r.dealId))).length === 1 ? '' : 's'} • {orderRows.length} Order{orderRows.length === 1 ? '' : 's'}
-            </>
-          ) : (
-            'No orders'
-          )}
-        </h2>
-        <div className="flex items-center gap-2">
-          <FilterControls
-            selectedBotId={selectedBotId}
-            selectedDealId={selectedDealId}
-            onBotSelect={onBotSelect}
-            onDealSelect={onDealSelect}
-            filters={filters}
-            onFiltersChange={onFiltersChange}
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 px-2 text-xs"
-            onClick={toggleAllDeals}
-          >
-            {allExpanded ? (
-              <>
-                <ChevronDown className="h-3.5 w-3.5 mr-1" />
-                Collapse All
-              </>
-            ) : (
-              <>
-                <ChevronRight className="h-3.5 w-3.5 mr-1" />
-                Expand All
-              </>
-            )}
-          </Button>
-          <Popover open={columnsPopoverOpen} onOpenChange={setColumnsPopoverOpen}>
-            <PopoverTrigger asChild>
+    <div className="container mx-auto flex h-full flex-col">
+      <div className="flex flex-1 justify-center overflow-hidden px-4 py-6">
+        <Card className="flex h-full w-full flex-col gap-0 overflow-hidden">
+          <div className="flex flex-wrap items-center gap-3 border-b px-6 py-4">
+            <div className="flex items-center gap-3">
+              <h2 className="text-gray-900">
+                {orderRows.length > 0 ? (
+                  <>
+                    {Array.from(new Set(orderRows.map((r) => r.dealId))).length} Deal
+                    {Array.from(new Set(orderRows.map((r) => r.dealId))).length === 1 ? '' : 's'} • {orderRows.length} Order
+                    {orderRows.length === 1 ? '' : 's'}
+                  </>
+                ) : (
+                  'No orders'
+                )}
+              </h2>
               <Button
                 variant="outline"
                 size="sm"
                 className="h-8 px-2 text-xs"
+                onClick={toggleAllDeals}
               >
-                <SlidersHorizontal className="h-3.5 w-3.5 mr-1" />
-                Columns
+                {allExpanded ? (
+                  <>
+                    <ChevronDown className="mr-1 h-3.5 w-3.5" />
+                    Collapse All
+                  </>
+                ) : (
+                  <>
+                    <ChevronRight className="mr-1 h-3.5 w-3.5" />
+                    Expand All
+                  </>
+                )}
               </Button>
-            </PopoverTrigger>
-            <PopoverContent
-              align="end"
-              sideOffset={8}
-              className="w-48 p-0 border-gray-200"
-            >
-              <div className="py-1">
-                <div className="px-3 py-2 text-sm font-semibold border-b">
-                  Visible Columns
-                </div>
-                {COLUMN_ORDER.map((key) => (
-                  <label
-                    key={key}
-                    className={`flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-100 cursor-pointer ${
-                      REQUIRED_COLUMNS.has(key) ? 'opacity-50 cursor-not-allowed' : ''
-                    }`}
+            </div>
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-3 sm:flex-nowrap">
+              <FilterControls
+                selectedBotId={selectedBotId}
+                selectedDealId={selectedDealId}
+                onBotSelect={onBotSelect}
+                onDealSelect={onDealSelect}
+                filters={filters}
+                onFiltersChange={onFiltersChange}
+              />
+              <Popover open={columnsPopoverOpen} onOpenChange={setColumnsPopoverOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 px-2 text-xs shadow-none"
                   >
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.includes(key)}
-                      disabled={REQUIRED_COLUMNS.has(key)}
-                      onChange={(e) => handleColumnVisibilityChange(key, e.target.checked)}
-                      className="rounded border-gray-300"
-                    />
-                    <span>{COLUMN_LABELS[key]}</span>
-                  </label>
-                ))}
-              </div>
-            </PopoverContent>
-          </Popover>
-        </div>
-      </div>
-
-      {rows.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center text-gray-500 min-h-0">
-          No orders found
-        </div>
-      ) : (
-        <div className="lng-grid" style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-          <div style={{ flex: 1, position: "relative" }}>
-            <div style={{ position: "absolute", width: "100%", height: "100%" }}>
-              <Grid.Root grid={grid}>
-                <Grid.Viewport>
-                  <Grid.Header>
-                    {view.header.layout.map((row, i) => (
-                      <Grid.HeaderRow key={i} headerRowIndex={i}>
-                        {row.map((c) => {
-                          if (c.kind === 'group') {
-                            return <Grid.HeaderGroupCell key={c.idOccurrence} cell={c} />;
-                          }
-                          return <Grid.HeaderCell key={c.column.id} cell={c} />;
-                        })}
-                      </Grid.HeaderRow>
+                    <SlidersHorizontal className="mr-1 h-3.5 w-3.5" />
+                    Columns
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="end"
+                  sideOffset={8}
+                  className="w-48 border-gray-200 p-0"
+                >
+                  <div className="py-1">
+                    <div className="border-b px-3 py-2 text-sm font-semibold">
+                      Visible Columns
+                    </div>
+                    {COLUMN_ORDER.map((key) => (
+                      <label
+                        key={key}
+                        className={`flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-gray-100 ${
+                          REQUIRED_COLUMNS.has(key) ? 'cursor-not-allowed opacity-50' : ''
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={visibleColumns.includes(key)}
+                          disabled={REQUIRED_COLUMNS.has(key)}
+                          onChange={(e) => handleColumnVisibilityChange(key, e.target.checked)}
+                          className="rounded border-gray-300"
+                        />
+                        <span>{COLUMN_LABELS[key]}</span>
+                      </label>
                     ))}
-                  </Grid.Header>
-                  <Grid.RowsContainer>
-                    <Grid.RowsCenter>
-                      {view.rows.center.map((row) =>
-                        row.kind === 'full-width' ? (
-                          <Grid.RowFullWidth key={row.id} row={row} />
-                        ) : (
-                          <Grid.Row key={row.id} row={row}>
-                            {row.cells.map((cell) => (
-                              <Grid.Cell key={cell.id} cell={cell} />
-                            ))}
-                          </Grid.Row>
-                        ),
-                      )}
-                    </Grid.RowsCenter>
-                  </Grid.RowsContainer>
-                </Grid.Viewport>
-              </Grid.Root>
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
           </div>
-        </div>
-      )}
+
+          <div className="flex flex-1 flex-col overflow-hidden">
+            {rows.length === 0 ? (
+              <div className="min-h-0 flex flex-1 items-center justify-center px-6 pb-6 text-gray-500">
+                No orders found
+              </div>
+            ) : (
+              <div className="flex flex-1 flex-col px-2 pb-6 sm:px-4 lg:px-6">
+                <div className="lng-grid" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ flex: 1, position: 'relative' }}>
+                    <div style={{ position: 'absolute', width: '100%', height: '100%' }}>
+                      <Grid.Root grid={grid}>
+                        <Grid.Viewport>
+                          <Grid.Header>
+                            {view.header.layout.map((row, i) => (
+                              <Grid.HeaderRow key={i} headerRowIndex={i}>
+                                {row.map((c) => {
+                                  if (c.kind === 'group') {
+                                    return (
+                                      <Grid.HeaderGroupCell
+                                        key={c.idOccurrence}
+                                        cell={c}
+                                        className="flex h-full items-center justify-center px-2 text-center"
+                                      />
+                                    );
+                                  }
+                                  return (
+                                    <Grid.HeaderCell
+                                      key={c.column.id}
+                                      cell={c}
+                                      className="flex h-full items-center justify-center px-2 text-center"
+                                    />
+                                  );
+                                })}
+                              </Grid.HeaderRow>
+                            ))}
+                          </Grid.Header>
+                          <Grid.RowsContainer>
+                            <Grid.RowsCenter>
+                              {view.rows.center.map((row) =>
+                                row.kind === 'full-width' ? (
+                                  <Grid.RowFullWidth key={row.id} row={row} />
+                                ) : (
+                                  <Grid.Row key={row.id} row={row}>
+                                    {row.cells.map((cell) => (
+                                      <Grid.Cell key={cell.id} cell={cell} />
+                                    ))}
+                                  </Grid.Row>
+                                ),
+                              )}
+                            </Grid.RowsCenter>
+                          </Grid.RowsContainer>
+                        </Grid.Viewport>
+                      </Grid.Root>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </Card>
+      </div>
 
       {selectedOrder && (
         <OrderDetailDialog
@@ -674,6 +781,17 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
         />
       )}
 
+      <BotDetailDialog
+        bot={selectedBot}
+        open={botDetailDialogOpen}
+        onOpenChange={(open) => {
+          setBotDetailDialogOpen(open);
+          if (!open) {
+            setSelectedBot(null);
+          }
+        }}
+      />
+
       <AlertDialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -681,7 +799,7 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
             <AlertDialogDescription>
               Are you sure you want to cancel this order? This action cannot be undone.
               {orderToCancel && (
-                <div className="mt-3 p-2 bg-gray-50 rounded text-xs">
+                <div className="mt-3 rounded bg-gray-50 p-2 text-xs">
                   <div className="font-mono text-gray-700">
                     {orderToCancel.metadata ?? orderToCancel.identifiers.hex}
                   </div>
@@ -697,6 +815,41 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
               className="bg-red-600 hover:bg-red-700"
             >
               {isCanceling ? 'Canceling...' : 'Confirm Cancel'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={bulkCancelDialogOpen}
+        onOpenChange={(open) => {
+          setBulkCancelDialogOpen(open);
+          if (!open) {
+            setBulkCancelContext(null);
+            setIsBulkCanceling(false);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel All Orders for Deal</AlertDialogTitle>
+            <AlertDialogDescription>
+              {`This will attempt to cancel ${bulkCancelContext?.metadataHashes.length ?? 0} order${(bulkCancelContext?.metadataHashes.length ?? 0) === 1 ? '' : 's'} for deal #${bulkCancelContext?.dealId ?? 'N/A'}.`}
+              <span className="mt-3 block text-xs text-muted-foreground">
+                This action cannot be undone.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isBulkCanceling}>Keep Orders</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmBulkCancel}
+              disabled={isBulkCanceling}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {isBulkCanceling
+                ? 'Canceling...'
+                : `Cancel ${bulkCancelContext?.metadataHashes.length ?? 0} Order${(bulkCancelContext?.metadataHashes.length ?? 0) === 1 ? '' : 's'}`}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

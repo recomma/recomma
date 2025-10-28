@@ -17,7 +17,7 @@ export function metadataCellRenderer(params: CellRendererParams<TableRow>) {
     return null;
   }
   return (
-    <code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono">
+    <code className="text-xs px-1.5 py-0.5 rounded font-mono">
       {String(row.metadata)}
     </code>
   );

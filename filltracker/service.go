@@ -137,7 +137,7 @@ func (s *Service) ReconcileTakeProfits(ctx context.Context, submitter recomma.Em
 			}
 		}
 
-		s.ensureTakeProfit(ctx, submitter, snapshot, desiredQty, nil, nil)
+		s.ensureTakeProfit(ctx, submitter, snapshot, desiredQty, nil, nil, false)
 	}
 }
 
@@ -229,7 +229,7 @@ func (s *Service) reconcileActiveTakeProfit(
 	}
 	_ = s.emitOrderWork(ctx, submitter, cancelWork, "cancelled take profit", snapshot, tp.RemainingQty)
 
-	s.ensureTakeProfit(ctx, submitter, snapshot, desiredQty, &md, snapshot.LastTakeProfitEvent)
+	s.ensureTakeProfit(ctx, submitter, snapshot, desiredQty, &md, snapshot.LastTakeProfitEvent, true)
 	return true
 }
 
@@ -240,6 +240,7 @@ func (s *Service) ensureTakeProfit(
 	desiredQty float64,
 	preferredMD *metadata.Metadata,
 	preferredEvent *tc.BotEvent,
+	force bool,
 ) {
 	md, evt, ok := s.lookupTakeProfitContext(ctx, snapshot, preferredMD, preferredEvent)
 	if !ok {
@@ -251,7 +252,7 @@ func (s *Service) ensureTakeProfit(
 	create.Size = desiredQty
 	create.ReduceOnly = true
 
-	if s.shouldSkipSubmission(ctx, md, create.Size, create.ReduceOnly) {
+	if !force && s.shouldSkipSubmission(ctx, md, create.Size, create.ReduceOnly) {
 		s.logger.Debug("skip take profit create: already submitted", slog.Uint64("deal_id", uint64(snapshot.DealID)), slog.String("cloid", md.Hex()))
 		return
 	}

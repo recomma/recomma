@@ -67,3 +67,7 @@
 
 ## Reference Material
 - Runtime config contract injected via `window.__RECOMMA_CONFIG__` by the Go backend; document changes there if you add flags.
+
+## Commit Messages
+- All PR titles and commit messages must follow the Conventional Commits specification (https://www.conventionalcommits.org/). 
+- Start each message with a valid `<type>[optional scope]:` prefix (e.g. `feat:`, `fix(ui):`, `chore:`), keep the subject in the imperative mood, and use the body for context when needed.

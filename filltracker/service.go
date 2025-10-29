@@ -125,6 +125,9 @@ func (s *Service) ReconcileTakeProfits(ctx context.Context, submitter recomma.Em
 
 		desiredQty := snapshot.Position.NetQty
 		if desiredQty <= floatTolerance {
+			if snapshot.ActiveTakeProfit != nil {
+				s.cancelTakeProfit(ctx, submitter, snapshot)
+			}
 			continue
 		}
 
@@ -136,6 +139,34 @@ func (s *Service) ReconcileTakeProfits(ctx context.Context, submitter recomma.Em
 
 		s.ensureTakeProfit(ctx, submitter, snapshot, desiredQty, nil, nil)
 	}
+}
+
+func (s *Service) cancelTakeProfit(
+	ctx context.Context,
+	submitter recomma.Emitter,
+	snapshot DealSnapshot,
+) {
+	tp := snapshot.ActiveTakeProfit
+	if tp == nil {
+		return
+	}
+
+	md := tp.Metadata
+	cancel := hyperliquid.CancelOrderRequestByCloid{
+		Coin:  snapshot.Currency,
+		Cloid: md.Hex(),
+	}
+
+	work := recomma.OrderWork{
+		MD: md,
+		Action: recomma.Action{
+			Type:   recomma.ActionCancel,
+			Cancel: &cancel,
+			Reason: "position closed; cancel stale take profit",
+		},
+	}
+
+	s.emitOrderWork(ctx, submitter, work, "cancelled take profit for flat position", snapshot, tp.RemainingQty)
 }
 
 func (s *Service) reconcileActiveTakeProfit(

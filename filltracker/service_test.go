@@ -200,6 +200,91 @@ func TestReconcileTakeProfits(t *testing.T) {
 	require.WithinDuration(t, now.Add(-2*time.Minute), snapshot.ActiveTakeProfit.StatusTime, time.Second)
 }
 
+func TestReconcileTakeProfitsCancelsWhenFlat(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := newTestStore(t)
+	logger := newTestLogger()
+	tracker := New(store, logger)
+
+	const (
+		dealID = uint32(9050)
+		botID  = uint32(68)
+		coin   = "APT"
+	)
+
+	recordDeal(t, store, dealID, botID, coin)
+
+	baseMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 1}
+	tpMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 2}
+	closeMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 3}
+	now := time.Now()
+
+	baseEvent := tc.BotEvent{
+		CreatedAt: now.Add(-10 * time.Minute),
+		Action:    tc.BotEventActionExecute,
+		Coin:      coin,
+		Type:      tc.BUY,
+		Status:    tc.Filled,
+		Price:     8,
+		Size:      5,
+		OrderType: tc.MarketOrderDealOrderTypeBase,
+		IsMarket:  true,
+		Text:      "base fill",
+	}
+	require.NoError(t, recordEvent(store, baseMD, baseEvent))
+	require.NoError(t, recordStatus(store, baseMD, makeStatus(baseMD, coin, "B", hyperliquid.OrderStatusValueFilled, 5, 0, 8, now.Add(-9*time.Minute))))
+
+	tpEvent := tc.BotEvent{
+		CreatedAt: now.Add(-8 * time.Minute),
+		Action:    tc.BotEventActionPlace,
+		Coin:      coin,
+		Type:      tc.SELL,
+		Status:    tc.Active,
+		Price:     8.5,
+		Size:      5,
+		OrderType: tc.MarketOrderDealOrderTypeTakeProfit,
+		Text:      "tp placed",
+	}
+	require.NoError(t, recordEvent(store, tpMD, tpEvent))
+	tpStatus := makeStatus(tpMD, coin, "S", hyperliquid.OrderStatusValueOpen, 5, 5, 8.5, now.Add(-7*time.Minute))
+	require.NoError(t, recordStatus(store, tpMD, tpStatus))
+
+	closeEvent := tc.BotEvent{
+		CreatedAt: now.Add(-6 * time.Minute),
+		Action:    tc.BotEventActionExecute,
+		Coin:      coin,
+		Type:      tc.SELL,
+		Status:    tc.Filled,
+		Price:     8.3,
+		Size:      5,
+		OrderType: tc.MarketOrderDealOrderTypeManualSafety,
+		Text:      "manual exit",
+	}
+	require.NoError(t, recordEvent(store, closeMD, closeEvent))
+	closeStatus := makeStatus(closeMD, coin, "S", hyperliquid.OrderStatusValueFilled, 5, 0, 8.3, now.Add(-5*time.Minute))
+	require.NoError(t, recordStatus(store, closeMD, closeStatus))
+
+	require.NoError(t, tracker.Rebuild(ctx))
+
+	snapshot, ok := tracker.Snapshot(dealID)
+	require.True(t, ok)
+	require.NotNil(t, snapshot.ActiveTakeProfit)
+	require.InDelta(t, 0, snapshot.Position.NetQty, 1e-6)
+	require.True(t, snapshot.AllBuysFilled)
+
+	emitter := &stubEmitter{}
+	tracker.ReconcileTakeProfits(ctx, emitter)
+
+	actions := emitter.Actions()
+	require.Len(t, actions, 1)
+	work := actions[0]
+	require.Equal(t, recomma.ActionCancel, work.Action.Type)
+	require.NotNil(t, work.Action.Cancel)
+	require.Equal(t, tpMD.Hex(), work.Action.Cancel.Cloid)
+}
+
 func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 	t.Parallel()
 

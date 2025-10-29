@@ -113,6 +113,12 @@ func (e *HyperLiquidEmitter) setMarketPrice(ctx context.Context, order hyperliqu
 func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) error {
 	logger := e.logger.With("md", w.MD.Hex()).With("bot-event", w.BotEvent)
 	logger.Debug("emit", slog.Any("orderwork", w))
+
+	if w.Action.Type == recomma.ActionNone {
+		// order already reconciled; no Hyperliquid interaction needed
+		return nil
+	}
+
 	if err := e.waitTurn(ctx); err != nil {
 		return err
 	}
@@ -192,9 +198,6 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 		if err := e.store.RecordHyperliquidCancel(ctx, w.MD, *w.Action.Cancel, w.BotEvent.RowID); err != nil {
 			logger.Warn("could not add to store", slog.String("error", err.Error()))
 		}
-	case recomma.ActionNone:
-		// order filled
-		return nil
 	case recomma.ActionModify:
 		order := e.setMarketPrice(ctx, w.Action.Modify.Order, false)
 		w.Action.Modify.Order = order

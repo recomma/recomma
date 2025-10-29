@@ -152,6 +152,56 @@ func TestServiceUpdateStatusAdjustsPosition(t *testing.T) {
 func TestReconcileTakeProfits(t *testing.T) {
 	t.Parallel()
 
+	ctx := context.Background()
+	store := newTestStore(t)
+	logger := newTestLogger()
+	tracker := New(store, logger)
+
+	const (
+		dealID = uint32(9003)
+		botID  = uint32(62)
+		coin   = "ARB"
+	)
+
+	recordDeal(t, store, dealID, botID, coin)
+
+	tpMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 1}
+	now := time.Now()
+
+	require.NoError(t, recordEvent(store, tpMD, tc.BotEvent{
+		CreatedAt: now.Add(-5 * time.Minute),
+		Action:    tc.BotEventActionPlace,
+		Coin:      coin,
+		Type:      tc.SELL,
+		Status:    tc.Active,
+		Price:     1.2,
+		Size:      150,
+		OrderType: tc.MarketOrderDealOrderTypeTakeProfit,
+		Text:      "tp placed",
+	}))
+
+	initialStatus := makeStatus(tpMD, coin, "S", hyperliquid.OrderStatusValueOpen, 150, 150, 1.2, now.Add(-4*time.Minute))
+	require.NoError(t, recordStatus(store, tpMD, initialStatus))
+
+	require.NoError(t, tracker.Rebuild(ctx))
+
+	fresher := makeStatus(tpMD, coin, "S", hyperliquid.OrderStatusValueOpen, 150, 40, 1.2, now.Add(-2*time.Minute))
+	require.NoError(t, tracker.UpdateStatus(ctx, tpMD, fresher))
+
+	// Older timestamp that reports a larger remaining size should be ignored.
+	stale := makeStatus(tpMD, coin, "S", hyperliquid.OrderStatusValueOpen, 150, 120, 1.2, now.Add(-3*time.Minute))
+	require.NoError(t, tracker.UpdateStatus(ctx, tpMD, stale))
+
+	snapshot, ok := tracker.Snapshot(dealID)
+	require.True(t, ok)
+	require.NotNil(t, snapshot.ActiveTakeProfit)
+	require.InDelta(t, 40, snapshot.ActiveTakeProfit.RemainingQty, 1e-6)
+	require.WithinDuration(t, now.Add(-2*time.Minute), snapshot.ActiveTakeProfit.StatusTime, time.Second)
+}
+
+func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
+	t.Parallel()
+
 	const (
 		dealID = uint32(777)
 		botID  = uint32(88)

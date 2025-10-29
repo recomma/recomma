@@ -500,10 +500,15 @@ func (o *orderState) applyEvent(evt *tc.BotEvent) {
 }
 
 func (o *orderState) applyStatus(status hyperliquid.WsOrder) {
-	o.status = status.Status
 	if status.StatusTimestamp > 0 {
-		o.statusObserved = time.UnixMilli(status.StatusTimestamp).UTC()
+		observed := time.UnixMilli(status.StatusTimestamp).UTC()
+		if !o.statusObserved.IsZero() && observed.Before(o.statusObserved) {
+			return
+		}
+		o.statusObserved = observed
 	}
+
+	o.status = status.Status
 	o.lastUpdate = time.Now().UTC()
 
 	if status.Order.Coin != "" {

@@ -515,6 +515,35 @@ func (q *Queries) ListDealIDs(ctx context.Context) ([]int64, error) {
 	return items, nil
 }
 
+const listHyperliquidMetadata = `-- name: ListHyperliquidMetadata :many
+SELECT md
+FROM hyperliquid_submissions
+ORDER BY md ASC
+`
+
+func (q *Queries) ListHyperliquidMetadata(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listHyperliquidMetadata)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var md string
+		if err := rows.Scan(&md); err != nil {
+			return nil, err
+		}
+		items = append(items, md)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listHyperliquidStatuses = `-- name: ListHyperliquidStatuses :many
 SELECT status, recorded_at_utc
 FROM hyperliquid_status_history

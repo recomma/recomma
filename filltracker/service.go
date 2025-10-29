@@ -227,7 +227,9 @@ func (s *Service) reconcileActiveTakeProfit(
 			Reason: "stale take profit metadata; cancel before recreation",
 		},
 	}
-	_ = s.emitOrderWork(ctx, submitter, cancelWork, "cancelled take profit", snapshot, tp.RemainingQty)
+	if !s.emitOrderWork(ctx, submitter, cancelWork, "cancelled take profit", snapshot, tp.RemainingQty) {
+		return true
+	}
 
 	s.ensureTakeProfit(ctx, submitter, snapshot, desiredQty, &md, snapshot.LastTakeProfitEvent, true)
 	return true

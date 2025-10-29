@@ -6,14 +6,14 @@ require (
 	github.com/ethereum/go-ethereum v1.16.4
 	github.com/go-webauthn/webauthn v0.14.0
 	github.com/google/go-cmp v0.7.0
-	github.com/howeyc/crc16 v0.0.0-20171223171357-2b2a61e366a6
 	github.com/oapi-codegen/nullable v1.1.0
 	github.com/oapi-codegen/runtime v1.1.2
+	github.com/recomma/3commas-sdk-go v0.1.0
 	github.com/rs/cors v1.11.1
 	github.com/sonirico/go-hyperliquid v0.16.1
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
-	github.com/recomma/3commas-sdk-go v0.0.2
+	github.com/vearutop/statigz v1.5.0
 	golang.org/x/sync v0.17.0
 	k8s.io/client-go v0.34.0
 	modernc.org/sqlite v1.39.0
@@ -92,7 +92,6 @@ require (
 	github.com/supranational/blst v0.3.16 // indirect
 	github.com/tetratelabs/wazero v1.9.0 // indirect
 	github.com/valyala/fastjson v1.6.4 // indirect
-	github.com/vearutop/statigz v1.5.0 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/vmware-labs/yaml-jsonpath v0.3.2 // indirect

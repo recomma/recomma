@@ -13,12 +13,12 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/metadata"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage/sqlcgen"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
-	tc "github.com/terwey/3commas-sdk-go/threecommas"
 )
 
 //go:generate sqlc generate

@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
+	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/metadata"
 	"github.com/sonirico/go-hyperliquid"
-	tc "github.com/terwey/3commas-sdk-go/threecommas"
 )
 
 type OrderWork struct {

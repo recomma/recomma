@@ -10,11 +10,11 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/oapi-codegen/nullable"
+	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/metadata"
 	"github.com/recomma/recomma/recomma"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
 	"github.com/stretchr/testify/require"
-	tc "github.com/terwey/3commas-sdk-go/threecommas"
 )
 
 func newTestStorage(t *testing.T) *Storage {

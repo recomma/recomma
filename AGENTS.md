@@ -34,7 +34,7 @@
 - Local `.env` in the repo is sample data only—treat actual credentials via the vault setup flow.
 
 ## External Services
-- 3Commas API (SDK: `github.com/terwey/3commas-sdk-go`) powers bot/deal polling.
+- 3Commas API (SDK: `github.com/recomma/3commas-sdk-go`) powers bot/deal polling.
 - Hyperliquid REST/Websocket (`github.com/sonirico/go-hyperliquid`) handles order submission and fills.
 - WebAuthn ceremonies via `github.com/go-webauthn/webauthn`; passkey flows create/consume vault sessions.
 

@@ -1,0 +1,3 @@
+[submodule "3commas-openapi"]
+	path = 3commas-openapi
+	url = git@github.com:recomma/3commas-openapi.git

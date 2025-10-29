@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
+	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/metadata"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
 	"github.com/stretchr/testify/require"
-	tc "github.com/terwey/3commas-sdk-go/threecommas"
 
 	"log/slog"
 )

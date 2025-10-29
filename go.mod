@@ -13,7 +13,7 @@ require (
 	github.com/sonirico/go-hyperliquid v0.16.1
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
-	github.com/terwey/3commas-sdk-go v0.0.2
+	github.com/recomma/3commas-sdk-go v0.0.2
 	golang.org/x/sync v0.17.0
 	k8s.io/client-go v0.34.0
 	modernc.org/sqlite v1.39.0

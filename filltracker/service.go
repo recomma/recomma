@@ -2,6 +2,8 @@ package filltracker
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"log/slog"
 	"math"
 	"strconv"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
+	"github.com/recomma/recomma/adapter"
 	"github.com/recomma/recomma/metadata"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
@@ -109,8 +112,8 @@ func (s *Service) Snapshot(dealID uint32) (DealSnapshot, bool) {
 	return deal.snapshot(), true
 }
 
-// CancelCompletedTakeProfits cancels open reduce-only orders for deals where every buy-side order filled.
-func (s *Service) CancelCompletedTakeProfits(ctx context.Context, submitter recomma.Emitter) {
+// ReconcileTakeProfits ensures a reduce-only order exists that matches the current net position.
+func (s *Service) ReconcileTakeProfits(ctx context.Context, submitter recomma.Emitter) {
 	for _, dealID := range s.listDealIDs() {
 		snapshot, ok := s.Snapshot(dealID)
 		if !ok {
@@ -120,40 +123,258 @@ func (s *Service) CancelCompletedTakeProfits(ctx context.Context, submitter reco
 			continue
 		}
 
-		tp := snapshot.ActiveTakeProfit
-		if tp == nil {
+		desiredQty := snapshot.Position.NetQty
+		if desiredQty <= floatTolerance {
 			continue
 		}
 
-		cancel := hyperliquid.CancelOrderRequestByCloid{
-			Coin:  snapshot.Currency,
-			Cloid: tp.Metadata.Hex(),
-		}
-		work := recomma.OrderWork{
-			MD: tp.Metadata,
-			Action: recomma.Action{
-				Type:   recomma.ActionCancel,
-				Cancel: &cancel,
-				Reason: "deal fully averaged; refreshing take profit",
-			},
+		if snapshot.ActiveTakeProfit != nil {
+			if s.reconcileActiveTakeProfit(ctx, submitter, snapshot, desiredQty) {
+				continue
+			}
 		}
 
-		cancelCtx, cancelFn := context.WithTimeout(ctx, 30*time.Second)
-		err := submitter.Emit(cancelCtx, work)
-		cancelFn()
-
-		fields := []any{
-			slog.Uint64("deal_id", uint64(snapshot.DealID)),
-			slog.Uint64("bot_id", uint64(snapshot.BotID)),
-			slog.String("cloid", tp.Metadata.Hex()),
-			slog.Float64("qty", tp.RemainingQty),
-		}
-		if err != nil {
-			s.logger.Warn("cancel take profit failed", append(fields, slog.String("error", err.Error()))...)
-			continue
-		}
-		s.logger.Info("cancelled take profit", append(fields, slog.Float64("net_qty", snapshot.Position.NetQty))...)
+		s.ensureTakeProfit(ctx, submitter, snapshot, desiredQty, nil, nil)
 	}
+}
+
+func (s *Service) reconcileActiveTakeProfit(
+	ctx context.Context,
+	submitter recomma.Emitter,
+	snapshot DealSnapshot,
+	desiredQty float64,
+) bool {
+	tp := snapshot.ActiveTakeProfit
+	if tp == nil {
+		return false
+	}
+
+	if tp.ReduceOnly && floatsEqual(tp.RemainingQty, desiredQty) {
+		return true
+	}
+
+	md := tp.Metadata
+	evt := cloneEvent(tp.Event)
+	if evt == nil {
+		evt = cloneEvent(snapshot.LastTakeProfitEvent)
+	}
+
+	if evt != nil {
+		modify := adapter.ToModifyOrderRequest(snapshot.Currency, recomma.BotEvent{BotEvent: *evt}, md)
+		modify.Order.Size = desiredQty
+		modify.Order.ReduceOnly = true
+
+		if s.shouldSkipSubmission(ctx, md, modify.Order.Size, modify.Order.ReduceOnly) {
+			s.logger.Debug("skip take profit modify: already submitted", slog.Uint64("deal_id", uint64(snapshot.DealID)), slog.String("cloid", md.Hex()))
+			return true
+		}
+
+		work := recomma.OrderWork{
+			MD: md,
+			Action: recomma.Action{
+				Type:   recomma.ActionModify,
+				Modify: &modify,
+				Reason: "resize take profit to match net position",
+			},
+			BotEvent: recomma.BotEvent{BotEvent: *evt},
+		}
+
+		s.emitOrderWork(ctx, submitter, work, "modified take profit", snapshot, desiredQty)
+		return true
+	}
+
+	// Unable to build a modify request; cancel and recreate using fallback metadata.
+	cancel := hyperliquid.CancelOrderRequestByCloid{
+		Coin:  snapshot.Currency,
+		Cloid: md.Hex(),
+	}
+	cancelWork := recomma.OrderWork{
+		MD: md,
+		Action: recomma.Action{
+			Type:   recomma.ActionCancel,
+			Cancel: &cancel,
+			Reason: "stale take profit metadata; cancel before recreation",
+		},
+	}
+	_ = s.emitOrderWork(ctx, submitter, cancelWork, "cancelled take profit", snapshot, tp.RemainingQty)
+
+	s.ensureTakeProfit(ctx, submitter, snapshot, desiredQty, &md, snapshot.LastTakeProfitEvent)
+	return true
+}
+
+func (s *Service) ensureTakeProfit(
+	ctx context.Context,
+	submitter recomma.Emitter,
+	snapshot DealSnapshot,
+	desiredQty float64,
+	preferredMD *metadata.Metadata,
+	preferredEvent *tc.BotEvent,
+) {
+	md, evt, ok := s.lookupTakeProfitContext(ctx, snapshot, preferredMD, preferredEvent)
+	if !ok {
+		s.logger.Warn("take profit reconciliation skipped: no metadata", slog.Uint64("deal_id", uint64(snapshot.DealID)))
+		return
+	}
+
+	create := adapter.ToCreateOrderRequest(snapshot.Currency, recomma.BotEvent{BotEvent: *evt}, md)
+	create.Size = desiredQty
+	create.ReduceOnly = true
+
+	if s.shouldSkipSubmission(ctx, md, create.Size, create.ReduceOnly) {
+		s.logger.Debug("skip take profit create: already submitted", slog.Uint64("deal_id", uint64(snapshot.DealID)), slog.String("cloid", md.Hex()))
+		return
+	}
+
+	work := recomma.OrderWork{
+		MD: md,
+		Action: recomma.Action{
+			Type:   recomma.ActionCreate,
+			Create: &create,
+			Reason: "recreate missing take profit",
+		},
+		BotEvent: recomma.BotEvent{BotEvent: *evt},
+	}
+
+	s.emitOrderWork(ctx, submitter, work, "recreated take profit", snapshot, desiredQty)
+}
+
+func (s *Service) emitOrderWork(
+	ctx context.Context,
+	submitter recomma.Emitter,
+	work recomma.OrderWork,
+	logMsg string,
+	snapshot DealSnapshot,
+	qty float64,
+) bool {
+	emitCtx, cancelFn := context.WithTimeout(ctx, 30*time.Second)
+	err := submitter.Emit(emitCtx, work)
+	cancelFn()
+
+	fields := []any{
+		slog.Uint64("deal_id", uint64(snapshot.DealID)),
+		slog.Uint64("bot_id", uint64(snapshot.BotID)),
+		slog.String("cloid", work.MD.Hex()),
+		slog.Float64("net_qty", snapshot.Position.NetQty),
+		slog.Float64("target_qty", qty),
+	}
+
+	if err != nil {
+		s.logger.Warn(logMsg+" failed", append(fields, slog.String("error", err.Error()))...)
+		return false
+	}
+
+	s.logger.Info(logMsg, fields...)
+	return true
+}
+
+func (s *Service) shouldSkipSubmission(ctx context.Context, md metadata.Metadata, desiredSize float64, requireReduceOnly bool) bool {
+	action, found, err := s.store.LoadHyperliquidSubmission(ctx, md)
+	if err != nil {
+		s.logger.Warn("load hyperliquid submission failed", slog.String("cloid", md.Hex()), slog.String("error", err.Error()))
+		return false
+	}
+	if !found {
+		return false
+	}
+
+	switch action.Type {
+	case recomma.ActionCreate:
+		if action.Create == nil {
+			return false
+		}
+		if requireReduceOnly && !action.Create.ReduceOnly {
+			return false
+		}
+		return floatsEqual(action.Create.Size, desiredSize)
+	case recomma.ActionModify:
+		if action.Modify == nil {
+			return false
+		}
+		if requireReduceOnly && !action.Modify.Order.ReduceOnly {
+			return false
+		}
+		return floatsEqual(action.Modify.Order.Size, desiredSize)
+	default:
+		return false
+	}
+}
+
+func (s *Service) lookupTakeProfitContext(
+	ctx context.Context,
+	snapshot DealSnapshot,
+	preferredMD *metadata.Metadata,
+	preferredEvent *tc.BotEvent,
+) (metadata.Metadata, *tc.BotEvent, bool) {
+	var md *metadata.Metadata
+	if preferredMD != nil {
+		clone := *preferredMD
+		md = &clone
+	}
+
+	evt := cloneEvent(preferredEvent)
+	if evt == nil {
+		evt = cloneEvent(snapshot.LastTakeProfitEvent)
+	}
+
+	if md == nil && evt != nil {
+		for _, order := range snapshot.Orders {
+			if !order.ReduceOnly || order.Event == nil {
+				continue
+			}
+			if eventsMatch(order.Event, evt) {
+				clone := order.Metadata
+				md = &clone
+				break
+			}
+		}
+	}
+
+	needLoadMD := md == nil
+	needLoadEvent := evt == nil
+	if needLoadMD || needLoadEvent {
+		storedMD, storedEvt, err := s.store.LoadTakeProfitForDeal(ctx, snapshot.DealID)
+		if err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				s.logger.Warn("load take profit metadata failed", slog.Uint64("deal_id", uint64(snapshot.DealID)), slog.String("error", err.Error()))
+			}
+			return metadata.Metadata{}, nil, false
+		}
+		if needLoadMD {
+			clone := *storedMD
+			md = &clone
+		}
+		if needLoadEvent {
+			evt = cloneEvent(storedEvt)
+		}
+	}
+
+	if md == nil || evt == nil {
+		return metadata.Metadata{}, nil, false
+	}
+
+	return *md, evt, true
+}
+
+func cloneEvent(evt *tc.BotEvent) *tc.BotEvent {
+	if evt == nil {
+		return nil
+	}
+	clone := *evt
+	return &clone
+}
+
+func eventsMatch(a, b *tc.BotEvent) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		return false
+	}
+	return a.Fingerprint() == b.Fingerprint()
+}
+
+func floatsEqual(a, b float64) bool {
+	return math.Abs(a-b) <= floatTolerance
 }
 
 func (s *Service) reloadDeal(ctx context.Context, dealID uint32) error {

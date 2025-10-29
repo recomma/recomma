@@ -282,7 +282,7 @@ func main() {
 	produceOnce(appCtx)
 
 	reconcileTakeProfits := func(ctx context.Context) {
-		fillTracker.CancelCompletedTakeProfits(ctx, submitter)
+		fillTracker.ReconcileTakeProfits(ctx, submitter)
 	}
 
 	reconcileTakeProfits(appCtx)

@@ -149,7 +149,7 @@ func TestServiceUpdateStatusAdjustsPosition(t *testing.T) {
 	require.True(t, snapshot.AllBuysFilled, "all buy orders still filled")
 }
 
-func TestCancelCompletedTakeProfits(t *testing.T) {
+func TestReconcileTakeProfits(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -158,7 +158,7 @@ func TestCancelCompletedTakeProfits(t *testing.T) {
 		coin   = "SOL"
 	)
 
-	t.Run("emits cancel when all buys filled", func(t *testing.T) {
+	t.Run("recreates missing take profit", func(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()
 		store := newTestStore(t)
@@ -183,7 +183,7 @@ func TestCancelCompletedTakeProfits(t *testing.T) {
 		}))
 		require.NoError(t, recordStatus(store, baseMD, makeStatus(baseMD, coin, "B", hyperliquid.OrderStatusValueFilled, 10, 0, 35, now.Add(-9*time.Minute))))
 
-		require.NoError(t, recordEvent(store, tpMD, tc.BotEvent{
+		tpEvent := tc.BotEvent{
 			CreatedAt: now.Add(-8 * time.Minute),
 			Action:    tc.BotEventActionPlace,
 			Coin:      coin,
@@ -192,24 +192,38 @@ func TestCancelCompletedTakeProfits(t *testing.T) {
 			Price:     37,
 			Size:      10,
 			OrderType: tc.MarketOrderDealOrderTypeTakeProfit,
-		}))
-		tpStatus := makeStatus(tpMD, coin, "S", hyperliquid.OrderStatusValueOpen, 10, 10, 37, now.Add(-7*time.Minute))
+		}
+		require.NoError(t, recordEvent(store, tpMD, tpEvent))
+
+		// Tracker sees the order as cancelled before reconciliation.
+		tpStatus := makeStatus(tpMD, coin, "S", hyperliquid.OrderStatusValueCanceled, 10, 10, 37, now.Add(-7*time.Minute))
 		require.NoError(t, recordStatus(store, tpMD, tpStatus))
 
 		require.NoError(t, tracker.Rebuild(ctx))
 
+		snapshot, ok := tracker.Snapshot(dealID)
+		require.True(t, ok)
+		require.Nil(t, snapshot.ActiveTakeProfit)
+		require.NotNil(t, snapshot.LastTakeProfitEvent)
+		require.InDelta(t, 10, snapshot.Position.NetQty, 1e-6)
+
 		emitter := &stubEmitter{}
-		tracker.CancelCompletedTakeProfits(ctx, emitter)
+		tracker.ReconcileTakeProfits(ctx, emitter)
 
 		actions := emitter.Actions()
 		require.Len(t, actions, 1)
-		require.Equal(t, recomma.ActionCancel, actions[0].Action.Type)
-		require.NotNil(t, actions[0].Action.Cancel)
-		require.Equal(t, tpMD.Hex(), actions[0].Action.Cancel.Cloid)
-		require.Equal(t, coin, actions[0].Action.Cancel.Coin)
+		work := actions[0]
+		require.Equal(t, recomma.ActionCreate, work.Action.Type)
+		require.NotNil(t, work.Action.Create)
+		require.InDelta(t, 10, work.Action.Create.Size, 1e-6)
+		require.True(t, work.Action.Create.ReduceOnly)
+		require.Equal(t, tpMD.Hex(), work.MD.Hex())
+		cloid := work.Action.Create.ClientOrderID
+		require.NotNil(t, cloid)
+		require.Equal(t, tpMD.Hex(), *cloid)
 	})
 
-	t.Run("skip cancel when buys outstanding", func(t *testing.T) {
+	t.Run("modifies mismatched take profit", func(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()
 		store := newTestStore(t)
@@ -219,11 +233,10 @@ func TestCancelCompletedTakeProfits(t *testing.T) {
 		recordDeal(t, store, dealID+1, botID, coin)
 
 		baseMD := metadata.Metadata{BotID: botID, DealID: dealID + 1, BotEventID: 1}
-		safetyMD := metadata.Metadata{BotID: botID, DealID: dealID + 1, BotEventID: 2}
-		tpMD := metadata.Metadata{BotID: botID, DealID: dealID + 1, BotEventID: 3}
+		tpMD := metadata.Metadata{BotID: botID, DealID: dealID + 1, BotEventID: 2}
 		now := time.Now()
 
-		// Base filled.
+		// Base fill establishes net qty 15.
 		require.NoError(t, recordEvent(store, baseMD, tc.BotEvent{
 			CreatedAt: now.Add(-10 * time.Minute),
 			Action:    tc.BotEventActionExecute,
@@ -231,29 +244,13 @@ func TestCancelCompletedTakeProfits(t *testing.T) {
 			Type:      tc.BUY,
 			Status:    tc.Filled,
 			Price:     30,
-			Size:      5,
+			Size:      15,
 			OrderType: tc.MarketOrderDealOrderTypeBase,
 		}))
-		require.NoError(t, recordStatus(store, baseMD, makeStatus(baseMD, coin, "B", hyperliquid.OrderStatusValueFilled, 5, 0, 30, now.Add(-9*time.Minute))))
+		require.NoError(t, recordStatus(store, baseMD, makeStatus(baseMD, coin, "B", hyperliquid.OrderStatusValueFilled, 15, 0, 30, now.Add(-9*time.Minute))))
 
-		// Safety still open.
-		require.NoError(t, recordEvent(store, safetyMD, tc.BotEvent{
-			CreatedAt:     now.Add(-8 * time.Minute),
-			Action:        tc.BotEventActionPlace,
-			Coin:          coin,
-			Type:          tc.BUY,
-			Status:        tc.Active,
-			Price:         28,
-			Size:          5,
-			OrderType:     tc.MarketOrderDealOrderTypeSafety,
-			OrderPosition: 1,
-			OrderSize:     2,
-		}))
-		require.NoError(t, recordStatus(store, safetyMD, makeStatus(safetyMD, coin, "B", hyperliquid.OrderStatusValueOpen, 5, 5, 28, now.Add(-7*time.Minute))))
-
-		// TP active.
-		require.NoError(t, recordEvent(store, tpMD, tc.BotEvent{
-			CreatedAt: now.Add(-6 * time.Minute),
+		tpEvent := tc.BotEvent{
+			CreatedAt: now.Add(-8 * time.Minute),
 			Action:    tc.BotEventActionPlace,
 			Coin:      coin,
 			Type:      tc.SELL,
@@ -261,15 +258,33 @@ func TestCancelCompletedTakeProfits(t *testing.T) {
 			Price:     32,
 			Size:      10,
 			OrderType: tc.MarketOrderDealOrderTypeTakeProfit,
-		}))
-		require.NoError(t, recordStatus(store, tpMD, makeStatus(tpMD, coin, "S", hyperliquid.OrderStatusValueOpen, 10, 10, 32, now.Add(-5*time.Minute))))
+		}
+		require.NoError(t, recordEvent(store, tpMD, tpEvent))
+
+		// Active order is smaller than the net qty, so reconciliation should resize it.
+		tpStatus := makeStatus(tpMD, coin, "S", hyperliquid.OrderStatusValueOpen, 10, 10, 32, now.Add(-7*time.Minute))
+		require.NoError(t, recordStatus(store, tpMD, tpStatus))
 
 		require.NoError(t, tracker.Rebuild(ctx))
 
-		emitter := &stubEmitter{}
-		tracker.CancelCompletedTakeProfits(ctx, emitter)
+		snapshot, ok := tracker.Snapshot(dealID + 1)
+		require.True(t, ok)
+		require.NotNil(t, snapshot.ActiveTakeProfit)
+		require.InDelta(t, 15, snapshot.Position.NetQty, 1e-6)
 
-		require.Empty(t, emitter.Actions(), "no cancel expected while buys outstanding")
+		emitter := &stubEmitter{}
+		tracker.ReconcileTakeProfits(ctx, emitter)
+
+		actions := emitter.Actions()
+		require.Len(t, actions, 1)
+		work := actions[0]
+		require.Equal(t, recomma.ActionModify, work.Action.Type)
+		require.NotNil(t, work.Action.Modify)
+		require.InDelta(t, 15, work.Action.Modify.Order.Size, 1e-6)
+		require.True(t, work.Action.Modify.Order.ReduceOnly)
+		cloid, ok := work.Action.Modify.Oid.(hyperliquid.Cloid)
+		require.True(t, ok, "expected Cloid OID")
+		require.Equal(t, tpMD.Hex(), cloid.Value)
 	})
 }
 

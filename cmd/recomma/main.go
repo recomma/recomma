@@ -317,9 +317,6 @@ func main() {
 				if appCtx.Err() != nil {
 					return
 				}
-				if err := statusRefresher.Refresh(appCtx); err != nil {
-					logger.Warn("status refresher failed", slog.String("error", err.Error()))
-				}
 				produceOnce(appCtx)
 				reconcileTakeProfits(appCtx)
 			}

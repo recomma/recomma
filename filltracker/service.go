@@ -277,6 +277,23 @@ func (s *Service) shouldSkipSubmission(ctx context.Context, md metadata.Metadata
 		return false
 	}
 
+	if !submissionMatchesDesired(action, desiredSize, requireReduceOnly) {
+		return false
+	}
+
+	status, haveStatus, err := s.store.LoadHyperliquidStatus(ctx, md)
+	if err != nil {
+		s.logger.Warn("load hyperliquid status failed", slog.String("cloid", md.Hex()), slog.String("error", err.Error()))
+		return false
+	}
+	if !haveStatus || !isLiveHyperliquidStatus(status) {
+		return false
+	}
+
+	return true
+}
+
+func submissionMatchesDesired(action recomma.Action, desiredSize float64, requireReduceOnly bool) bool {
 	switch action.Type {
 	case recomma.ActionCreate:
 		if action.Create == nil {
@@ -294,6 +311,21 @@ func (s *Service) shouldSkipSubmission(ctx context.Context, md metadata.Metadata
 			return false
 		}
 		return floatsEqual(action.Modify.Order.Size, desiredSize)
+	default:
+		return false
+	}
+}
+
+func isLiveHyperliquidStatus(status *hyperliquid.WsOrder) bool {
+	if status == nil {
+		return false
+	}
+
+	switch status.Status {
+	case hyperliquid.OrderStatusValueOpen:
+		return true
+	case hyperliquid.OrderStatusValue("live"):
+		return true
 	default:
 		return false
 	}

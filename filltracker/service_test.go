@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
+	"github.com/recomma/recomma/adapter"
 	"github.com/recomma/recomma/metadata"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
@@ -336,6 +337,82 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 		require.True(t, ok, "expected Cloid OID")
 		require.Equal(t, tpMD.Hex(), cloid.Value)
 	})
+}
+
+func TestEnsureTakeProfitRecreatesAfterStaleSubmission(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := newTestStore(t)
+	logger := newTestLogger()
+	tracker := New(store, logger)
+
+	const (
+		dealID = uint32(9101)
+		botID  = uint32(72)
+		coin   = "OP"
+	)
+
+	recordDeal(t, store, dealID, botID, coin)
+
+	baseMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 1}
+	tpMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 2}
+	now := time.Now()
+
+	baseEvent := tc.BotEvent{
+		CreatedAt: now.Add(-10 * time.Minute),
+		Action:    tc.BotEventActionExecute,
+		Coin:      coin,
+		Type:      tc.BUY,
+		Status:    tc.Filled,
+		Price:     35,
+		Size:      10,
+		OrderType: tc.MarketOrderDealOrderTypeBase,
+		IsMarket:  true,
+		Text:      "base fill",
+	}
+	require.NoError(t, recordEvent(store, baseMD, baseEvent))
+	require.NoError(t, recordStatus(store, baseMD, makeStatus(baseMD, coin, "B", hyperliquid.OrderStatusValueFilled, 10, 0, 35, now.Add(-9*time.Minute))))
+
+	tpEvent := tc.BotEvent{
+		CreatedAt: now.Add(-8 * time.Minute),
+		Action:    tc.BotEventActionPlace,
+		Coin:      coin,
+		Type:      tc.SELL,
+		Status:    tc.Active,
+		Price:     37,
+		Size:      10,
+		OrderType: tc.MarketOrderDealOrderTypeTakeProfit,
+		Text:      "tp placed",
+	}
+	tpRowID, err := store.RecordThreeCommasBotEvent(ctx, tpMD, tpEvent)
+	require.NoError(t, err)
+
+	create := adapter.ToCreateOrderRequest(coin, recomma.BotEvent{BotEvent: tpEvent}, tpMD)
+	require.True(t, create.ReduceOnly)
+	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, tpMD, create, tpRowID))
+
+	canceled := makeStatus(tpMD, coin, "S", hyperliquid.OrderStatusValueCanceled, 10, 10, 37, now.Add(-7*time.Minute))
+	require.NoError(t, recordStatus(store, tpMD, canceled))
+
+	require.NoError(t, tracker.Rebuild(ctx))
+
+	snapshot, ok := tracker.Snapshot(dealID)
+	require.True(t, ok)
+	require.Nil(t, snapshot.ActiveTakeProfit)
+	require.InDelta(t, 10, snapshot.Position.NetQty, 1e-6)
+
+	emitter := &stubEmitter{}
+	tracker.ReconcileTakeProfits(ctx, emitter)
+
+	actions := emitter.Actions()
+	require.Len(t, actions, 1)
+	work := actions[0]
+	require.Equal(t, recomma.ActionCreate, work.Action.Type)
+	require.NotNil(t, work.Action.Create)
+	require.InDelta(t, snapshot.Position.NetQty, work.Action.Create.Size, 1e-6)
+	require.True(t, work.Action.Create.ReduceOnly)
+	require.Equal(t, tpMD.Hex(), work.MD.Hex())
 }
 
 // Helpers

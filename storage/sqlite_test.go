@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log/slog"
+	"sort"
 	"testing"
 	"time"
 
@@ -436,6 +437,47 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	if diff := cmp.Diff(cancelReq, *action.Cancel); diff != "" {
 		t.Fatalf("cancel payload changed at end (-want +got):\n%s", diff)
 	}
+}
+
+func TestStorageListHyperliquidMetadata(t *testing.T) {
+	store := newTestStorage(t)
+	ctx := context.Background()
+
+	md1 := metadata.Metadata{BotID: 1, DealID: 2, BotEventID: 3}
+	md2 := metadata.Metadata{BotID: 4, DealID: 5, BotEventID: 6}
+
+	req := hyperliquid.CreateOrderRequest{
+		Coin:          "ETH",
+		IsBuy:         true,
+		Price:         100,
+		Size:          1,
+		OrderType:     hyperliquid.OrderType{Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc}},
+		ClientOrderID: md1.HexAsPointer(),
+	}
+
+	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, md1, req, 0))
+
+	req2 := req
+	req2.ClientOrderID = md2.HexAsPointer()
+	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, md2, req2, 0))
+
+	// Re-insert md1 with modify to ensure we don't duplicate entries.
+	modify := hyperliquid.ModifyOrderRequest{
+		Oid:   hyperliquid.Cloid{Value: md1.Hex()},
+		Order: req,
+	}
+	require.NoError(t, store.AppendHyperliquidModify(ctx, md1, modify, 0))
+
+	list, err := store.ListHyperliquidMetadata(ctx)
+	require.NoError(t, err)
+
+	require.Len(t, list, 2)
+
+	hexes := []string{list[0].Hex(), list[1].Hex()}
+	expected := []string{md1.Hex(), md2.Hex()}
+	sort.Strings(hexes)
+	sort.Strings(expected)
+	require.Equal(t, expected, hexes)
 }
 
 func ptr[T any](v T) *T {

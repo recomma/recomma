@@ -167,6 +167,11 @@ SELECT
 FROM hyperliquid_submissions
 WHERE md = sqlc.arg(md);
 
+-- name: ListHyperliquidMetadata :many
+SELECT md
+FROM hyperliquid_submissions
+ORDER BY md ASC;
+
 -- name: ListLatestHyperliquidSafetyStatuses :many
 WITH latest_status AS (
     SELECT md, id

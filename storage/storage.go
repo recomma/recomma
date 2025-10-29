@@ -431,6 +431,31 @@ func (s *Storage) ListHyperliquidStatuses(ctx context.Context, md metadata.Metad
 	return out, nil
 }
 
+// ListHyperliquidMetadata returns the metadata fingerprints we have submitted to Hyperliquid.
+func (s *Storage) ListHyperliquidMetadata(ctx context.Context) ([]metadata.Metadata, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.queries.ListHyperliquidMetadata(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]metadata.Metadata, 0, len(rows))
+	for _, hex := range rows {
+		if hex == "" {
+			continue
+		}
+		md, err := metadata.FromHexString(hex)
+		if err != nil {
+			return nil, fmt.Errorf("decode metadata %q: %w", hex, err)
+		}
+		out = append(out, *md)
+	}
+
+	return out, nil
+}
+
 // ListMetadataForDeal returns the distinct metadata fingerprints observed for a deal.
 func (s *Storage) ListMetadataForDeal(ctx context.Context, dealID uint32) ([]metadata.Metadata, error) {
 	s.mu.Lock()

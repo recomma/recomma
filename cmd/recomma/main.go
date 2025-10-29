@@ -220,7 +220,21 @@ func main() {
 		fatal("Could not create Hyperliquid Exchange", err)
 	}
 
+	info := hl.NewInfo(appCtx, hl.ClientConfig{
+		BaseURL: secrets.Secrets.HYPERLIQUIDURL,
+		Wallet:  secrets.Secrets.HYPERLIQUIDWALLET,
+	})
+
 	fillTracker := filltracker.New(store, logger)
+
+	statusRefresher := hl.NewStatusRefresher(info, store,
+		hl.WithStatusRefresherLogger(logger),
+		hl.WithStatusRefresherTracker(fillTracker),
+	)
+	if err := statusRefresher.Refresh(appCtx); err != nil {
+		logger.Warn("status refresher failed", slog.String("error", err.Error()))
+	}
+
 	if err := fillTracker.Rebuild(appCtx); err != nil {
 		logger.Warn("fill tracker rebuild failed", slog.String("error", err.Error()))
 	}

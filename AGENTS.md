@@ -22,7 +22,7 @@
 ## Build & Tooling
 - Go toolchain: `go 1.25.0` (module is `github.com/recomma/recomma`).
 - Primary binary: `go build ./cmd/recomma` or `go run ./cmd/recomma --help`.
-- Codegen: `go generate ./...` runs `oapi-codegen` (OpenAPI -> `internal/api/ops.gen.go`) and `sqlc` (SQL -> `storage/sqlcgen`).
+- Codegen: `go generate` runs `oapi-codegen` (OpenAPI -> `internal/api/ops.gen.go`) and `sqlc` (SQL -> `storage/sqlcgen`).
 - Tests: `go test ./...` (notably in `engine`, `filltracker`, `storage`, `internal/api`).
 - Docker: multi-stage image builds a static binary; `docker-compose.yml` has dev vs. released image profiles.
 - Optional local SDK work: uncomment the `replace` directives in `go.mod` to point at sibling checkouts of `3commas-sdk-go` or `go-hyperliquid`.

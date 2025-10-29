@@ -7,6 +7,7 @@ import { DEFAULT_FETCH_LIMIT } from '../constants';
 import { createOrderQueryParams, extractMetadataFromEvent } from '../utils/queryParams';
 import { getMetadataHex } from '../utils/orderFieldExtractors';
 import { generateMockOrders } from '../mockData';
+import { attachOrderStreamHandlers } from '../../../utils/orderStream';
 
 /**
  * Custom hook to manage orders and deals data fetching with real-time updates
@@ -174,10 +175,12 @@ export function useOrdersData(filters: OrderFilterState) {
 
     let eventSource: EventSource | null = null;
 
+    let detachHandlers: (() => void) | undefined;
+
     try {
       eventSource = new EventSource(url, { withCredentials: true });
 
-      eventSource.onmessage = (event: MessageEvent<string>) => {
+      const handleOrderEvent = (event: MessageEvent<string>) => {
         if (!isActive || !isMountedRef.current) {
           return;
         }
@@ -197,6 +200,7 @@ export function useOrdersData(filters: OrderFilterState) {
         }
       };
 
+      detachHandlers = attachOrderStreamHandlers(eventSource, handleOrderEvent);
       eventSource.onerror = () => {
         eventSource?.close();
       };
@@ -207,6 +211,7 @@ export function useOrdersData(filters: OrderFilterState) {
     return () => {
       isActive = false;
       abortController.abort();
+      detachHandlers?.();
       eventSource?.close();
     };
   }, [fetchOrders, fetchDeals, filters, refreshOrdersForMetadata]);

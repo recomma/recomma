@@ -12,6 +12,11 @@
 - Do **not** rely on `npm run dev`—WebAuthn passkeys require the SPA to share the exact origin/port with the Go binary.
 - During iterative work, use `npm run build -- --watch` (or rerun `npm run build` manually); backend reloads are handled outside the agent workflow.
 
+### Git Submodules
+- Clone with submodules so the 3Commas spec is available: `git clone --recurse-submodules git@github.com:recomma/recomma.git`
+- For existing clones, pull the spec by running: `git submodule update --init --recursive`
+
+
 ## Core Entry Points
 - `src/main.tsx` bootstraps React and injects `App`.
 - `src/App.tsx` orchestrates runtime state:

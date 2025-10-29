@@ -27,6 +27,10 @@
 - Docker: multi-stage image builds a static binary; `docker-compose.yml` has dev vs. released image profiles.
 - Optional local SDK work: uncomment the `replace` directives in `go.mod` to point at sibling checkouts of `3commas-sdk-go` or `go-hyperliquid`.
 
+### Git Submodules
+- Clone with submodules so the 3Commas spec is available: `git clone --recurse-submodules git@github.com:recomma/recomma.git`
+- For existing clones, pull the spec by running: `git submodule update --init --recursive`
+
 ## Configuration & Secrets
 - Flags/env live in `cmd/recomma/internal/config`; every flag has an env fallback (prefix `RECOMMA_...`).
 - Secret material (3Commas, Hyperliquid) is not read from env at runtime; instead the WebAuthn-backed vault stores ciphertext in SQLite and unseals into memory only after login.

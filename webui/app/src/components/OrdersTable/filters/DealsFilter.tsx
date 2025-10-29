@@ -17,6 +17,7 @@ import type {
 } from '../../../types/api';
 import { asRecord, coerceNumber, coerceString } from '../../../types/api';
 import { buildOpsApiUrl } from '../../../config/opsApi';
+import { attachOrderStreamHandlers } from '../../../utils/orderStream';
 
 const pickNumber = (fallback: number, ...values: unknown[]): number => {
   for (const value of values) {
@@ -98,10 +99,13 @@ export function DealsFilter({ selectedBotId, selectedDealId, onBotSelect, onDeal
     const url = buildOpsApiUrl('/sse/orders');
     let eventSource: EventSource | null = null;
 
+    let detachHandlers: (() => void) | undefined;
+
     try {
       eventSource = new EventSource(url, { withCredentials: true });
 
-      eventSource.onmessage = () => {
+      const handleOrderEvent = (_event: MessageEvent<string>) => {
+        void _event;
         if (!isActive || !isMountedRef.current) {
           return;
         }
@@ -113,6 +117,7 @@ export function DealsFilter({ selectedBotId, selectedDealId, onBotSelect, onDeal
         }
       };
 
+      detachHandlers = attachOrderStreamHandlers(eventSource, handleOrderEvent);
       eventSource.onerror = () => {
         eventSource?.close();
       };
@@ -122,6 +127,7 @@ export function DealsFilter({ selectedBotId, selectedDealId, onBotSelect, onDeal
 
     return () => {
       isActive = false;
+      detachHandlers?.();
       eventSource?.close();
     };
   }, [selectedBotId]);

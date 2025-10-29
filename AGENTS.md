@@ -81,3 +81,7 @@
 - Hyperliquid emitter enforces rate limiting and retries price discovery; queue backlog is expected while ratelimited.
 - SSE buffers are finite; dropping events logs a warning—apply backpressure by consuming streams promptly.
 - Keep generated files checked in; CI relies on repo consistency without rerunning `go generate`.
+
+## Commit Messages
+- All PR titles and commit messages must follow the Conventional Commits specification (https://www.conventionalcommits.org/). 
+- Start each message with a valid `<type>[optional scope]:` prefix (e.g. `feat:`, `fix(ui):`, `chore:`), keep the subject in the imperative mood, and use the body for context when needed.

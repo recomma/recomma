@@ -1,9 +1,19 @@
-import { useCallback, useEffect, useState } from 'react';
-import { OrdersTable } from './components/OrdersTable';
+import { useCallback, useEffect, useState, lazy, Suspense } from 'react';
+
+const OrdersTable = lazy(async () => {
+  const mod = await import('./components/OrdersTable');
+  return { default: mod.OrdersTable };
+});
 import { StatsCards } from './components/StatsCards';
 import { Toaster } from './components/ui/sonner';
-import { SetupWizard } from './components/setupwizard/SetupWizard';
-import { Login } from './components/Login';
+const SetupWizard = lazy(async () => {
+  const mod = await import('./components/setupwizard/SetupWizard');
+  return { default: mod.SetupWizard };
+});
+const Login = lazy(async () => {
+  const mod = await import('./components/Login');
+  return { default: mod.Login };
+});
 import type { OrderFilterState, VaultStatus } from './types/api';
 import { buildOpsApiUrl } from './config/opsApi';
 
@@ -75,15 +85,21 @@ export default function App() {
   }
 
   if (!vaultStatus || vaultStatus.state === 'setup_required') {
-    return <SetupWizard onSetupComplete={handleSetupComplete} />;
+    return (
+      <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-gray-50">Loading setup…</div>}>
+        <SetupWizard onSetupComplete={handleSetupComplete} />
+      </Suspense>
+    );
   }
 
   if (vaultStatus.state === 'sealed') {
     return (
+      <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-gray-50">Loading Login</div>}>
       <Login
         initialUsername={vaultStatus.user?.username ?? ''}
         onAuthenticated={fetchVaultStatus}
       />
+      </Suspense>
     );
   }
 
@@ -122,6 +138,7 @@ export default function App() {
         <div className="container mx-auto px-4 py-3 flex-shrink-0">
           <StatsCards />
         </div>
+        <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-gray-50">Loading orders…</div>}>
         <OrdersTable
           filters={filters}
           selectedBotId={selectedBotId}
@@ -130,6 +147,7 @@ export default function App() {
           onDealSelect={handleDealSelect}
           onFiltersChange={setFilters}
         />
+        </Suspense>
       </div>
 
       <Toaster />

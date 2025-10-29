@@ -1,12 +1,11 @@
 
-import { defineConfig } from 'vite';
+import { defineConfig } from "vite";
 import react from '@vitejs/plugin-react-swc';
-import tailwindcss from "@tailwindcss/vite"
-// import eslint from 'vite-plugin-eslint';
+import tailwindcss from "@tailwindcss/vite";
 import path from 'path';
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()], // , eslint()
+  plugins: [react(), tailwindcss()],
   resolve: {
     extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
     alias: {
@@ -59,7 +58,7 @@ export default defineConfig({
     outDir: 'dist',
   },
   esbuild: {
-    keepNames: true,        // preserve function/class names in stacks
+    keepNames: false,        // preserve function/class names in stacks
   },
   server: {
     port: 3000,

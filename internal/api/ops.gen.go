@@ -16,7 +16,7 @@ import (
 
 	"github.com/oapi-codegen/runtime"
 	strictnethttp "github.com/oapi-codegen/runtime/strictmiddleware/nethttp"
-	externalRef0 "github.com/terwey/3commas-sdk-go/threecommas"
+	externalRef0 "github.com/recomma/3commas-sdk-go/threecommas"
 )
 
 const (

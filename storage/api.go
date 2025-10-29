@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
+	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
-	tc "github.com/terwey/3commas-sdk-go/threecommas"
 
 	api "github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/metadata"

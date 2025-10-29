@@ -897,7 +897,7 @@ components:
           type: string
           format: date-time
         payload:
-          $ref: ../3commas/openapi.yaml#/components/schemas/Bot
+          $ref: 3commas-openapi/3commas/openapi.yaml#/components/schemas/Bot
           description: Raw 3Commas bot payload exactly as stored.
 
     DealRecord:
@@ -922,7 +922,7 @@ components:
           type: string
           format: date-time
         payload:
-          $ref: ../3commas/openapi.yaml#/components/schemas/Deal
+          $ref: 3commas-openapi/3commas/openapi.yaml#/components/schemas/Deal
           description: Raw 3Commas deal payload exactly as stored.
 
     OrderRecord:

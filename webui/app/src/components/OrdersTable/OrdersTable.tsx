@@ -433,8 +433,8 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
   const dealHeaderRenderer = useCallback(
     (params: Parameters<typeof DealHeaderRenderer>[0]['params']) => {
       const row = params.row.data;
-      const coin = row?.rowType === 'deal-header' ? row.coin : '';
-      const bbo = coin ? bboPrices.get(coin) : undefined;
+      const dealRow = row?.rowType === 'deal-header' ? row : undefined;
+      const bbo = dealRow ? bboPrices.get(dealRow.coin) : undefined;
 
       return (
         <DealHeaderRenderer

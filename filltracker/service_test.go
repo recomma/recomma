@@ -418,9 +418,9 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 		require.NotNil(t, work.Action.Modify)
 		require.InDelta(t, 15, work.Action.Modify.Order.Size, 1e-6)
 		require.True(t, work.Action.Modify.Order.ReduceOnly)
-		cloid, ok := work.Action.Modify.Oid.(hyperliquid.Cloid)
-		require.True(t, ok, "expected Cloid OID")
-		require.Equal(t, tpMD.Hex(), cloid.Value)
+		oid, ok := work.Action.Modify.Oid.(string)
+		require.True(t, ok, "expected string OID")
+		require.Equal(t, tpMD.Hex(), oid)
 	})
 }
 

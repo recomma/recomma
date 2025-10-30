@@ -250,7 +250,7 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 					return recomma.ErrOrderAlreadySatisfied
 				}
 
-				modifyReq := hyperliquid.ModifyOrderRequest{Oid: hyperliquid.Cloid{Value: w.MD.Hex()}, Order: order}
+				modifyReq := hyperliquid.ModifyOrderRequest{Oid: w.MD.Hex(), Order: order}
 				if err := e.submitModify(ctx, logger, w, modifyReq); err != nil {
 					return err
 				}

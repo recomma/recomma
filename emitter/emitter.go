@@ -174,6 +174,10 @@ func (e *HyperLiquidEmitter) setMarketPrice(ctx context.Context, order hyperliqu
 }
 
 func (e *HyperLiquidEmitter) applyIOCOffset(order hyperliquid.CreateOrderRequest, attempt int) hyperliquid.CreateOrderRequest {
+	if order.OrderType.Limit == nil || order.OrderType.Limit.Tif != hyperliquid.TifIoc {
+		return order
+	}
+
 	if order.Price <= 0 {
 		return order
 	}

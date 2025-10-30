@@ -1025,14 +1025,6 @@ func convertHyperliquidModify(req hyperliquid.ModifyOrderRequest) (HyperliquidMo
 	case float64:
 		v := int64(oid)
 		action.Oid = &v
-	case hyperliquid.Cloid:
-		val := oid.ToRaw()
-		action.ClientOrderId = &val
-	case *hyperliquid.Cloid:
-		if oid != nil {
-			val := oid.ToRaw()
-			action.ClientOrderId = &val
-		}
 	case string:
 		val := oid
 		action.ClientOrderId = &val

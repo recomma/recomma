@@ -3,7 +3,7 @@ module github.com/recomma/recomma
 go 1.25.0
 
 require (
-	github.com/ethereum/go-ethereum v1.16.4
+	github.com/ethereum/go-ethereum v1.16.5
 	github.com/go-webauthn/webauthn v0.14.0
 	github.com/google/go-cmp v0.7.0
 	github.com/oapi-codegen/nullable v1.1.0

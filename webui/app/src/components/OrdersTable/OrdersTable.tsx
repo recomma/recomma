@@ -194,7 +194,7 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
         statusTone: 'neutral' as const,
         historyCount: 0,
         actions: '',
-        coin: '',
+        coin: firstOrder?.coin ?? '',
         isBuy: null,
       };
 
@@ -431,18 +431,29 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
 
   // Deal header renderer
   const dealHeaderRenderer = useCallback(
-    (params: Parameters<typeof DealHeaderRenderer>[0]['params']) => (
-      <DealHeaderRenderer
-        params={params}
-        expandedDeals={expandedDeals}
-        allExpanded={allExpanded}
-        onToggleDeal={toggleDeal}
-        onViewDealDetails={viewDealDetails}
-        onCancelAllOrders={promptCancelAllOrders}
-        onViewBotDetails={viewBotDetails}
-      />
-    ),
-    [expandedDeals, allExpanded, toggleDeal, viewDealDetails, viewBotDetails, promptCancelAllOrders],
+    (params: Parameters<typeof DealHeaderRenderer>[0]['params']) => {
+      const row = params.row.data;
+      const dealRow =
+        row && typeof row === 'object' && 'rowType' in row && (row as TableRow).rowType === 'deal-header'
+          ? (row as DealGroupRow)
+          : undefined;
+      const coin = dealRow?.coin;
+      const bbo = typeof coin === 'string' ? bboPrices.get(coin) : undefined;
+
+      return (
+        <DealHeaderRenderer
+          params={params}
+          expandedDeals={expandedDeals}
+          allExpanded={allExpanded}
+          onToggleDeal={toggleDeal}
+          onViewDealDetails={viewDealDetails}
+          onCancelAllOrders={promptCancelAllOrders}
+          onViewBotDetails={viewBotDetails}
+          bbo={bbo}
+        />
+      );
+    },
+    [expandedDeals, allExpanded, toggleDeal, viewDealDetails, viewBotDetails, promptCancelAllOrders, bboPrices],
   );
 
   const columnDefinitions = useMemo<Record<OrderColumnKey, Column<TableRow>>>(

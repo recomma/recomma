@@ -1,9 +1,9 @@
 import type { CellRendererParams } from '@1771technologies/lytenyte-core/types';
-import { Eye, XCircle, TrendingUp, TrendingDown } from 'lucide-react';
+import { Eye, XCircle, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { Badge } from '../../ui/badge';
 import { Button } from '../../ui/button';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../ui/tooltip';
-import type { OrderRecord } from '../../../types/api';
+import type { HyperliquidBestBidOffer, OrderRecord } from '../../../types/api';
 import type { OrderRow, TableRow } from '../types';
 import { formatPrice, formatQuantity } from '../utils/orderFormatters';
 import { getOrderTypeBadge } from './statusBadges';
@@ -66,7 +66,7 @@ export function sideCellRenderer(params: CellRendererParams<TableRow>) {
 /**
  * Renders price cell with optional BBO market price comparison
  */
-export function createPriceCellRenderer(bboPrices: Map<string, { bid: { price: number }; ask: { price: number } }>) {
+export function createPriceCellRenderer(bboPrices: Map<string, HyperliquidBestBidOffer>) {
   return function priceCellRenderer(params: CellRendererParams<TableRow>) {
     const row = params.row.data;
     if (!row || row.rowType === 'deal-header') {
@@ -79,40 +79,78 @@ export function createPriceCellRenderer(bboPrices: Map<string, { bid: { price: n
     const orderPrice = row.price;
     const isOpen = String(row.status).toLowerCase() === 'open';
     const bbo = bboPrices.get(String(row.coin));
+    const isBuyOrder = typeof row.isBuy === 'boolean' ? row.isBuy : null;
 
-    // Only show market price for open orders with BBO data
-    if (!isOpen || !bbo) {
+    // Only show market price for open orders with BBO data and known side
+    if (!isOpen || !bbo || isBuyOrder === null) {
       return <span className="text-xs text-gray-900">${formatPrice(orderPrice)}</span>;
     }
 
     // Determine market price based on order side
-    const marketPrice = row.isBuy ? bbo.ask.price : bbo.bid.price;
-    const priceDiff = marketPrice - orderPrice;
+    const priceLevel = isBuyOrder ? bbo.ask : bbo.bid;
+    const marketPrice =
+      priceLevel && typeof priceLevel.price === 'number' && Number.isFinite(priceLevel.price)
+        ? priceLevel.price
+        : null;
 
-    // Determine if movement is favorable
-    // For BUY: favorable if ask < order (can buy cheaper)
-    // For SELL: favorable if bid > order (can sell higher)
-    const isFavorable = row.isBuy ? priceDiff < 0 : priceDiff > 0;
+    if (marketPrice === null) {
+      return <span className="text-xs text-gray-900">${formatPrice(orderPrice)}</span>;
+    }
+
+    const priceDiff = marketPrice - orderPrice;
+    const isFavorable = isBuyOrder ? priceDiff < 0 : priceDiff > 0;
+    const isNeutral = priceDiff === 0;
+
+    const ArrowIcon = isNeutral
+      ? Minus
+      : isBuyOrder
+        ? isFavorable
+          ? TrendingDown
+          : TrendingUp
+        : isFavorable
+          ? TrendingUp
+          : TrendingDown;
+
+    const arrowColor = isNeutral
+      ? 'text-gray-500'
+      : isFavorable
+        ? 'text-green-600'
+        : 'text-red-600';
+
+    const label = isBuyOrder ? 'ask' : 'bid';
+    const differenceDirection = priceDiff === 0 ? 'at' : priceDiff > 0 ? 'above' : 'below';
+    const differenceDescription =
+      differenceDirection === 'at'
+        ? 'at the order price'
+        : `${differenceDirection} the order price`;
 
     return (
-      <div className="flex flex-col gap-1">
-        <div className="text-xs text-gray-900 font-medium">
-          ${formatPrice(orderPrice)}
-        </div>
-        <div className={`text-xs flex items-center gap-1 font-medium ${isFavorable ? 'text-green-600' : 'text-red-600'}`}>
-          <span>${formatPrice(marketPrice)}</span>
-          {row.isBuy ? (
-            isFavorable ? (
-              <TrendingDown className="h-3.5 w-3.5" />
-            ) : (
-              <TrendingUp className="h-3.5 w-3.5" />
-            )
-          ) : isFavorable ? (
-            <TrendingUp className="h-3.5 w-3.5" />
-          ) : (
-            <TrendingDown className="h-3.5 w-3.5" />
-          )}
-        </div>
+      <div className="flex items-center gap-1 text-xs font-medium text-gray-900">
+        <span>${formatPrice(orderPrice)}</span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span
+              className={`inline-flex h-4 w-4 items-center justify-center ${arrowColor}`}
+              aria-label={`Market ${label} is ${differenceDescription}`}
+            >
+              <ArrowIcon className="h-3 w-3" />
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="text-xs">
+            <div className="flex flex-col gap-0.5">
+              <span className="font-semibold text-gray-900">
+                Market {label}: ${formatPrice(marketPrice)}
+              </span>
+              {differenceDirection === 'at' ? (
+                <span className="text-gray-600">Matches the order price</span>
+              ) : (
+                <span className="text-gray-600">
+                  {`$${formatPrice(Math.abs(priceDiff))} ${differenceDirection} the order price`}
+                </span>
+              )}
+            </div>
+          </TooltipContent>
+        </Tooltip>
       </div>
     );
   };

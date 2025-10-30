@@ -135,7 +135,20 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 		w.Action.Create = &order
 
 		if status, ok := e.ws.Get(ctx, w.MD); ok && isLiveStatus(status) {
-			if ordersMatch(status, order) {
+			var latestSubmission *hyperliquid.CreateOrderRequest
+			if submission, found, err := e.store.LoadHyperliquidSubmission(ctx, w.MD); err != nil {
+				logger.Warn("could not load latest submission", slog.String("error", err.Error()))
+			} else if found {
+				switch {
+				case submission.Modify != nil:
+					current := submission.Modify.Order
+					latestSubmission = &current
+				case submission.Create != nil:
+					latestSubmission = submission.Create
+				}
+			}
+
+			if ordersMatch(status, latestSubmission, order) {
 				logger.Debug("order already matches desired state; skipping create")
 				return recomma.ErrOrderAlreadySatisfied
 			}
@@ -279,8 +292,11 @@ func isLiveStatus(status *hyperliquid.WsOrder) bool {
 	}
 }
 
-func ordersMatch(status *hyperliquid.WsOrder, desired hyperliquid.CreateOrderRequest) bool {
+func ordersMatch(status *hyperliquid.WsOrder, latestSubmission *hyperliquid.CreateOrderRequest, desired hyperliquid.CreateOrderRequest) bool {
 	if status == nil {
+		return false
+	}
+	if latestSubmission == nil {
 		return false
 	}
 
@@ -315,6 +331,14 @@ func ordersMatch(status *hyperliquid.WsOrder, desired hyperliquid.CreateOrderReq
 		return false
 	}
 
+	if latestSubmission.ReduceOnly != desired.ReduceOnly {
+		return false
+	}
+
+	if !orderTypesMatch(latestSubmission.OrderType, desired.OrderType) {
+		return false
+	}
+
 	return true
 }
 
@@ -322,4 +346,30 @@ const floatEqualityTolerance = 1e-9
 
 func floatEquals(a, b float64) bool {
 	return math.Abs(a-b) <= floatEqualityTolerance
+}
+
+func orderTypesMatch(existing, desired hyperliquid.OrderType) bool {
+	switch {
+	case existing.Limit != nil || desired.Limit != nil:
+		if existing.Limit == nil || desired.Limit == nil {
+			return false
+		}
+		return existing.Limit.Tif == desired.Limit.Tif
+	case existing.Trigger != nil || desired.Trigger != nil:
+		if existing.Trigger == nil || desired.Trigger == nil {
+			return false
+		}
+		if !floatEquals(existing.Trigger.TriggerPx, desired.Trigger.TriggerPx) {
+			return false
+		}
+		if existing.Trigger.IsMarket != desired.Trigger.IsMarket {
+			return false
+		}
+		if existing.Trigger.Tpsl != desired.Trigger.Tpsl {
+			return false
+		}
+		return true
+	default:
+		return true
+	}
 }

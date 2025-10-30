@@ -2,6 +2,7 @@ package recomma
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
@@ -18,6 +19,8 @@ type OrderWork struct {
 type Emitter interface {
 	Emit(ctx context.Context, w OrderWork) error
 }
+
+var ErrOrderAlreadySatisfied = errors.New("recomma: order already satisfies desired state")
 
 type ActionType int
 

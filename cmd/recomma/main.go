@@ -417,6 +417,11 @@ func processOrderItem(
 	logger := rlog.LoggerFromContext(ctx).With("order-work", w)
 	defer oq.Done(w)
 	if err := submitter.Emit(ctx, w); err != nil {
+		if errors.Is(err, recomma.ErrOrderAlreadySatisfied) {
+			logger.Debug("order already satisfied; skipping submission")
+			oq.Forget(w)
+			return
+		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			// Requeue with backoff so transient timeouts or global pacing don't drop work
 			oq.AddRateLimited(w)

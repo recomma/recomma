@@ -104,11 +104,15 @@ export function createPriceCellRenderer(bboPrices: Map<string, HyperliquidBestBi
     const isFavorable = isBuyOrder ? priceDiff < 0 : priceDiff > 0;
 
     return (
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col items-start gap-1 leading-tight">
         <div className="text-xs text-gray-900 font-medium">
           ${formatPrice(orderPrice)}
         </div>
-        <div className={`text-xs flex items-center gap-1 font-medium ${isFavorable ? 'text-green-600' : 'text-red-600'}`}>
+        <div
+          className={`text-xs flex items-center gap-1 font-medium whitespace-nowrap ${
+            isFavorable ? 'text-green-600' : 'text-red-600'
+          }`}
+        >
           <span>${formatPrice(marketPrice)}</span>
           {isBuyOrder ? (
             isFavorable ? (

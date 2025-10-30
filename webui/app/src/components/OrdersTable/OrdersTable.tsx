@@ -72,6 +72,8 @@ import {
 import { DealHeaderRenderer } from './renderers/DealHeaderRenderer';
 import { FilterControls } from './FilterControls';
 
+const ORDER_ROW_HEIGHT = 56;
+
 export interface OrdersTableProps {
   filters: OrderFilterState;
   selectedBotId?: number;
@@ -557,6 +559,7 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
     },
     columnSizeToFit: true,
     rowDataSource: dataSource,
+    rowHeight: ORDER_ROW_HEIGHT,
     rowFullWidthPredicate,
     rowFullWidthRenderer: dealHeaderRenderer,
   });

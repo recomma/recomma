@@ -1,0 +1,40 @@
+= Operations
+:page-role: guide
+
+This runbook summarizes routine operational tasks, troubleshooting tips, and expectations for keeping Recomma healthy.
+
+== Monitoring Checklist
+
+* Watch stdout/stderr logs or your centralized logging stack for `engine`, `emitter`, and `vault` messages.
+* Enable debug logs temporarily by setting `RECOMMA_LOG_LEVEL=debug` when chasing queue behaviour.
+* Track Hyperliquid IOC retries. Informational messages (`IOC did not immediately match; retrying`) are expected; repeated failures warrant investigation of market depth or offset settings.
+
+== Vault Lifecycle
+
+. On process start the vault inspects stored ciphertext. If sealed, worker startup pauses until a WebAuthn session provides decrypted secrets.
+. Users authenticate via passkeys. The browser decrypts ciphertext and provides the secrets over a WebAuthn-secured channel.
+. Reseal or rotate credentials from the UI when revoking access or rotating API keys. The process returns to the sealed state until another passkey login occurs.
+
+== Handling Backlog
+
+* Queue depth grows when Hyperliquid rate limits trigger pacing. This is normal; emitter workers drain the backlog automatically.
+* If backlog persists, verify network connectivity to Hyperliquid and adjust emitter configuration (for example IOC price offset).
+
+== Storage Care
+
+* SQLite files live at `RECOMMA_STORAGE_PATH` (defaults to `./db.sqlite3`). Keep regular backups or snapshots of this path, including WAL files.
+* Generated sqlc code resides under `storage/sqlcgen`; do not edit by hand. Regenerate via `go generate ./...` after schema or query changes.
+
+== Upgrades
+
+. Pull the latest container or rebuild locally.
+. Run database migrations if required (check release notes).
+. Restart the service and perform a vault unseal to resume operations.
+
+== Troubleshooting
+
+*Passkey Fails*:: Confirm the browser origin exactly matches `RECOMMA_PUBLIC_ORIGIN`.
+*Orders Not Mirroring*:: Inspect engine logs for skipped deals, then confirm emitter connectivity to Hyperliquid.
+*Missing SSE Updates*:: Consumers must read streams promptly; slow readers trigger buffer drops logged as warnings.
+
+Reach out to the operations channel with log excerpts and configuration details when issues persist.

@@ -1,0 +1,81 @@
+= Setup
+:page-role: guide
+
+This guide covers what you need before running Recomma and the quickest ways to launch it for evaluation or production.
+
+== Prerequisites
+
+* 3Commas account configured with the bots you want to mirror.
+* Hyperliquid wallet with a funded account and private key.
+* Machine capable of running Docker (Linux, macOS, or Windows using WSL).
+* Stable origin URL (for example `https://recomma.example.com`) that will match the browser address bar. WebAuthn passkeys require an exact origin match.
+
+== Deploy with Docker
+
+. Pull the latest image.
++
+[source,bash]
+----
+docker pull ghcr.io/recomma/recomma:latest
+----
+. Create an `.env` file with your runtime configuration. Adjust paths and listen addresses to match your host.
++
+[source,env]
+----
+RECOMMA_PUBLIC_ORIGIN=https://recomma.example.com
+RECOMMA_HTTP_LISTEN=:8080
+RECOMMA_STORAGE_PATH=/var/lib/recomma/db.sqlite3
+RECOMMA_LOG_LEVEL=info
+RECOMMA_LOG_JSON=true
+RECOMMA_HYPERLIQUID_IOC_OFFSET_BPS=0
+----
+. Run the container.
++
+[source,bash]
+----
+docker run \
+  --env-file .env \
+  -p 8080:8080 \
+  -v $(pwd)/data:/var/lib/recomma \
+  ghcr.io/recomma/recomma:latest
+----
+. Visit the public origin, register a passkey, and paste your 3Commas and Hyperliquid credentials. They are encrypted client-side before storage.
+
+TIP: When operating behind a reverse proxy, set `RECOMMA_PUBLIC_ORIGIN` to the externally visible HTTPS URL. Local testing may use `http://localhost`, but production passkey flows require an exact browser match.
+
+== Using docker-compose
+
+A `docker-compose.yml` file ships with this repository. Use it when you want to build locally or consume the published image alongside additional services.
+
+[source,bash]
+----
+docker compose --profile ghcr up recomma-ghcr
+----
+
+The compose file expects the same environment variables as the single-container example. Ensure `RECOMMA_PUBLIC_ORIGIN` reflects the URL that end users will visit.
+
+== Local Development (Go Toolchain)
+
+. Install Go 1.25 and ensure `$GOBIN` is on your `PATH`.
+. Clone the repository with submodules so the 3Commas OpenAPI spec is available.
++
+[source,bash]
+----
+git clone --recurse-submodules git@github.com:recomma/recomma.git
+----
+. Copy `.env` and tweak listen addresses if you plan to run the binary directly.
+. Build or run the binary after unsealing the vault.
++
+[source,bash]
+----
+go run ./cmd/recomma --public-origin=http://localhost:8080
+----
+. Re-run `go generate ./...` whenever you update `openapi.yaml`, `oapi.yaml`, or any file under `storage/sqlc`.
+
+== Vault Flow Refresher
+
+. Boot the process; it will pause until the vault is unsealed.
+. Register a passkey when prompted.
+. Submit 3Commas and Hyperliquid credentials. They remain encrypted at rest until a future passkey session decrypts them in-memory.
+
+See xref:operations.adoc[Operations] for resealing, rotating credentials, and handling login interruptions.

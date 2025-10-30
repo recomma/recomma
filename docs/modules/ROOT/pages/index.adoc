@@ -1,0 +1,32 @@
+= Recomma
+:description: Overview of the Recomma service and documentation map.
+:page-role: landing
+
+Recomma mirrors 3Commas bot activity onto Hyperliquid while keeping operator credentials sealed behind WebAuthn. This site is the canonical source of truth for how the service is assembled, configured, and maintained.
+
+== Who Should Read This
+
+*Operators*:: People responsible for deploying and monitoring Recomma in production. You will find runtime guidance in the xref:operations.adoc[operations guide].
+*Integrators*:: Engineers extending the system or wiring new workflows. Begin with this overview and the xref:architecture.adoc[architecture notes].
+*Contributors*:: Folks preparing pull requests or documentation updates. Start with the xref:contributors.adoc[contributor workflow].
+
+== What You Will Learn
+
+* The system capabilities and the guarantees it offers around deal replay and vault handling.
+* How to stand up a fresh environment using Docker or local Go tooling.
+* Where state lives (SQLite + embedded vault) and how workers interact through queues.
+* How documentation is organized so future additions slot into Antora without churn.
+
+== Getting Around
+
+xref:setup.adoc[Setup] walks through prerequisites, installation paths, and vault initialization.
+
+xref:architecture.adoc[Architecture] highlights the moving parts (engine, emitter, vault, storage) so you can reason about change impact.
+
+xref:operations.adoc[Operations] is the runbook for day-to-day monitoring, vault reseals, and troubleshooting IOC retries.
+
+xref:contributors.adoc[Contributors] explains expectations for code, docs, and how the README is generated from these sources.
+
+== Next Steps
+
+Skim xref:setup.adoc[Setup] to prepare a dev or production environment, then dive into the sections that match your role.

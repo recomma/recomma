@@ -72,3 +72,7 @@ You can reseal the vault or rotate credentials at any time from the UI. If the p
 - **Binary archives and checksums**: [GitHub Releases](https://github.com/recomma/recomma/releases)
 
 Download the format that suits your setup; every artifact bundles the web UI and API so nothing else is required.
+
+## Documentation
+
+The long-form documentation now lives under `docs/` in AsciiDoc format and is rendered with Antora. Start with `docs/modules/ROOT/pages/index.adoc` for an overview, setup guidance, and contributor workflow. The GitHub README will be generated from these sources once the Antora pipeline lands.

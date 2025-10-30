@@ -72,6 +72,12 @@
 - `cmd/generate` is a helper that dumps captured DB bot events into Go fixtures for deterministic tests (`go run ./cmd/generate <db.sqlite3>`).
 - `internal/testutil` hosts builders for 3Commas bot events.
 
+## Documentation
+- Keep docs-as-code: place updates in AsciiDoc under `docs/modules/ROOT/pages/`.
+- Add new topics as separate pages, then wire them into `docs/modules/ROOT/nav.adoc` so Antora exposes them.
+- Refresh `docs/modules/ROOT/pages/index.adoc` when high-level positioning or quick-start details change; the GitHub README will be generated from these sources.
+- Note any required `go generate ./...` runs when schema or API changes land so the documentation stays tied to regenerated artifacts.
+
 ## Common Agent Tasks
 - **Add/modify API fields**: update `openapi.yaml`, run `go generate ./...`, update handlers/tests accordingly.
 - **Adjust storage queries**: edit `storage/sqlc/schema.sql` or `queries.sql`, run `go generate ./...`, then revise callers.

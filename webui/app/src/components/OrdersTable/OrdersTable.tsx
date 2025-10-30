@@ -72,8 +72,6 @@ import {
 import { DealHeaderRenderer } from './renderers/DealHeaderRenderer';
 import { FilterControls } from './FilterControls';
 
-const ORDER_ROW_HEIGHT = 56;
-
 export interface OrdersTableProps {
   filters: OrderFilterState;
   selectedBotId?: number;
@@ -196,7 +194,7 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
         statusTone: 'neutral' as const,
         historyCount: 0,
         actions: '',
-        coin: '',
+        coin: firstOrder?.coin ?? '',
         isBuy: null,
       };
 
@@ -433,18 +431,25 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
 
   // Deal header renderer
   const dealHeaderRenderer = useCallback(
-    (params: Parameters<typeof DealHeaderRenderer>[0]['params']) => (
-      <DealHeaderRenderer
-        params={params}
-        expandedDeals={expandedDeals}
-        allExpanded={allExpanded}
-        onToggleDeal={toggleDeal}
-        onViewDealDetails={viewDealDetails}
-        onCancelAllOrders={promptCancelAllOrders}
-        onViewBotDetails={viewBotDetails}
-      />
-    ),
-    [expandedDeals, allExpanded, toggleDeal, viewDealDetails, viewBotDetails, promptCancelAllOrders],
+    (params: Parameters<typeof DealHeaderRenderer>[0]['params']) => {
+      const row = params.row.data;
+      const coin = row?.rowType === 'deal-header' ? row.coin : '';
+      const bbo = coin ? bboPrices.get(coin) : undefined;
+
+      return (
+        <DealHeaderRenderer
+          params={params}
+          expandedDeals={expandedDeals}
+          allExpanded={allExpanded}
+          onToggleDeal={toggleDeal}
+          onViewDealDetails={viewDealDetails}
+          onCancelAllOrders={promptCancelAllOrders}
+          onViewBotDetails={viewBotDetails}
+          bbo={bbo}
+        />
+      );
+    },
+    [expandedDeals, allExpanded, toggleDeal, viewDealDetails, viewBotDetails, promptCancelAllOrders, bboPrices],
   );
 
   const columnDefinitions = useMemo<Record<OrderColumnKey, Column<TableRow>>>(
@@ -559,7 +564,6 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
     },
     columnSizeToFit: true,
     rowDataSource: dataSource,
-    rowHeight: ORDER_ROW_HEIGHT,
     rowFullWidthPredicate,
     rowFullWidthRenderer: dealHeaderRenderer,
   });

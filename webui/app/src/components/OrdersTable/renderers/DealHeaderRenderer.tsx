@@ -2,6 +2,8 @@ import type { RowFullWidthRendererParams } from '@1771technologies/lytenyte-core
 import { ChevronDown, ChevronRight, Activity, ExternalLink, Bot as BotIcon, AlertCircle, Eye } from 'lucide-react';
 import { Badge } from '../../ui/badge';
 import { Button } from '../../ui/button';
+import type { HyperliquidBestBidOffer } from '../../../types/api';
+import { formatPrice } from '../utils/orderFormatters';
 import type { DealRecord } from '../../../types/api';
 import type { DealGroupRow, TableRow } from '../types';
 
@@ -13,6 +15,7 @@ interface DealHeaderRendererProps {
   onViewDealDetails: (deal: DealRecord) => void;
   onViewBotDetails: (botId: string) => void;
   onCancelAllOrders: (metadataHashes: Set<string>, dealId: string) => void;
+  bbo?: HyperliquidBestBidOffer;
 }
 
 /**
@@ -26,6 +29,7 @@ export function DealHeaderRenderer({
   onViewDealDetails,
   onViewBotDetails,
   onCancelAllOrders,
+  bbo,
 }: DealHeaderRendererProps) {
   const row = params.row.data;
   if (!row || row.rowType !== 'deal-header') {
@@ -41,6 +45,15 @@ export function DealHeaderRenderer({
   const botUrl = `https://app.3commas.io/bots/${dealRow.botId}`;
 
   const pair = dealPayload?.pair || 'N/A';
+
+  const askPrice =
+    bbo && typeof bbo.ask?.price === 'number' && Number.isFinite(bbo.ask.price)
+      ? bbo.ask.price
+      : null;
+  const bidPrice =
+    bbo && typeof bbo.bid?.price === 'number' && Number.isFinite(bbo.bid.price)
+      ? bbo.bid.price
+      : null;
 
   const openExternal = (url: string) => {
     if (typeof window !== 'undefined') {
@@ -72,6 +85,22 @@ export function DealHeaderRenderer({
             {dealRow.orderCount} orders
           </Badge>
         </div>
+        {(askPrice !== null || bidPrice !== null) && (
+          <div className="flex items-center gap-2 rounded-md bg-gray-50 px-2 py-1 text-[11px] text-gray-600">
+            {askPrice !== null && (
+              <span className="flex items-center gap-1 font-medium text-green-700">
+                BUY
+                <span className="font-semibold text-gray-900">${formatPrice(askPrice)}</span>
+              </span>
+            )}
+            {bidPrice !== null && (
+              <span className="flex items-center gap-1 font-medium text-red-700">
+                SELL
+                <span className="font-semibold text-gray-900">${formatPrice(bidPrice)}</span>
+              </span>
+            )}
+          </div>
+        )}
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
           {deal && (
             <Button

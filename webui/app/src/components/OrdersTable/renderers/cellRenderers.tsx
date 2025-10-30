@@ -1,5 +1,5 @@
 import type { CellRendererParams } from '@1771technologies/lytenyte-core/types';
-import { Eye, XCircle, TrendingUp, TrendingDown } from 'lucide-react';
+import { Eye, XCircle, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { Badge } from '../../ui/badge';
 import { Button } from '../../ui/button';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../ui/tooltip';
@@ -96,36 +96,61 @@ export function createPriceCellRenderer(bboPrices: Map<string, HyperliquidBestBi
     if (marketPrice === null) {
       return <span className="text-xs text-gray-900">${formatPrice(orderPrice)}</span>;
     }
-    const priceDiff = marketPrice - orderPrice;
 
-    // Determine if movement is favorable
-    // For BUY: favorable if ask < order (can buy cheaper)
-    // For SELL: favorable if bid > order (can sell higher)
+    const priceDiff = marketPrice - orderPrice;
     const isFavorable = isBuyOrder ? priceDiff < 0 : priceDiff > 0;
+    const isNeutral = priceDiff === 0;
+
+    const ArrowIcon = isNeutral
+      ? Minus
+      : isBuyOrder
+        ? isFavorable
+          ? TrendingDown
+          : TrendingUp
+        : isFavorable
+          ? TrendingUp
+          : TrendingDown;
+
+    const arrowColor = isNeutral
+      ? 'text-gray-500'
+      : isFavorable
+        ? 'text-green-600'
+        : 'text-red-600';
+
+    const label = isBuyOrder ? 'ask' : 'bid';
+    const differenceDirection = priceDiff === 0 ? 'at' : priceDiff > 0 ? 'above' : 'below';
+    const differenceDescription =
+      differenceDirection === 'at'
+        ? 'at the order price'
+        : `${differenceDirection} the order price`;
 
     return (
-      <div className="flex flex-col items-start gap-1 leading-tight">
-        <div className="text-xs text-gray-900 font-medium">
-          ${formatPrice(orderPrice)}
-        </div>
-        <div
-          className={`text-xs flex items-center gap-1 font-medium whitespace-nowrap ${
-            isFavorable ? 'text-green-600' : 'text-red-600'
-          }`}
-        >
-          <span>${formatPrice(marketPrice)}</span>
-          {isBuyOrder ? (
-            isFavorable ? (
-              <TrendingDown className="h-3.5 w-3.5" />
-            ) : (
-              <TrendingUp className="h-3.5 w-3.5" />
-            )
-          ) : isFavorable ? (
-            <TrendingUp className="h-3.5 w-3.5" />
-          ) : (
-            <TrendingDown className="h-3.5 w-3.5" />
-          )}
-        </div>
+      <div className="flex items-center gap-1 text-xs font-medium text-gray-900">
+        <span>${formatPrice(orderPrice)}</span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span
+              className={`inline-flex h-4 w-4 items-center justify-center ${arrowColor}`}
+              aria-label={`Market ${label} is ${differenceDescription}`}
+            >
+              <ArrowIcon className="h-3 w-3" />
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="text-xs">
+            <div className="flex flex-col gap-0.5">
+              <span className="font-semibold text-gray-900">
+                Market {label}: ${formatPrice(marketPrice)}
+              </span>
+              {differenceDirection === 'at' ? (
+                <span className="text-gray-600">Matches the order price</span>
+              ) : (
+                <span className="text-gray-600">
+                  {`$${formatPrice(Math.abs(priceDiff))} ${differenceDirection} the order price`}
+                </span>
+              )}
+            </div>
+          </TooltipContent>
+        </Tooltip>
       </div>
     );
   };

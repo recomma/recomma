@@ -18,6 +18,8 @@ export function useOrdersData(filters: OrderFilterState) {
   const [loading, setLoading] = useState(true);
 
   const isMountedRef = useRef(false);
+  const initialFetchPendingRef = useRef(false);
+  const pendingFullReloadRef = useRef(false);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -159,7 +161,12 @@ export function useOrdersData(filters: OrderFilterState) {
     const abortController = new AbortController();
     let isActive = true;
 
-    void fetchOrders({ showSpinner: true, signal: abortController.signal });
+    initialFetchPendingRef.current = true;
+    pendingFullReloadRef.current = false;
+
+    void fetchOrders({ showSpinner: true, signal: abortController.signal }).finally(() => {
+      initialFetchPendingRef.current = false;
+    });
     void fetchDeals();
 
     if (typeof window === 'undefined') {
@@ -185,6 +192,12 @@ export function useOrdersData(filters: OrderFilterState) {
           return;
         }
 
+        if (initialFetchPendingRef.current && !abortController.signal.aborted) {
+          initialFetchPendingRef.current = false;
+          pendingFullReloadRef.current = true;
+          abortController.abort();
+        }
+
         const metadata = extractMetadataFromEvent(event.data);
         if (metadata) {
           toast.info(`Order ${metadata} updated`);
@@ -192,11 +205,21 @@ export function useOrdersData(filters: OrderFilterState) {
           toast.info('Order updated in real-time');
         }
 
-        if (metadata) {
-          void refreshOrdersForMetadata(metadata);
-        } else {
+        const runFullReload = () => {
+          pendingFullReloadRef.current = false;
           void fetchOrders({ showSpinner: false });
           void fetchDeals();
+        };
+
+        if (metadata) {
+          const refreshPromise = refreshOrdersForMetadata(metadata);
+          refreshPromise.finally(() => {
+            if (pendingFullReloadRef.current) {
+              runFullReload();
+            }
+          });
+        } else {
+          runFullReload();
         }
       };
 
@@ -210,6 +233,8 @@ export function useOrdersData(filters: OrderFilterState) {
 
     return () => {
       isActive = false;
+      initialFetchPendingRef.current = false;
+      pendingFullReloadRef.current = false;
       abortController.abort();
       detachHandlers?.();
       eventSource?.close();

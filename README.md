@@ -28,6 +28,8 @@ Recomma bridges your 3Commas bots to Hyperliquid. It watches every order 3Commas
    RECOMMA_STORAGE_PATH=/var/lib/recomma/db.sqlite3
    RECOMMA_LOG_LEVEL=info
    RECOMMA_LOG_JSON=true
+   # widen the first IOC price by N basis points when matching against the book
+   RECOMMA_HYPERLIQUID_IOC_OFFSET_BPS=0
    ```
 3. Start the container:
    ```bash
@@ -51,6 +53,12 @@ Copy it next to your `.env`, then launch with:
 docker compose --profile ghcr up recomma-ghcr
 ```
 Mounts and environment variables match the quick-start above, so `RECOMMA_PUBLIC_ORIGIN` still needs to reflect the exact URL you will open in the browser.
+
+## Hyperliquid IOC retry logging
+
+- Immediate-or-cancel orders may miss the book on their first try. When that happens the emitter logs an `INFO` line (`IOC did not immediately match; retrying`) instead of warning, then resubmits up to the configured retry limit.
+- Successful retries emit `Order sent after IOC retries` with the retry count and the last exchange error so operators can see the hiccup without treating it as a failure.
+- Tune the initial price aggressiveness without a redeploy by setting `RECOMMA_HYPERLIQUID_IOC_OFFSET_BPS` to the number of basis points you want added (for buys) or subtracted (for sells) on the first attempt.
 
 ## First Sign-In Flow
 1. Browse to the origin you configured. The wizard asks you to create a passkey (WebAuthn/FIDO2) so only you can unlock the vault.

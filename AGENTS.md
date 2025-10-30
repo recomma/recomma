@@ -1,10 +1,13 @@
 # Recomma Agent Guide
 
 ## TL;DR
-- Go backend that mirrors 3Commas bot activity onto Hyperliquid, guarded by a WebAuthn-sealed secrets vault.
+- Go backend that replays 3Commas bot activity onto Hyperliquid, guarded by a WebAuthn-sealed secrets vault.
 - Main binary lives in `cmd/recomma`; everything else wires queues, storage and API layers to keep state in SQLite.
 - Code generation is handled via `go generate` (OpenAPI + sqlc). Run it after touching `openapi.yaml`, `oapi.yaml`, or files under `storage/sqlc`.
 - Ignore `webui/app`; the compiled assets are embedded via `webui/embed.go`.
+
+## Coding rules
+- An error should never be ignored and always handled or returned to caller.
 
 ## Repository Layout
 - `cmd/recomma/` — entrypoint; parses config, builds services, blocks until the vault is unsealed.
@@ -83,5 +86,5 @@
 - Keep generated files checked in; CI relies on repo consistency without rerunning `go generate`.
 
 ## Commit Messages
-- All PR titles and commit messages must follow the Conventional Commits specification (https://www.conventionalcommits.org/). 
-- Start each message with a valid `<type>[optional scope]:` prefix (e.g. `feat:`, `fix(ui):`, `chore:`), keep the subject in the imperative mood, and use the body for context when needed.
+- All PR titles and commit messages must follow the Conventional Commits specification (https://www.conventionalcommits.org/).
+- Start each message with a valid `<type>[optional scope]:` prefix (e.g. `feat:`, `fix(ui):`, `chore:`), keep the subject in the imperative mood, elaborate in the body.

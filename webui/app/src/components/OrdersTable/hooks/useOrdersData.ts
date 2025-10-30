@@ -18,6 +18,7 @@ export function useOrdersData(filters: OrderFilterState) {
   const [loading, setLoading] = useState(true);
 
   const isMountedRef = useRef(false);
+  const initialFetchPendingRef = useRef(false);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -159,7 +160,11 @@ export function useOrdersData(filters: OrderFilterState) {
     const abortController = new AbortController();
     let isActive = true;
 
-    void fetchOrders({ showSpinner: true, signal: abortController.signal });
+    initialFetchPendingRef.current = true;
+
+    void fetchOrders({ showSpinner: true, signal: abortController.signal }).finally(() => {
+      initialFetchPendingRef.current = false;
+    });
     void fetchDeals();
 
     if (typeof window === 'undefined') {
@@ -183,6 +188,11 @@ export function useOrdersData(filters: OrderFilterState) {
       const handleOrderEvent = (event: MessageEvent<string>) => {
         if (!isActive || !isMountedRef.current) {
           return;
+        }
+
+        if (initialFetchPendingRef.current && !abortController.signal.aborted) {
+          initialFetchPendingRef.current = false;
+          abortController.abort();
         }
 
         const metadata = extractMetadataFromEvent(event.data);
@@ -210,6 +220,7 @@ export function useOrdersData(filters: OrderFilterState) {
 
     return () => {
       isActive = false;
+      initialFetchPendingRef.current = false;
       abortController.abort();
       detachHandlers?.();
       eventSource?.close();

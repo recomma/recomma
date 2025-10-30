@@ -19,6 +19,7 @@ export function useOrdersData(filters: OrderFilterState) {
 
   const isMountedRef = useRef(false);
   const initialFetchPendingRef = useRef(false);
+  const pendingFullReloadRef = useRef(false);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -161,6 +162,7 @@ export function useOrdersData(filters: OrderFilterState) {
     let isActive = true;
 
     initialFetchPendingRef.current = true;
+    pendingFullReloadRef.current = false;
 
     void fetchOrders({ showSpinner: true, signal: abortController.signal }).finally(() => {
       initialFetchPendingRef.current = false;
@@ -192,6 +194,7 @@ export function useOrdersData(filters: OrderFilterState) {
 
         if (initialFetchPendingRef.current && !abortController.signal.aborted) {
           initialFetchPendingRef.current = false;
+          pendingFullReloadRef.current = true;
           abortController.abort();
         }
 
@@ -202,11 +205,21 @@ export function useOrdersData(filters: OrderFilterState) {
           toast.info('Order updated in real-time');
         }
 
-        if (metadata) {
-          void refreshOrdersForMetadata(metadata);
-        } else {
+        const runFullReload = () => {
+          pendingFullReloadRef.current = false;
           void fetchOrders({ showSpinner: false });
           void fetchDeals();
+        };
+
+        if (metadata) {
+          const refreshPromise = refreshOrdersForMetadata(metadata);
+          refreshPromise.finally(() => {
+            if (pendingFullReloadRef.current) {
+              runFullReload();
+            }
+          });
+        } else {
+          runFullReload();
         }
       };
 
@@ -221,6 +234,7 @@ export function useOrdersData(filters: OrderFilterState) {
     return () => {
       isActive = false;
       initialFetchPendingRef.current = false;
+      pendingFullReloadRef.current = false;
       abortController.abort();
       detachHandlers?.();
       eventSource?.close();

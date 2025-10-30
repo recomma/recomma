@@ -1,0 +1,44 @@
+= Architecture
+:page-role: concept
+
+Recomma is composed of cooperating services that replay 3Commas bot actions onto Hyperliquid while guarding encrypted secrets. Each major package aligns with a runtime responsibility.
+
+== High-Level Flow
+
+. `cmd/recomma` parses configuration, wires dependencies, and blocks until the vault is unsealed.
+. The vault (xref:operations.adoc#vault[Vault lifecycle]) exposes decrypted credentials in memory only after a WebAuthn ceremony.
+. The engine polls 3Commas, diffs bot deals, and enqueues work items.
+. Emitters pace Hyperliquid API calls, retry IOC orders, and surface status events.
+. Storage persists bot history, Hyperliquid submissions, and vault ciphertext in SQLite while fanning out stream events to API consumers.
+. The web API and embedded UI expose monitoring, manual actions, and SSE streams.
+
+== Packages and Responsibilities
+
+`engine/`:: Polls 3Commas bots, records deals, and queues work for processing.
+`emitter/`:: Contains queue-backed forwarders, including the Hyperliquid client wrapper with pacing and retry controls.
+`filltracker/`:: Rebuilds fill state to manage take-profit cleanup and expose API snapshots.
+`hl/`:: Helper layer around Hyperliquid REST and websocket clients.
+`internal/api/`:: OpenAPI-generated handlers, SSE plumbing, and WebAuthn glue.
+`internal/vault/`:: State machine that governs startup and keeps decrypted secrets ephemeral.
+`storage/`:: Sqlc-generated accessors for SQLite schema, encapsulating persistence and SSE publication hooks.
+`recomma/`:: Shared types consumed across worker packages.
+
+== Data and Eventing
+
+*SQLite schema*:: `storage/sqlc/schema.sql` defines all persisted objects, including bots, deals, Hyperliquid submissions, vault payloads, and credentials.
+*SSE Streams*:: Storage methods emit `StreamEvent`s. The API fan-outs updates so the UI and auxiliary services can react without polling.
+*Work Queues*:: Deal and order queues drive goroutine workers that keep the Hyperliquid mirror in sync while respecting venue rate limits.
+
+== Code Generation
+
+`go generate ./...` runs both OpenAPI and sqlc generation. Always commit generated files so CI and other operators stay in sync.
+
+== Documentation Strategy
+
+This Antora component mirrors repository concepts. When you add a subsystem:
+
+* Document the intent in a dedicated page under `modules/ROOT/pages/`.
+* Reference code or configuration files with relative paths (for example `engine/poller.go`).
+* Update `nav.adoc` so the new page appears in the rendered sidebar.
+
+xref:contributors.adoc[Contributors] spells out guidelines for updating docs alongside code changes.

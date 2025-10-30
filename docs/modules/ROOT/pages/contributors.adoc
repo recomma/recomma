@@ -1,0 +1,37 @@
+= Contributors
+:page-role: reference
+
+Recomma follows a docs-as-code workflow. Keep these guidelines in mind when preparing changes.
+
+== Documentation Workflow
+
+* Add or update pages under `docs/modules/ROOT/pages/`.
+* Refresh the navigation (`docs/modules/ROOT/nav.adoc`) when new pages should appear in the rendered sidebar.
+* Prefer concise sections with anchored headings so other teams can deep-link into specific guidance.
+* Always mention when generated artefacts (`internal/api/ops.gen.go`, `storage/sqlcgen`) require regeneration.
+
+== Converting Docs to README
+
+The repository README will eventually be rendered from these sources. Until Antora publishing is automated:
+
+. Maintain the canonical overview inside `docs/modules/ROOT/pages/index.adoc` and related pages.
+. When preparing a release, export a Markdown version for GitHub using Asciidoctor or Antora's site output. A quick local option is:
++
+[source,bash]
+----
+asciidoctor -b docbook5 -a leveloffset=+1 docs/modules/ROOT/pages/index.adoc -o README.html
+pandoc README.html -f docbook -t gfm -o README.md
+----
+. Review the generated README to ensure anchors and callouts render as expected in GitHub.
+
+We will replace the manual conversion with an Antora + GitHub Actions workflow that publishes HTML docs and refreshes `README.md` automatically.
+
+== Coding Standards
+
+* Target Go 1.25; run `go fmt` and `go test ./...` before submitting patches.
+* Do not ignore errors—return them or handle explicitly.
+* Generated files stay checked into version control.
+
+== Commit Messages
+
+Follow Conventional Commits, e.g. `docs: add setup guide`. Keep the subject in the imperative mood and explain context in the body when necessary.

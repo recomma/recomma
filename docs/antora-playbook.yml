@@ -1,0 +1,13 @@
+site:
+  title: Recomma Documentation
+  start_page: recomma::index.adoc
+content:
+  sources:
+  - url: ..
+    start_path: docs
+    branches: HEAD
+    worktree: true
+ui:
+  bundle:
+    url: https://gitlab.com/antora/antora-ui-default/-/jobs/artifacts/HEAD/raw/build/ui-bundle.zip?job=bundle-stable
+    snapshot: true

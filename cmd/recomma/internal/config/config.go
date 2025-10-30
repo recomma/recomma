@@ -13,25 +13,27 @@ import (
 )
 
 type AppConfig struct {
-	StoragePath    string
-	DealWorkers    int
-	OrderWorkers   int
-	ResyncInterval time.Duration
-	HTTPListen     string
-	PublicOrigin   string
-	LogLevel       string
-	LogFormatJSON  bool
+	StoragePath                    string
+	DealWorkers                    int
+	OrderWorkers                   int
+	ResyncInterval                 time.Duration
+	HTTPListen                     string
+	PublicOrigin                   string
+	LogLevel                       string
+	LogFormatJSON                  bool
+	HyperliquidIOCInitialOffsetBps float64
 }
 
 func DefaultConfig() AppConfig {
 	return AppConfig{
-		StoragePath:    "db.sqlite3",
-		DealWorkers:    25,
-		OrderWorkers:   5,
-		ResyncInterval: 15 * time.Second,
-		HTTPListen:     ":8080",
-		LogLevel:       "info",
-		LogFormatJSON:  false,
+		StoragePath:                    "db.sqlite3",
+		DealWorkers:                    25,
+		OrderWorkers:                   5,
+		ResyncInterval:                 15 * time.Second,
+		HTTPListen:                     ":8080",
+		LogLevel:                       "info",
+		LogFormatJSON:                  false,
+		HyperliquidIOCInitialOffsetBps: 0,
 	}
 }
 
@@ -48,6 +50,7 @@ func NewConfigFlagSet(cfg *AppConfig) *pflag.FlagSet {
 	fs.StringVar(&cfg.PublicOrigin, "public-origin", cfg.PublicOrigin, "Public origin served to clients (env: RECOMMA_PUBLIC_ORIGIN)")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "Log level (env: RECOMMA_LOG_LEVEL)")
 	fs.BoolVar(&cfg.LogFormatJSON, "log-json", cfg.LogFormatJSON, "Emit logs as JSON (env: RECOMMA_LOG_JSON)")
+	fs.Float64Var(&cfg.HyperliquidIOCInitialOffsetBps, "hyperliquid-ioc-offset-bps", cfg.HyperliquidIOCInitialOffsetBps, "Basis points to widen the first IOC price check (env: RECOMMA_HYPERLIQUID_IOC_OFFSET_BPS)")
 
 	return fs
 }
@@ -85,6 +88,16 @@ func ApplyEnvDefaults(fs *pflag.FlagSet, cfg *AppConfig) error {
 			}
 		}
 	}
+	setFloat := func(name, envKey string, target *float64) {
+		if _, ok := flagSet[name]; ok {
+			return
+		}
+		if v, ok := os.LookupEnv(envKey); ok {
+			if parsed, err := strconv.ParseFloat(v, 64); err == nil {
+				*target = parsed
+			}
+		}
+	}
 	setDuration := func(name, envKey string, target *time.Duration) {
 		if _, ok := flagSet[name]; ok {
 			return
@@ -104,6 +117,7 @@ func ApplyEnvDefaults(fs *pflag.FlagSet, cfg *AppConfig) error {
 	setString("public-origin", "RECOMMA_PUBLIC_ORIGIN", &cfg.PublicOrigin)
 	setString("log-level", "RECOMMA_LOG_LEVEL", &cfg.LogLevel)
 	setBool("log-json", "RECOMMA_LOG_JSON", &cfg.LogFormatJSON)
+	setFloat("hyperliquid-ioc-offset-bps", "RECOMMA_HYPERLIQUID_IOC_OFFSET_BPS", &cfg.HyperliquidIOCInitialOffsetBps)
 
 	return nil
 }

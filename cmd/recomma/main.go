@@ -274,7 +274,11 @@ func main() {
 		engine.WithFillTracker(fillTracker),
 	)
 
-	submitter := emitter.NewHyperLiquidEmitter(exchange, ws, store)
+	submitter := emitter.NewHyperLiquidEmitter(exchange, ws, store,
+		emitter.WithHyperLiquidEmitterConfig(emitter.HyperLiquidEmitterConfig{
+			InitialIOCOffsetBps: cfg.HyperliquidIOCInitialOffsetBps,
+		}),
+	)
 
 	var wg sync.WaitGroup
 	for i := 0; i < cfg.OrderWorkers; i++ {

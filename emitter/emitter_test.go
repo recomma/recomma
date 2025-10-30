@@ -161,6 +161,28 @@ func TestHyperLiquidEmitterIOCRetriesWarnOnFailure(t *testing.T) {
 	require.Equal(t, 1, warnCount, "expected a single warning when retries exhaust")
 }
 
+func TestApplyIOCOffsetIgnoresNonIOCOrders(t *testing.T) {
+	t.Parallel()
+
+	emitter := NewHyperLiquidEmitter(&stubExchange{}, nil, newTestStore(t),
+		WithHyperLiquidEmitterConfig(HyperLiquidEmitterConfig{
+			InitialIOCOffsetBps: 25,
+		}),
+	)
+
+	order := hyperliquid.CreateOrderRequest{
+		Coin:  "DOGE",
+		IsBuy: true,
+		Price: 0.12,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
+		},
+	}
+
+	adjusted := emitter.applyIOCOffset(order, 0)
+	require.Equal(t, order.Price, adjusted.Price, "non-IOC orders must not receive an offset bump")
+}
+
 type logEntry struct {
 	Level   string
 	Message string

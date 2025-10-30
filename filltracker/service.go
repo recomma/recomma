@@ -292,8 +292,19 @@ func (s *Service) emitOrderWork(
 		slog.Float64("target_qty", qty),
 	}
 
+	performed := true
+	if err != nil && errors.Is(err, recomma.ErrOrderAlreadySatisfied) {
+		performed = false
+		err = nil
+	}
+
 	if err != nil {
 		s.logger.Warn(logMsg+" failed", append(fields, slog.String("error", err.Error()))...)
+		return false
+	}
+
+	if !performed {
+		s.logger.Debug(logMsg+" skipped", append(fields, slog.String("reason", "order already satisfied"))...)
 		return false
 	}
 

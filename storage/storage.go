@@ -21,8 +21,6 @@ import (
 	hyperliquid "github.com/sonirico/go-hyperliquid"
 )
 
-//go:generate sqlc generate
-
 //go:embed sqlc/schema.sql
 var schemaDDL string
 

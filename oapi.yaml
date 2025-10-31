@@ -10,4 +10,5 @@ generate:
   embedded-spec: false
 import-mapping:
   3commas-openapi/3commas/openapi.yaml: github.com/recomma/3commas-sdk-go/threecommas
-output: internal/api/ops.gen.go
+# path is relative to where it was called from
+output: ../../internal/api/ops.gen.go

@@ -19,8 +19,9 @@
 - `internal/api/` — OpenAPI-generated handler + glue for WebAuthn, vault lifecycle, SSE streams.
 - `internal/vault/` — in-memory state machine that gates startup and keeps decrypted secrets ephemeral.
 - `recomma/` — shared types used across engine/emitter/storage.
-- `tasks/` — design docs for larger efforts (e.g., vault design).
 - `docker/`, `Dockerfile*`, `docker-compose.yml` — container builds and local dev wiring.
+- `specs/` — design docs for larger efforts (e.g., vault design) in AsciiDoc (can be linked from Antora)
+- `docs/` Antora / AsciiDoc public facing documentation
 
 ## Build & Tooling
 - Go toolchain: `go 1.25.0` (module is `github.com/recomma/recomma`).

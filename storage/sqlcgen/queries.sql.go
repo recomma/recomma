@@ -921,6 +921,64 @@ func (q *Queries) ListLatestHyperliquidSafetyStatuses(ctx context.Context, dealI
 	return items, nil
 }
 
+const listLatestTakeProfitStackSizes = `-- name: ListLatestTakeProfitStackSizes :many
+WITH ranked AS (
+    SELECT
+        CAST(json_extract(payload, '$.OrderPosition') AS INTEGER) AS order_position,
+        CAST(json_extract(payload, '$.OrderSize') AS INTEGER) AS order_size,
+        CAST(json_extract(payload, '$.Size') AS REAL) AS size,
+        created_at_utc,
+        id,
+        ROW_NUMBER() OVER (
+            PARTITION BY CAST(json_extract(payload, '$.OrderPosition') AS INTEGER)
+            ORDER BY created_at_utc DESC, id DESC
+        ) AS rn
+    FROM threecommas_botevents
+    WHERE deal_id = ?1
+      AND CAST(json_extract(payload, '$.OrderType') AS TEXT) = 'Take Profit'
+      AND CAST(json_extract(payload, '$.OrderSize') AS INTEGER) = CAST(?2 AS INTEGER)
+)
+SELECT
+    order_position,
+    size
+FROM ranked
+WHERE rn = 1
+ORDER BY order_position ASC
+`
+
+type ListLatestTakeProfitStackSizesParams struct {
+	DealID    int64 `json:"deal_id"`
+	OrderSize int64 `json:"order_size"`
+}
+
+type ListLatestTakeProfitStackSizesRow struct {
+	OrderPosition int64   `json:"order_position"`
+	Size          float64 `json:"size"`
+}
+
+func (q *Queries) ListLatestTakeProfitStackSizes(ctx context.Context, arg ListLatestTakeProfitStackSizesParams) ([]ListLatestTakeProfitStackSizesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listLatestTakeProfitStackSizes, arg.DealID, arg.OrderSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLatestTakeProfitStackSizesRow
+	for rows.Next() {
+		var i ListLatestTakeProfitStackSizesRow
+		if err := rows.Scan(&i.OrderPosition, &i.Size); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listScaledOrderAuditsForMetadata = `-- name: ListScaledOrderAuditsForMetadata :many
 SELECT
     id,

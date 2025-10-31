@@ -414,7 +414,7 @@ WITH ranked AS (
     FROM threecommas_botevents
     WHERE deal_id = sqlc.arg(deal_id)
       AND CAST(json_extract(payload, '$.OrderType') AS TEXT) = 'Take Profit'
-      AND CAST(json_extract(payload, '$.OrderSize') AS INTEGER) = sqlc.arg(order_size)
+      AND CAST(json_extract(payload, '$.OrderSize') AS INTEGER) = CAST(sqlc.arg(order_size) AS INTEGER)
 )
 SELECT
     order_position,

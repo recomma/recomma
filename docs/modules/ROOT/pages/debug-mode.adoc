@@ -1,0 +1,64 @@
+= Debug mode
+:page-role: guide
+
+This page explains how developers can exercise the Recomma binary without completing the normal WebAuthn vault ceremony. Debug mode is designed for local experiments, feature development, and automated tests. It should never be enabled in environments that handle real funds.
+
+== What debug mode does
+
+Debug mode pretends that a vault user already completed enrollment and injected secrets into the controller. When `--debug` (or `RECOMMA_DEBUG=true`) is set and the expected environment variables are present, the process:
+
+* seeds the vault controller with the supplied credential bundle and immediately transitions the state machine to *Unsealed*;
+* skips the WebAuthn flow and session cookie checks so API endpoints stay usable during local runs;
+* publishes `DEBUG_LOGS` to the Web UI runtime config, enabling additional console output; and
+* advertises `debug_mode: true` through the `/api/v1/vault/status` response so tools can detect the relaxed authentication requirements.
+
+Important: the controller still waits for the unseal signal. Because the secrets are preloaded, the wait completes as soon as the controller processes the injected state. No changes are required to the main startup flow.
+
+== Required environment variables
+
+Provide the same secrets you would normally store through the vault, but via environment variables that start with `RECOMMA_DEBUG_`. All of them are required; the process aborts if any value is missing or empty.
+
+[cols="1,3",options="header"]
+|===
+| Variable | Purpose
+| `RECOMMA_DEBUG_THREECOMMAS_API_KEY` | Public API key for 3Commas requests.
+| `RECOMMA_DEBUG_THREECOMMAS_PRIVATE_KEY` | PEM-encoded private key that signs 3Commas requests.
+| `RECOMMA_DEBUG_HYPERLIQUID_WALLET` | Hyperliquid wallet address used for submissions and subscriptions.
+| `RECOMMA_DEBUG_HYPERLIQUID_PRIVATE_KEY` | Hyperliquid signing key corresponding to the debug wallet.
+| `RECOMMA_DEBUG_HYPERLIQUID_URL` | Base URL for the Hyperliquid endpoint (for example `https://api.hyperliquid.xyz`). Must be a valid URL.
+|===
+
+Each variable is trimmed before use. URL validation rejects obvious typos to avoid confusing connection errors later in startup.
+
+== Enabling debug mode
+
+. Export the required environment variables. Store development-only credentials in a `.env.debug` file or your shell profile. Never reuse production keys.
+. Launch the binary with the flag or environment toggle:
++
+[source,bash]
+----
+RECOMMA_DEBUG=true \
+RECOMMA_DEBUG_THREECOMMAS_API_KEY=... \
+RECOMMA_DEBUG_THREECOMMAS_PRIVATE_KEY="$(cat private.pem)" \
+RECOMMA_DEBUG_HYPERLIQUID_WALLET=... \
+RECOMMA_DEBUG_HYPERLIQUID_PRIVATE_KEY=... \
+RECOMMA_DEBUG_HYPERLIQUID_URL=https://example.hyperliquid.dev \
+go run ./cmd/recomma --public-origin=http://localhost:8080
+----
+. Open the Web UI. It will behave as if you already authenticated: vault status shows `debug_mode: true` and the API skips session cookies.
+
+TIP: When scripting tests, inject the environment variables directly into the process instead of writing them to disk.
+
+== Interacting with the API in debug mode
+
+* Session cookies are no longer required because `requireSession` short-circuits when debug mode is active. You can call authenticated endpoints directly with `curl` or Postman.
+* The embedded Web UI exposes `DEBUG_LOGS` in `/config.js`, so you can toggle verbose browser logging if the SPA supports it.
+* The vault status endpoint signals debug mode so that test harnesses can assert they are running against a relaxed environment.
+
+== Limitations and cautions
+
+* Secrets stay in memory for the entire process lifetime. There is no reseal flow or passkey protection.
+* The injected user has the hard-coded username `debug` and an ID of `0`. Features that rely on real user metadata may need additional scaffolding when tested in debug mode.
+* This mode bypasses the strongest security guarantees of Recomma. Keep it behind firewalls and avoid connecting wallets with transferable value.
+
+Disable debug mode and restart the binary when you are ready to return to normal operations.

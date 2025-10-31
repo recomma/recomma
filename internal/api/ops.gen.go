@@ -623,6 +623,9 @@ type VaultState string
 
 // VaultStatus defines model for VaultStatus.
 type VaultStatus struct {
+	// DebugMode Indicates whether the server is running in debug mode.
+	DebugMode *bool `json:"debug_mode,omitempty"`
+
 	// SealedAt Last time the vault entered the sealed state.
 	SealedAt *time.Time `json:"sealed_at"`
 

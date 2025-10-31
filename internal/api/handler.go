@@ -57,6 +57,7 @@ type ApiHandler struct {
 	webauthn *WebAuthnService
 	vault    *vault.Controller
 	session  *vaultSessionManager
+	debug    bool
 
 	orderScalerMaxMultiplier float64
 	orders                   recomma.Emitter
@@ -163,6 +164,13 @@ func WithOrderScalerMaxMultiplier(max float64) HandlerOption {
 		if max > 0 {
 			h.orderScalerMaxMultiplier = max
 		}
+	}
+}
+
+// WithDebugMode toggles debug behaviour for the handler.
+func WithDebugMode(enabled bool) HandlerOption {
+	return func(h *ApiHandler) {
+		h.debug = enabled
 	}
 }
 

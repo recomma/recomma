@@ -67,6 +67,8 @@ func main() {
 	slog.SetDefault(logger)
 	log.SetOutput(slog.NewLogLogger(logger.Handler(), slog.LevelDebug).Writer())
 
+	webui.SetDebug(cfg.Debug)
+
 	appCtx = rlog.ContextWithLogger(appCtx, logger)
 
 	streamController := api.NewStreamController(api.WithStreamLogger(logger))
@@ -89,21 +91,38 @@ func main() {
 	initialVaultState := vault.StateSetupRequired
 	var controllerOpts []vault.ControllerOption
 
-	existingUser, err := store.GetVaultUser(appCtx)
-	if err != nil {
-		fatal("load vault user", err)
-	}
-	if existingUser != nil {
-		controllerOpts = append(controllerOpts, vault.WithInitialUser(existingUser))
-
-		payload, err := store.GetVaultPayloadForUser(appCtx, existingUser.ID)
+	if cfg.Debug {
+		secrets, err := loadDebugSecretsFromEnv()
 		if err != nil {
-			fatal("load vault payload", err)
+			fatal("load debug secrets", err)
 		}
-		if payload != nil {
-			initialVaultState = vault.StateSealed
-			sealedAt := payload.UpdatedAt
-			controllerOpts = append(controllerOpts, vault.WithInitialTimestamps(&sealedAt, nil, nil))
+		now := secrets.ReceivedAt
+		if now.IsZero() {
+			now = time.Now().UTC()
+		}
+		controllerOpts = append(controllerOpts,
+			vault.WithInitialSecrets(secrets),
+			vault.WithInitialUser(debugUser(now)),
+			vault.WithInitialTimestamps(nil, &now, nil),
+		)
+		initialVaultState = vault.StateUnsealed
+	} else {
+		existingUser, err := store.GetVaultUser(appCtx)
+		if err != nil {
+			fatal("load vault user", err)
+		}
+		if existingUser != nil {
+			controllerOpts = append(controllerOpts, vault.WithInitialUser(existingUser))
+
+			payload, err := store.GetVaultPayloadForUser(appCtx, existingUser.ID)
+			if err != nil {
+				fatal("load vault payload", err)
+			}
+			if payload != nil {
+				initialVaultState = vault.StateSealed
+				sealedAt := payload.UpdatedAt
+				controllerOpts = append(controllerOpts, vault.WithInitialTimestamps(&sealedAt, nil, nil))
+			}
 		}
 	}
 
@@ -122,6 +141,7 @@ func main() {
 		api.WithWebAuthnService(webAuthApi),
 		api.WithVaultController(vaultController),
 		api.WithOrderScalerMaxMultiplier(cfg.OrderScalerMaxMultiplier),
+		api.WithDebugMode(cfg.Debug),
 	)
 
 	strictServer := api.NewStrictHandler(apiHandler, []api.StrictMiddlewareFunc{
@@ -199,8 +219,11 @@ func main() {
 		}
 	}
 
-	// we can now access the secrets
 	secrets := vaultController.Secrets()
+
+	if secrets == nil {
+		fatal("vault secrets unavailable", errors.New("vault secrets unavailable"))
+	}
 
 	client, err := tc.New3CommasClient(tc.ClientConfig{
 		APIKey:     secrets.Secrets.THREECOMMASAPIKEY,

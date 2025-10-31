@@ -1005,6 +1005,9 @@ components:
           format: date-time
           nullable: true
           description: Session expiry for the current user when unsealed.
+        debug_mode:
+          type: boolean
+          description: Indicates whether the server is running in debug mode.
 
     VaultEncryptedPayload:
       type: object

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 
 	"github.com/vearutop/statigz"
 	"github.com/vearutop/statigz/brotli"
@@ -20,8 +21,13 @@ var (
 	//go:embed app/dist/*
 	content embed.FS
 	distFS  = mustSubFS(content, "app/dist")
-	debug   = false
+	debug   atomic.Bool
 )
+
+// SetDebug toggles debug mode for runtime config exposure.
+func SetDebug(enabled bool) {
+	debug.Store(enabled)
+}
 
 func FS() fs.FS {
 	return distFS
@@ -50,9 +56,9 @@ func Handler(listen string, publicOrigin string, tls bool) http.Handler {
 }
 
 func configHandler(origin string) http.Handler {
-	script := fmt.Sprintf("window.__RECOMMA_CONFIG__ = { OPS_API_ORIGIN: %q, DEBUG_LOGS: %t };\n", origin, debug)
-
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		enabled := debug.Load()
+		script := fmt.Sprintf("window.__RECOMMA_CONFIG__ = { OPS_API_ORIGIN: %q, DEBUG_LOGS: %t, DEBUG_MODE: %t };\n", origin, enabled, enabled)
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = io.WriteString(w, script)

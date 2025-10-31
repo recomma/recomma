@@ -399,6 +399,30 @@ WHERE deal_id = sqlc.arg(deal_id)
 ORDER BY created_at_utc DESC
 LIMIT 1;
 
+-- name: ListLatestTakeProfitStackSizes :many
+WITH ranked AS (
+    SELECT
+        CAST(json_extract(payload, '$.OrderPosition') AS INTEGER) AS order_position,
+        CAST(json_extract(payload, '$.OrderSize') AS INTEGER) AS order_size,
+        CAST(json_extract(payload, '$.Size') AS REAL) AS size,
+        created_at_utc,
+        id,
+        ROW_NUMBER() OVER (
+            PARTITION BY CAST(json_extract(payload, '$.OrderPosition') AS INTEGER)
+            ORDER BY created_at_utc DESC, id DESC
+        ) AS rn
+    FROM threecommas_botevents
+    WHERE deal_id = sqlc.arg(deal_id)
+      AND CAST(json_extract(payload, '$.OrderType') AS TEXT) = 'Take Profit'
+      AND CAST(json_extract(payload, '$.OrderSize') AS INTEGER) = sqlc.arg(order_size)
+)
+SELECT
+    order_position,
+    size
+FROM ranked
+WHERE rn = 1
+ORDER BY order_position ASC;
+
 -- Vault management
 
 -- name: EnsureVaultUser :one

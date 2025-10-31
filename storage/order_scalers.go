@@ -155,6 +155,61 @@ func (s *Storage) ResolveEffectiveOrderScaler(ctx context.Context, md metadata.M
 	return effective, nil
 }
 
+func (s *Storage) ListTakeProfitStackSizes(ctx context.Context, md metadata.Metadata, stackSize int) ([]float64, error) {
+	if stackSize <= 0 {
+		return nil, fmt.Errorf("stack size must be positive")
+	}
+
+	const query = `
+WITH ranked AS (
+    SELECT
+        CAST(json_extract(payload, '$.OrderPosition') AS INTEGER) AS order_position,
+        CAST(json_extract(payload, '$.OrderSize') AS INTEGER) AS order_size,
+        CAST(json_extract(payload, '$.Size') AS REAL) AS size,
+        created_at_utc,
+        id,
+        ROW_NUMBER() OVER (
+            PARTITION BY CAST(json_extract(payload, '$.OrderPosition') AS INTEGER)
+            ORDER BY created_at_utc DESC, id DESC
+        ) AS rn
+    FROM threecommas_botevents
+    WHERE deal_id = ?
+      AND CAST(json_extract(payload, '$.OrderType') AS TEXT) = 'Take Profit'
+      AND CAST(json_extract(payload, '$.OrderSize') AS INTEGER) = ?
+)
+SELECT order_position, size
+FROM ranked
+WHERE rn = 1
+ORDER BY order_position ASC`
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.db.QueryContext(ctx, query, md.DealID, stackSize)
+	if err != nil {
+		return nil, fmt.Errorf("list take profit stack sizes: %w", err)
+	}
+	defer rows.Close()
+
+	sizes := make([]float64, 0, stackSize)
+	for rows.Next() {
+		var position int64
+		var size float64
+		if scanErr := rows.Scan(&position, &size); scanErr != nil {
+			return nil, fmt.Errorf("scan take profit stack size: %w", scanErr)
+		}
+		sizes = append(sizes, size)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate take profit stack sizes: %w", err)
+	}
+	if len(sizes) != stackSize {
+		return nil, fmt.Errorf("incomplete take profit stack: expected %d legs, got %d", stackSize, len(sizes))
+	}
+
+	return sizes, nil
+}
+
 func (s *Storage) UpsertOrderScaler(ctx context.Context, multiplier float64, updatedBy string, notes *string) (OrderScalerState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

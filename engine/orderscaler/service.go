@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sort"
 	"time"
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
@@ -22,6 +23,7 @@ var ErrBelowMinimum = errors.New("scaled order below venue minimum")
 type Store interface {
 	ResolveEffectiveOrderScaler(ctx context.Context, md metadata.Metadata) (storage.EffectiveOrderScaler, error)
 	RecordScaledOrder(ctx context.Context, params storage.RecordScaledOrderParams) (storage.ScaledOrderAudit, storage.EffectiveOrderScaler, error)
+	ListTakeProfitStackSizes(ctx context.Context, md metadata.Metadata, stackSize int) ([]float64, error)
 }
 
 // Constraints resolves Hyperliquid rounding requirements.
@@ -69,6 +71,7 @@ type Request struct {
 	OriginalSize float64
 	Price        float64
 	StackIndex   int
+	StackSize    int
 	Timestamp    time.Time
 }
 
@@ -114,6 +117,19 @@ func (s *Service) Scale(ctx context.Context, req Request, order *hyperliquid.Cre
 	roundedPrice = constraints.RoundPrice(roundedPrice)
 
 	roundedSize := constraints.RoundSize(scaledSize)
+
+	if req.StackSize > 1 && req.StackIndex >= 0 {
+		stackSizes, stackErr := s.store.ListTakeProfitStackSizes(ctx, req.Metadata, req.StackSize)
+		if stackErr != nil {
+			s.logger.Debug("resolve stack sizes", slog.Any("error", stackErr), slog.Uint64("deal_id", uint64(req.Metadata.DealID)), slog.Int("stack_size", req.StackSize))
+		} else if len(stackSizes) == req.StackSize {
+			stackRounded := computeStackRoundedSizes(stackSizes, multiplier, constraints.SizeStep)
+			if req.StackIndex >= 0 && req.StackIndex < len(stackRounded) {
+				roundedSize = stackRounded[req.StackIndex]
+			}
+		}
+	}
+
 	roundedSize = clampToNonNegative(roundedSize)
 
 	notional := math.Abs(roundedSize * roundedPrice)
@@ -185,6 +201,125 @@ func clampToNonNegative(v float64) float64 {
 	return v
 }
 
+const (
+	ratioWeight     = 1.0
+	totalWeight     = 0.1
+	roundingWeight  = 0.05
+	equalityPenalty = 1.0
+	ratioTolerance  = 1e-9
+)
+
+func computeStackRoundedSizes(original []float64, multiplier float64, sizeStep float64) []float64 {
+	n := len(original)
+	if n == 0 {
+		return nil
+	}
+
+	targets := make([]float64, n)
+	for i := range original {
+		targets[i] = original[i] * multiplier
+	}
+
+	if sizeStep <= 0 {
+		out := make([]float64, n)
+		copy(out, targets)
+		return out
+	}
+
+	options := make([][]int, n)
+	for i := range targets {
+		base := targets[i] / sizeStep
+		lower := int(math.Floor(base))
+		upper := int(math.Ceil(base))
+		if upper < lower {
+			upper = lower
+		}
+		optionSet := map[int]struct{}{}
+		if lower >= 0 {
+			optionSet[lower] = struct{}{}
+		}
+		if upper >= 0 {
+			optionSet[upper] = struct{}{}
+		}
+		if len(optionSet) == 0 {
+			optionSet[0] = struct{}{}
+		}
+		opts := make([]int, 0, len(optionSet))
+		for v := range optionSet {
+			opts = append(opts, v)
+		}
+		sort.Ints(opts)
+		options[i] = opts
+	}
+
+	best := make([]float64, n)
+	bestCost := math.Inf(1)
+	steps := make([]int, n)
+
+	var backtrack func(int)
+	backtrack = func(idx int) {
+		if idx == n {
+			sizes := make([]float64, n)
+			for i, step := range steps {
+				sizes[i] = float64(step) * sizeStep
+			}
+			cost := evaluateStackCost(original, targets, sizes)
+			if cost < bestCost {
+				bestCost = cost
+				copy(best, sizes)
+			}
+			return
+		}
+
+		for _, option := range options[idx] {
+			steps[idx] = option
+			backtrack(idx + 1)
+		}
+	}
+
+	backtrack(0)
+
+	if math.IsInf(bestCost, 1) {
+		fallback := make([]float64, n)
+		for i := range targets {
+			fallback[i] = math.Round(targets[i]/sizeStep) * sizeStep
+		}
+		return fallback
+	}
+
+	return best
+}
+
+func evaluateStackCost(original, targets, sizes []float64) float64 {
+	totalTarget := 0.0
+	totalSize := 0.0
+	for i := range targets {
+		totalTarget += targets[i]
+		totalSize += sizes[i]
+	}
+
+	cost := totalWeight * math.Abs(totalSize-totalTarget)
+
+	baseOriginal := original[0]
+	baseSize := sizes[0]
+	for i := range original {
+		cost += roundingWeight * math.Abs(sizes[i]-targets[i])
+		if i == 0 {
+			continue
+		}
+		if original[i] > original[i-1]+ratioTolerance && sizes[i] <= sizes[i-1] {
+			cost += equalityPenalty
+		}
+		if baseOriginal > ratioTolerance && baseSize > ratioTolerance {
+			desiredRatio := original[i] / baseOriginal
+			actualRatio := sizes[i] / baseSize
+			cost += ratioWeight * math.Abs(actualRatio-desiredRatio)
+		}
+	}
+
+	return cost
+}
+
 // BuildRequest from a bot event + order.
 func BuildRequest(md metadata.Metadata, evt tc.BotEvent, order hyperliquid.CreateOrderRequest) Request {
 	side := "sell"
@@ -194,6 +329,10 @@ func BuildRequest(md metadata.Metadata, evt tc.BotEvent, order hyperliquid.Creat
 	stackIndex := 0
 	if evt.OrderPosition > 0 {
 		stackIndex = evt.OrderPosition - 1
+	}
+	stackSize := evt.OrderSize
+	if stackSize <= 0 {
+		stackSize = 1
 	}
 
 	price := order.Price
@@ -213,6 +352,7 @@ func BuildRequest(md metadata.Metadata, evt tc.BotEvent, order hyperliquid.Creat
 		OriginalSize: size,
 		Price:        price,
 		StackIndex:   stackIndex,
+		StackSize:    stackSize,
 		Timestamp:    evt.CreatedAt,
 	}
 }

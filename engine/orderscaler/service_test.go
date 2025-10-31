@@ -104,6 +104,67 @@ func TestServiceScaleRejectsBelowMinimum(t *testing.T) {
 	require.NotNil(t, audits[0].SkipReason)
 }
 
+func TestServiceScalePreservesTakeProfitStackRatios(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := newTestStore(t)
+	scaler := New(store, stubConstraints{constraint: hl.CoinConstraints{SizeStep: 0.1, PriceSigFigs: 5}}, nil)
+
+	botID := uint32(303)
+	dealID := uint32(404)
+	err := store.RecordBot(ctx, tc.Bot{Id: int(botID)}, time.Now())
+	require.NoError(t, err)
+	err = store.RecordThreeCommasDeal(ctx, tc.Deal{Id: int(dealID), BotId: int(botID), CreatedAt: time.Now(), UpdatedAt: time.Now()})
+	require.NoError(t, err)
+
+	_, err = store.UpsertOrderScaler(ctx, 0.5, "tester", nil)
+	require.NoError(t, err)
+
+	baseTime := time.Now()
+
+	legEvents := []tc.BotEvent{
+		{
+			CreatedAt:     baseTime,
+			Action:        tc.BotEventActionPlace,
+			Coin:          "ETH",
+			Price:         15.0,
+			Size:          1.0,
+			OrderType:     tc.MarketOrderDealOrderTypeTakeProfit,
+			OrderSize:     2,
+			OrderPosition: 1,
+		},
+		{
+			CreatedAt:     baseTime.Add(100 * time.Millisecond),
+			Action:        tc.BotEventActionPlace,
+			Coin:          "ETH",
+			Price:         15.5,
+			Size:          1.05,
+			OrderType:     tc.MarketOrderDealOrderTypeTakeProfit,
+			OrderSize:     2,
+			OrderPosition: 2,
+		},
+	}
+
+	var results []Result
+	for _, evt := range legEvents {
+		md := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: evt.FingerprintAsID()}
+		_, err := store.RecordThreeCommasBotEvent(ctx, md, evt)
+		require.NoError(t, err)
+
+		order := hyperliquid.CreateOrderRequest{Coin: evt.Coin, IsBuy: false, Price: evt.Price, Size: evt.Size}
+		req := BuildRequest(md, evt, order)
+		result, err := scaler.Scale(ctx, req, &order)
+		require.NoError(t, err)
+		results = append(results, result)
+	}
+
+	require.Len(t, results, 2)
+	require.InDelta(t, 0.5, results[0].Size, 1e-6)
+	require.InDelta(t, 0.6, results[1].Size, 1e-6)
+	require.Greater(t, results[1].Size, results[0].Size)
+}
+
 func newTestStore(t *testing.T) *storage.Storage {
 	t.Helper()
 	store, err := storage.New(":memory:")

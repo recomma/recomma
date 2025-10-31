@@ -1,0 +1,92 @@
+= Order Scaler Service
+:toc:
+:toclevels: 3
+
+== Background
+3Commas bot events currently reach Hyperliquid with the exact `BotEvent.Size` that 3Commas emitted. Operators often use 3Commas for simulation only and expect Hyperliquid to place materially larger orders. Without scaling, every replicated entry, safety order, and take-profit mirrors the simulated notionals instead of the desired execution sizes.
+
+== Goals
+* Allow operators to define a default multiplier that scales all outgoing Hyperliquid orders while preserving existing behaviour when set to `1x`.
+* Support per-bot overrides so that specific strategies can scale differently without redeploying the engine or redeclaring environment flags.
+* Provide optional stacked multipliers that let different ladder steps (base order, individual safeties, take-profit legs) expand at different rates.
+* Persist an audit trail that records both the original 3Commas size and the scaled size that the engine actually submitted to Hyperliquid.
+* Expose management endpoints so the UI can surface current multipliers and let operators update them without restarting the service.
+
+== Non-Goals
+* Per-deal multipliers are out of scope because deal parameters are not predictable at submission time and the spec prioritises deterministic configuration.
+* Real-time UI for editing multipliers is deferred to a future task; this spec focuses on service-side capabilities and APIs.
+* Price adjustments remain unchanged apart from existing best-bid-offer logic.
+
+== Functional Requirements
+[#requirements-scaling]
+=== Scaling Logic
+* The system must derive a multiplier for each outgoing order using the following precedence:
+** Per-bot override if present.
+** Otherwise fall back to the global default multiplier.
+* Per-bot overrides may include:
+** A base multiplier that applies to every order emitted for that bot.
+** Optional stack multipliers keyed by `OrderPosition` (e.g. base order, safety ladder index).
+** An optional take-profit multiplier if the operator wants exits to scale differently from entries.
+* Every multiplier snapshot must indicate when it was applied and which configuration row produced it.
+
+[#requirements-audit]
+=== Audit Logging
+* For each Hyperliquid submission, record the bot/deal identifiers, the original 3Commas size, the final scaled size, and the effective multiplier.
+* Persist whether the submission was a create or modify so auditors can reconcile the multiplier with Hyperliquid status events.
+* Scaler audit records must be queryable by deal to support troubleshooting and UI drill-downs.
+
+[#requirements-management]
+=== Configuration Management & APIs
+* Store the global multiplier and per-bot overrides in SQLite so settings survive restarts.
+* Provide CRUD endpoints that the UI can call to read, create/update, and delete per-bot scalers.
+* Include endpoints to fetch the audit log for a deal.
+* Changes should trigger SSE notifications so connected clients can refresh cached configuration.
+
+== Data Model
+* Add an `order_scalers` table that stores:
+** Primary key (generated id) and `bot_id` (nullable for the global default).
+** Base multiplier (`REAL`), stack multiplier definitions (JSON encoded array keyed by ladder index), optional take-profit multiplier, and metadata for operator/timestamps.
+* Add an `order_scaler_applications` table that stores:
+** Foreign keys to the originating scaler row and the Hyperliquid submission metadata (deal id, order id, Hyperliquid request id).
+** Original size, scaled size, effective multiplier, ladder metadata, and timestamps.
+* Provide indexes for lookups by `bot_id`, `deal_id`, and submission time to keep queries predictable.
+* Sqlc queries for inserts/selects should live in new SQL files so existing packages remain stable.
+
+== Architecture Overview
+[#architecture-scaler]
+=== Scaler Service
+* Introduce a dedicated scaler service under a new package (e.g., `engine/scaler`) that loads configuration from storage, caches rows in-memory, and exposes a method such as `Scale(botID uint32, event tc.BotEvent) (SizeScale, error)`.
+* The scaler service should emit a snapshot struct that includes the applied multipliers and metadata so downstream components can log and audit without re-querying storage.
+* Refresh caches when storage notifies about configuration changes or after a configurable TTL.
+
+[#architecture-engine]
+=== Engine Integration
+* Apply the scaler within the engine immediately before the existing take-profit adjustment path (`adjustActionWithTracker`) so the rest of the pipeline receives scaled quantities.
+* Update action structs to carry both original and scaled sizes so the emitter and tracker can reconcile them without relying on global state.
+* Ensure modify requests reuse the scaled size.
+* Record every scaling decision via the storage audit helper before enqueuing the emitter work item.
+
+[#architecture-tracker]
+=== Fill Tracker
+* When Hyperliquid status is unavailable, the fill tracker should fall back to the scaled size from the audit record rather than the raw event.
+* Maintain compatibility with take-profit adjustments that already rely on tracked net positions.
+
+[#architecture-emitter]
+=== Hyperliquid Emitter
+* Confirm that reduce-only take-profit overrides continue to honour the tracker after scaling.
+* Leave price derivation logic unchanged, but ensure request payloads carry the scaled size.
+
+== API Surface
+* Extend `openapi.yaml` with routes for scaler configuration management and audit log queries.
+* Generated handlers must live in new files within `internal/api` to keep existing packages stable per maintenance guidelines.
+* API payloads should include multiplier metadata so the UI can display effective scaling.
+
+== Rollout Plan
+* Default multiplier remains `1x`; add a migration that seeds the global row accordingly.
+* Validate behaviour in staging by comparing scaled audit records against Hyperliquid fills.
+* Provide feature flag or config toggle to disable scaling if unexpected behaviour appears (optional but recommended during rollout).
+
+== Open Questions
+* Should stack multipliers support named ladder positions beyond numeric indices (e.g., `safety_1`, `safety_2`)?
+* Do we need to backfill audit records for historical orders or only start logging from the deployment forward?
+* What level of precision should multipliers support (e.g., four decimal places vs. arbitrary float)?

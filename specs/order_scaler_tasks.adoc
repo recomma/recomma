@@ -1,0 +1,26 @@
+= Order Scaler Implementation Tasks
+:toc:
+:toclevels: 2
+
+This checklist derives concrete engineering work items from the order scaler specification (xref:order_scaler.adoc[Order Scaler Service]). Each task emphasises creating new files for fresh components to keep existing packages maintainable, as requested by the operator.
+
+== Storage Foundations
+. Create new SQL migration files under `storage/sqlc` that define the `order_scalers` and `order_scaler_applications` tables described in xref:order_scaler.adoc#_data_model[Data Model], ensuring indices for `bot_id`, `deal_id`, and created timestamps.
+. Add dedicated query files (e.g., `storage/sqlc/order_scalers.sql`, `storage/sqlc/order_scaler_applications.sql`) with CRUD statements to manage scaler configurations and audit records without modifying existing query files.
+. Generate the corresponding `sqlc` structs into new Go files (e.g., `storage/order_scalers.go`) that wrap the generated interfaces and emit SSE notifications on writes.
+. Write storage-level tests in a new file (e.g., `storage/order_scalers_test.go`) that cover upsert, fetch, list, delete, and audit logging flows.
+
+== Scaler Service & Engine Integration
+. Introduce a new package (for example, `engine/scalersvc`) that caches configuration rows and exposes a `Scale(botID uint32, event tc.BotEvent) (Snapshot, error)` method in line with xref:order_scaler.adoc#architecture-scaler[Scaler Service].
+. Update the engine by adding a new file (e.g., `engine/scaler_middleware.go`) that calls the service immediately before `adjustActionWithTracker`, mutates action sizes, and persists audit records (xref:order_scaler.adoc#architecture-engine[Engine Integration]).
+. Extend Hyperliquid request construction and fill-tracker fallbacks by adding helper files (e.g., `adapter/scaled_requests.go`, `filltracker/scaled_events.go`) so all downstream components consume the scaled sizes per xref:order_scaler.adoc#architecture-tracker[Fill Tracker].
+. Cover the new workflow with unit tests in fresh files under each package to demonstrate global defaults, per-bot overrides, stack multipliers, and take-profit handling.
+
+== API Surface & Streaming
+. Amend `openapi.yaml` with scaler management and audit endpoints while keeping changes isolated in a new include file if practical, then regenerate clients/servers (xref:order_scaler.adoc#_api_surface[API Surface]).
+. Implement handlers in newly created Go files within `internal/api` so existing code remains untouched; ensure they wire into the storage helpers and emit SSE events when scalers change.
+. Add API handler tests in companion `_test.go` files that exercise validation and error paths.
+
+== Operational Follow-Ups
+. Provide migration notes and operational guidance (new doc under `docs/` or `specs/`) describing default multiplier seeding, staging validation, and rollback procedures per xref:order_scaler.adoc#_rollout_plan[Rollout Plan].
+. Document open questions from xref:order_scaler.adoc#_open_questions[Open Questions] as issues or follow-up tasks once product decisions land.

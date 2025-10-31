@@ -29,12 +29,6 @@
 - Codegen: `go generate` runs `oapi-codegen` (OpenAPI -> `internal/api/ops.gen.go`) and `sqlc` (SQL -> `storage/sqlcgen`).
 - Tests: `go test ./...` (notably in `engine`, `filltracker`, `storage`, `internal/api`).
 - Docker: multi-stage image builds a static binary; `docker-compose.yml` has dev vs. released image profiles.
-- Optional local SDK work: uncomment the `replace` directives in `go.mod` to point at sibling checkouts of `3commas-sdk-go` or `go-hyperliquid`.
-
-## Generated Artifacts
-- Do not edit generated code. Rerun `go generate` after changing `openapi.yaml`, `oapi.yaml`, or anything under `storage/sqlc/`.
-- The outputs land in `internal/api/ops.gen.go` and the entire `storage/sqlcgen/` directory (including `storage/sqlcgen/models.go`). Treat these files as read-only or they will be overwritten and drift from the source schema/spec.
-- If you are unable to generate the code, do not edit the files anyway. Let the maintainer generate.
 
 ### Git Submodules
 - Clone with submodules so the 3Commas spec is available: `git clone --recurse-submodules git@github.com:recomma/recomma.git`
@@ -81,14 +75,19 @@
 - Keep docs-as-code: place updates in AsciiDoc under `docs/modules/ROOT/pages/`.
 - Add new topics as separate pages, then wire them into `docs/modules/ROOT/nav.adoc` so Antora exposes them.
 - Refresh `docs/modules/ROOT/pages/index.adoc` when high-level positioning or quick-start details change; the GitHub README will be generated from these sources.
-- Note any required `go generate ./...` runs when schema or API changes land so the documentation stays tied to regenerated artifacts.
+- Note any required `go generate ./gen/api` runs when schema or API changes land so the documentation stays tied to regenerated artifacts.
 
 ## Common Agent Tasks
-- **Add/modify API fields**: update `openapi.yaml`, run `go generate ./...`, update handlers/tests accordingly.
-- **Adjust storage queries**: edit `storage/sqlc/schema.sql` or `queries.sql`, run `go generate ./...`, then revise callers.
+- **Add/modify API fields**: update `openapi.yaml`, run `go generate ./gen/api`, update handlers/tests accordingly.
+- **Adjust storage queries**: edit `storage/sqlc/schema.sql` or `queries.sql`, run `go generate ./gen/storage`, then revise callers.
 - **Debug queue behaviour**: use `engine` + `emitter` logs; consider toggling log level via `RECOMMA_LOG_LEVEL=debug`.
 - **Work on SDKs**: enable `replace` entries, rebuild, and run targeted tests.
 - **Local run**: `go run ./cmd/recomma --public-origin=http://localhost:8080` (or use `docker compose up recomma`).
+
+### Generated Artifacts
+- Do not edit generated code. Rerun the appropriate `go generate` after changing `openapi.yaml`, `oapi.yaml`, or anything under `storage/sqlc/`.
+- The outputs land in `internal/api/ops.gen.go` and the entire `storage/sqlcgen/` directory (including `storage/sqlcgen/models.go`). Treat these files as read-only or they will be overwritten and drift from the source schema/spec.
+- If you are unable to generate the code, do not edit the files anyway. Let the maintainer generate.
 
 ## Misc Notes
 - Web UI assets are prebuilt; avoid touching `webui/app` unless you intend to rebuild the SPA.

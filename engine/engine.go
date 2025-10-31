@@ -510,8 +510,12 @@ func (e *Engine) applyScaling(
 		result, err := e.scaler.Scale(ctx, req, action.Create)
 		if err != nil {
 			if errors.Is(err, orderscaler.ErrBelowMinimum) {
-				logger.Warn("skipping scaled order below venue minimum", slog.Float64("price", req.Price), slog.Float64("size", req.OriginalSize))
-				return recomma.Action{Type: recomma.ActionNone, Reason: "scaled order below minimum"}, nil, false, nil
+				reason := "scaled order below minimum"
+				if result.Audit.SkipReason != nil {
+					reason = *result.Audit.SkipReason
+				}
+				logger.Warn("skipping scaled order below venue minimum", slog.Float64("price", req.Price), slog.Float64("size", req.OriginalSize), slog.Float64("scaled_size", result.Size), slog.String("reason", reason))
+				return recomma.Action{Type: recomma.ActionNone, Reason: reason}, nil, false, nil
 			}
 			return action, nil, false, err
 		}
@@ -530,8 +534,12 @@ func (e *Engine) applyScaling(
 		result, err := e.scaler.Scale(ctx, req, &action.Modify.Order)
 		if err != nil {
 			if errors.Is(err, orderscaler.ErrBelowMinimum) {
-				logger.Warn("skipping scaled modify below venue minimum", slog.Float64("price", req.Price), slog.Float64("size", req.OriginalSize))
-				return recomma.Action{Type: recomma.ActionNone, Reason: "scaled order below minimum"}, nil, false, nil
+				reason := "scaled order below minimum"
+				if result.Audit.SkipReason != nil {
+					reason = *result.Audit.SkipReason
+				}
+				logger.Warn("skipping scaled modify below venue minimum", slog.Float64("price", req.Price), slog.Float64("size", req.OriginalSize), slog.Float64("scaled_size", result.Size), slog.String("reason", reason))
+				return recomma.Action{Type: recomma.ActionNone, Reason: reason}, nil, false, nil
 			}
 			return action, nil, false, err
 		}

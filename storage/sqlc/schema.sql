@@ -140,6 +140,8 @@ CREATE TABLE IF NOT EXISTS scaled_orders (
     multiplier_updated_by  TEXT    NOT NULL,
     created_at_utc         INTEGER NOT NULL DEFAULT (CAST(unixepoch('now','subsec') * 1000 AS INTEGER)),
     submitted_order_id     TEXT,
+    skipped                INTEGER NOT NULL DEFAULT 0,
+    skip_reason            TEXT,
     FOREIGN KEY(deal_id) REFERENCES threecommas_deals(deal_id) ON DELETE CASCADE,
     FOREIGN KEY(bot_id) REFERENCES threecommas_bots(bot_id) ON DELETE CASCADE
 );

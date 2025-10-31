@@ -464,7 +464,9 @@ INSERT INTO scaled_orders (
     order_side,
     multiplier_updated_by,
     created_at_utc,
-    submitted_order_id
+    submitted_order_id,
+    skipped,
+    skip_reason
 ) VALUES (
     ?1,
     ?2,
@@ -477,7 +479,9 @@ INSERT INTO scaled_orders (
     ?9,
     ?10,
     ?11,
-    ?12
+    ?12,
+    ?13,
+    ?14
 )
 RETURNING id
 `
@@ -495,6 +499,8 @@ type InsertScaledOrderParams struct {
 	MultiplierUpdatedBy string  `json:"multiplier_updated_by"`
 	CreatedAtUtc        int64   `json:"created_at_utc"`
 	SubmittedOrderID    *string `json:"submitted_order_id"`
+	Skipped             int64   `json:"skipped"`
+	SkipReason          *string `json:"skip_reason"`
 }
 
 func (q *Queries) InsertScaledOrder(ctx context.Context, arg InsertScaledOrderParams) (int64, error) {
@@ -511,6 +517,8 @@ func (q *Queries) InsertScaledOrder(ctx context.Context, arg InsertScaledOrderPa
 		arg.MultiplierUpdatedBy,
 		arg.CreatedAtUtc,
 		arg.SubmittedOrderID,
+		arg.Skipped,
+		arg.SkipReason,
 	)
 	var id int64
 	err := row.Scan(&id)
@@ -927,7 +935,9 @@ SELECT
     order_side,
     multiplier_updated_by,
     created_at_utc,
-    submitted_order_id
+    submitted_order_id,
+    skipped,
+    skip_reason
 FROM scaled_orders
 WHERE md = ?1
   AND created_at_utc >= ?2
@@ -964,6 +974,8 @@ func (q *Queries) ListScaledOrderAuditsForMetadata(ctx context.Context, arg List
 			&i.MultiplierUpdatedBy,
 			&i.CreatedAtUtc,
 			&i.SubmittedOrderID,
+			&i.Skipped,
+			&i.SkipReason,
 		); err != nil {
 			return nil, err
 		}
@@ -992,7 +1004,9 @@ SELECT
     order_side,
     multiplier_updated_by,
     created_at_utc,
-    submitted_order_id
+    submitted_order_id,
+    skipped,
+    skip_reason
 FROM scaled_orders
 WHERE deal_id = ?1
 ORDER BY created_at_utc ASC, id ASC
@@ -1021,6 +1035,8 @@ func (q *Queries) ListScaledOrdersByDeal(ctx context.Context, dealID int64) ([]S
 			&i.MultiplierUpdatedBy,
 			&i.CreatedAtUtc,
 			&i.SubmittedOrderID,
+			&i.Skipped,
+			&i.SkipReason,
 		); err != nil {
 			return nil, err
 		}
@@ -1049,7 +1065,9 @@ SELECT
     order_side,
     multiplier_updated_by,
     created_at_utc,
-    submitted_order_id
+    submitted_order_id,
+    skipped,
+    skip_reason
 FROM scaled_orders
 WHERE md = ?1
 ORDER BY created_at_utc ASC, id ASC
@@ -1078,6 +1096,8 @@ func (q *Queries) ListScaledOrdersByMetadata(ctx context.Context, md string) ([]
 			&i.MultiplierUpdatedBy,
 			&i.CreatedAtUtc,
 			&i.SubmittedOrderID,
+			&i.Skipped,
+			&i.SkipReason,
 		); err != nil {
 			return nil, err
 		}

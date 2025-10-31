@@ -588,7 +588,9 @@ INSERT INTO scaled_orders (
     order_side,
     multiplier_updated_by,
     created_at_utc,
-    submitted_order_id
+    submitted_order_id,
+    skipped,
+    skip_reason
 ) VALUES (
     sqlc.arg(md),
     sqlc.arg(deal_id),
@@ -601,7 +603,9 @@ INSERT INTO scaled_orders (
     sqlc.arg(order_side),
     sqlc.arg(multiplier_updated_by),
     sqlc.arg(created_at_utc),
-    sqlc.narg(submitted_order_id)
+    sqlc.narg(submitted_order_id),
+    sqlc.arg(skipped),
+    sqlc.narg(skip_reason)
 )
 RETURNING id;
 
@@ -619,7 +623,9 @@ SELECT
     order_side,
     multiplier_updated_by,
     created_at_utc,
-    submitted_order_id
+    submitted_order_id,
+    skipped,
+    skip_reason
 FROM scaled_orders
 WHERE md = sqlc.arg(md)
 ORDER BY created_at_utc ASC, id ASC;
@@ -638,7 +644,9 @@ SELECT
     order_side,
     multiplier_updated_by,
     created_at_utc,
-    submitted_order_id
+    submitted_order_id,
+    skipped,
+    skip_reason
 FROM scaled_orders
 WHERE deal_id = sqlc.arg(deal_id)
 ORDER BY created_at_utc ASC, id ASC;
@@ -657,7 +665,9 @@ SELECT
     order_side,
     multiplier_updated_by,
     created_at_utc,
-    submitted_order_id
+    submitted_order_id,
+    skipped,
+    skip_reason
 FROM scaled_orders
 WHERE md = sqlc.arg(metadata)
   AND created_at_utc >= sqlc.arg(observed_from)

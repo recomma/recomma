@@ -486,6 +486,8 @@ type ScaledOrderAudit struct {
 	OriginalSize        float64   `json:"original_size"`
 	RoundingDelta       float64   `json:"rounding_delta"`
 	ScaledSize          float64   `json:"scaled_size"`
+	SkipReason          *string   `json:"skip_reason"`
+	Skipped             bool      `json:"skipped"`
 	StackIndex          int       `json:"stack_index"`
 	SubmittedOrderId    *string   `json:"submitted_order_id"`
 }

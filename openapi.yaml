@@ -499,6 +499,80 @@ paths:
         '500':
           description: Internal server error
 
+  /api/orders/scalers:
+    get:
+      operationId: listOrderScalers
+      summary: List effective order scaler configurations for observed metadata
+      description: >
+        Returns the effective multiplier applied to each metadata tuple that has interacted with
+        the scaler subsystem. The response resolves bot-level overrides against the global default
+        multiplier and surfaces the source metadata (default vs. override) along with operator notes.
+        Use the filters to scope results to a metadata prefix, bot, deal, or bot-event identifier.
+      parameters:
+        - name: metadata
+          in: query
+          description: Case-insensitive prefix match on metadata hex; exact match recommended for drill-down.
+          required: false
+          schema:
+            type: string
+        - name: bot_id
+          in: query
+          description: Restrict to metadata emitted by this bot ID.
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: deal_id
+          in: query
+          description: Restrict to metadata emitted by this deal ID.
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: bot_event_id
+          in: query
+          description: Restrict to a specific 3Commas bot-event ID (exact match).
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: limit
+          in: query
+          description: Maximum number of rows (default 100, max 500).
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 500
+        - name: page_token
+          in: query
+          description: Opaque cursor returned by a previous call.
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Effective multiplier records matching the requested filters.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OrderScalerConfigRecord'
+                  next_page_token:
+                    type: string
+                    nullable: true
+                required:
+                  - items
+        '400':
+          description: Invalid parameters
+        '500':
+          description: Internal server error
+
   /api/orders/{metadata}/cancel:
     post:
       operationId: cancelOrderByMetadata
@@ -1392,12 +1466,16 @@ components:
         - $ref: '#/components/schemas/ThreeCommasLogEntry'
         - $ref: '#/components/schemas/HyperliquidSubmissionLogEntry'
         - $ref: '#/components/schemas/HyperliquidStatusLogEntry'
+        - $ref: '#/components/schemas/OrderScalerConfigLogEntry'
+        - $ref: '#/components/schemas/ScaledOrderAuditLogEntry'
       discriminator:
         propertyName: type
         mapping:
           three_commas_event: '#/components/schemas/ThreeCommasLogEntry'
           hyperliquid_submission: '#/components/schemas/HyperliquidSubmissionLogEntry'
           hyperliquid_status: '#/components/schemas/HyperliquidStatusLogEntry'
+          order_scaler_config: '#/components/schemas/OrderScalerConfigLogEntry'
+          scaled_order_audit: '#/components/schemas/ScaledOrderAuditLogEntry'
 
     OrderLogEntryBase:
       type: object
@@ -1412,6 +1490,8 @@ components:
             - three_commas_event
             - hyperliquid_submission
             - hyperliquid_status
+            - order_scaler_config
+            - scaled_order_audit
         metadata:
           type: string
           description: Metadata hash (hex) identifying the order context.
@@ -1431,6 +1511,171 @@ components:
           type: integer
           format: int64
           nullable: true
+
+    OrderScalerSource:
+      type: string
+      enum:
+        - default
+        - bot_override
+
+    OrderScalerState:
+      type: object
+      required:
+        - multiplier
+        - updated_at
+        - updated_by
+      properties:
+        multiplier:
+          type: number
+          format: double
+        updated_at:
+          type: string
+          format: date-time
+        updated_by:
+          type: string
+        notes:
+          type: string
+          nullable: true
+
+    OrderScalerOverride:
+      type: object
+      required:
+        - bot_id
+        - updated_at
+        - updated_by
+        - effective_from
+      properties:
+        bot_id:
+          type: integer
+          format: int64
+        multiplier:
+          type: number
+          format: double
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        effective_from:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        updated_by:
+          type: string
+
+    EffectiveOrderScaler:
+      type: object
+      required:
+        - metadata
+        - multiplier
+        - source
+        - default
+      properties:
+        metadata:
+          type: string
+        multiplier:
+          type: number
+          format: double
+        source:
+          $ref: '#/components/schemas/OrderScalerSource'
+        default:
+          $ref: '#/components/schemas/OrderScalerState'
+        override:
+          $ref: '#/components/schemas/OrderScalerOverride'
+          nullable: true
+
+    OrderScalerConfigLogEntry:
+      allOf:
+        - $ref: '#/components/schemas/OrderLogEntryBase'
+        - type: object
+          required:
+            - config
+            - actor
+          properties:
+            config:
+              $ref: '#/components/schemas/EffectiveOrderScaler'
+            actor:
+              type: string
+
+    OrderScalerConfigRecord:
+      type: object
+      required:
+        - metadata
+        - observed_at
+        - actor
+        - config
+      properties:
+        metadata:
+          type: string
+        observed_at:
+          type: string
+          format: date-time
+        actor:
+          type: string
+        config:
+          $ref: '#/components/schemas/EffectiveOrderScaler'
+
+    ScaledOrderAudit:
+      type: object
+      required:
+        - deal_id
+        - bot_id
+        - original_size
+        - scaled_size
+        - multiplier
+        - rounding_delta
+        - stack_index
+        - order_side
+        - multiplier_updated_by
+        - created_at
+      properties:
+        deal_id:
+          type: integer
+          format: int64
+        bot_id:
+          type: integer
+          format: int64
+        original_size:
+          type: number
+          format: double
+        scaled_size:
+          type: number
+          format: double
+        multiplier:
+          type: number
+          format: double
+        rounding_delta:
+          type: number
+          format: double
+        stack_index:
+          type: integer
+        order_side:
+          type: string
+        multiplier_updated_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        submitted_order_id:
+          type: string
+          nullable: true
+
+    ScaledOrderAuditLogEntry:
+      allOf:
+        - $ref: '#/components/schemas/OrderLogEntryBase'
+        - type: object
+          required:
+            - audit
+            - actor
+          properties:
+            audit:
+              $ref: '#/components/schemas/ScaledOrderAudit'
+            effective:
+              $ref: '#/components/schemas/EffectiveOrderScaler'
+              nullable: true
+            actor:
+              type: string
 
     ThreeCommasLogEntry:
       allOf:

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/metadata"
 	"github.com/recomma/recomma/storage/sqlcgen"
 )
@@ -57,6 +58,49 @@ type ScaledOrderAuditParams struct {
 	SubmittedOrderID    *string
 }
 
+type OrderScalerSource string
+
+const (
+	OrderScalerSourceDefault     OrderScalerSource = "default"
+	OrderScalerSourceBotOverride OrderScalerSource = "bot_override"
+)
+
+type EffectiveOrderScaler struct {
+	Metadata   metadata.Metadata
+	Multiplier float64
+	Source     OrderScalerSource
+	Default    OrderScalerState
+	Override   *BotOrderScalerOverride
+}
+
+func (e EffectiveOrderScaler) Actor() string {
+	if e.Source == OrderScalerSourceBotOverride && e.Override != nil && e.Override.UpdatedBy != "" {
+		return e.Override.UpdatedBy
+	}
+	return e.Default.UpdatedBy
+}
+
+func (e EffectiveOrderScaler) UpdatedAt() time.Time {
+	if e.Source == OrderScalerSourceBotOverride && e.Override != nil {
+		if !e.Override.UpdatedAt.IsZero() {
+			return e.Override.UpdatedAt
+		}
+	}
+	return e.Default.UpdatedAt
+}
+
+type RecordScaledOrderParams struct {
+	Metadata         metadata.Metadata
+	DealID           uint32
+	BotID            uint32
+	OriginalSize     float64
+	ScaledSize       float64
+	StackIndex       int
+	OrderSide        string
+	CreatedAt        time.Time
+	SubmittedOrderID *string
+}
+
 func (s *Storage) GetOrderScaler(ctx context.Context) (OrderScalerState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -67,6 +111,41 @@ func (s *Storage) GetOrderScaler(ctx context.Context) (OrderScalerState, error) 
 	}
 
 	return convertOrderScaler(row), nil
+}
+
+func (s *Storage) ResolveEffectiveOrderScaler(ctx context.Context, md metadata.Metadata) (EffectiveOrderScaler, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	stateRow, err := s.queries.GetOrderScaler(ctx)
+	if err != nil {
+		return EffectiveOrderScaler{}, err
+	}
+	defaultState := convertOrderScaler(stateRow)
+
+	effective := EffectiveOrderScaler{
+		Metadata:   md,
+		Multiplier: defaultState.Multiplier,
+		Source:     OrderScalerSourceDefault,
+		Default:    defaultState,
+	}
+
+	overrideRow, err := s.queries.GetBotOrderScaler(ctx, int64(md.BotID))
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return effective, nil
+		}
+		return EffectiveOrderScaler{}, err
+	}
+
+	override := convertBotOrderScaler(overrideRow)
+	effective.Override = &override
+	if override.Multiplier != nil {
+		effective.Multiplier = *override.Multiplier
+		effective.Source = OrderScalerSourceBotOverride
+	}
+
+	return effective, nil
 }
 
 func (s *Storage) UpsertOrderScaler(ctx context.Context, multiplier float64, updatedBy string, notes *string) (OrderScalerState, error) {
@@ -88,7 +167,15 @@ func (s *Storage) UpsertOrderScaler(ctx context.Context, multiplier float64, upd
 		return OrderScalerState{}, err
 	}
 
-	return convertOrderScaler(row), nil
+	state := convertOrderScaler(row)
+	s.publishOrderScalerEventLocked(metadata.Metadata{}, EffectiveOrderScaler{
+		Metadata:   metadata.Metadata{},
+		Multiplier: state.Multiplier,
+		Source:     OrderScalerSourceDefault,
+		Default:    state,
+	}, updatedBy, state.UpdatedAt)
+
+	return state, nil
 }
 
 func (s *Storage) ListBotOrderScalers(ctx context.Context) ([]BotOrderScalerOverride, error) {
@@ -144,17 +231,87 @@ func (s *Storage) UpsertBotOrderScaler(ctx context.Context, botID uint32, multip
 		return BotOrderScalerOverride{}, err
 	}
 
-	return convertBotOrderScaler(row), nil
+	override := convertBotOrderScaler(row)
+
+	stateRow, err := s.queries.GetOrderScaler(ctx)
+	if err != nil {
+		return BotOrderScalerOverride{}, err
+	}
+	defaultState := convertOrderScaler(stateRow)
+
+	effective := EffectiveOrderScaler{
+		Metadata:   metadata.Metadata{BotID: botID},
+		Multiplier: defaultState.Multiplier,
+		Source:     OrderScalerSourceDefault,
+		Default:    defaultState,
+		Override:   &override,
+	}
+	if override.Multiplier != nil {
+		effective.Multiplier = *override.Multiplier
+		effective.Source = OrderScalerSourceBotOverride
+	}
+
+	s.publishOrderScalerEventLocked(effective.Metadata, effective, updatedBy, override.UpdatedAt)
+
+	return override, nil
 }
 
-func (s *Storage) DeleteBotOrderScaler(ctx context.Context, botID uint32) error {
+func (s *Storage) DeleteBotOrderScaler(ctx context.Context, botID uint32, updatedBy string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.queries.DeleteBotOrderScaler(ctx, int64(botID))
+	if err := s.queries.DeleteBotOrderScaler(ctx, int64(botID)); err != nil {
+		return err
+	}
+
+	stateRow, err := s.queries.GetOrderScaler(ctx)
+	if err != nil {
+		return err
+	}
+	defaultState := convertOrderScaler(stateRow)
+
+	effective := EffectiveOrderScaler{
+		Metadata:   metadata.Metadata{BotID: botID},
+		Multiplier: defaultState.Multiplier,
+		Source:     OrderScalerSourceDefault,
+		Default:    defaultState,
+	}
+
+	s.publishOrderScalerEventLocked(effective.Metadata, effective, updatedBy, time.Now().UTC())
+
+	return nil
 }
 
-func (s *Storage) InsertScaledOrderAudit(ctx context.Context, params ScaledOrderAuditParams) (int64, error) {
+func (s *Storage) RecordScaledOrder(ctx context.Context, params RecordScaledOrderParams) (ScaledOrderAudit, EffectiveOrderScaler, error) {
+	effective, err := s.ResolveEffectiveOrderScaler(ctx, params.Metadata)
+	if err != nil {
+		return ScaledOrderAudit{}, EffectiveOrderScaler{}, err
+	}
+
+	roundingDelta := params.ScaledSize - (params.OriginalSize * effective.Multiplier)
+
+	audit, err := s.InsertScaledOrderAudit(ctx, ScaledOrderAuditParams{
+		Metadata:            params.Metadata,
+		DealID:              params.DealID,
+		BotID:               params.BotID,
+		OriginalSize:        params.OriginalSize,
+		ScaledSize:          params.ScaledSize,
+		Multiplier:          effective.Multiplier,
+		RoundingDelta:       roundingDelta,
+		StackIndex:          params.StackIndex,
+		OrderSide:           params.OrderSide,
+		MultiplierUpdatedBy: effective.Actor(),
+		CreatedAt:           params.CreatedAt,
+		SubmittedOrderID:    params.SubmittedOrderID,
+	})
+	if err != nil {
+		return ScaledOrderAudit{}, EffectiveOrderScaler{}, err
+	}
+
+	return audit, effective, nil
+}
+
+func (s *Storage) InsertScaledOrderAudit(ctx context.Context, params ScaledOrderAuditParams) (ScaledOrderAudit, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -178,7 +335,63 @@ func (s *Storage) InsertScaledOrderAudit(ctx context.Context, params ScaledOrder
 		SubmittedOrderID:    params.SubmittedOrderID,
 	}
 
-	return s.queries.InsertScaledOrder(ctx, insert)
+	id, err := s.queries.InsertScaledOrder(ctx, insert)
+	if err != nil {
+		return ScaledOrderAudit{}, err
+	}
+
+	audit := ScaledOrderAudit{
+		ID:                  id,
+		Metadata:            params.Metadata,
+		DealID:              params.DealID,
+		BotID:               params.BotID,
+		OriginalSize:        params.OriginalSize,
+		ScaledSize:          params.ScaledSize,
+		Multiplier:          params.Multiplier,
+		RoundingDelta:       params.RoundingDelta,
+		StackIndex:          params.StackIndex,
+		OrderSide:           params.OrderSide,
+		MultiplierUpdatedBy: params.MultiplierUpdatedBy,
+		CreatedAt:           createdAt,
+		SubmittedOrderID:    params.SubmittedOrderID,
+	}
+
+	stateRow, err := s.queries.GetOrderScaler(ctx)
+	if err != nil {
+		return ScaledOrderAudit{}, err
+	}
+	defaultState := convertOrderScaler(stateRow)
+
+	effective := EffectiveOrderScaler{
+		Metadata:   params.Metadata,
+		Multiplier: params.Multiplier,
+		Source:     OrderScalerSourceDefault,
+		Default:    defaultState,
+	}
+
+	overrideRow, err := s.queries.GetBotOrderScaler(ctx, int64(params.BotID))
+	if err == nil {
+		override := convertBotOrderScaler(overrideRow)
+		effective.Override = &override
+		if override.Multiplier != nil {
+			effective.Source = OrderScalerSourceBotOverride
+		}
+	} else if err != sql.ErrNoRows {
+		return ScaledOrderAudit{}, err
+	}
+
+	actor := effective.Actor()
+
+	s.publishStreamEventLocked(api.StreamEvent{
+		Type:             api.ScaledOrderAuditEntry,
+		Metadata:         params.Metadata,
+		ObservedAt:       createdAt,
+		Actor:            &actor,
+		ScaledOrderAudit: toAPIScaledOrderAudit(audit),
+		ScalerConfig:     toAPIEffectiveOrderScaler(effective),
+	})
+
+	return audit, nil
 }
 
 func (s *Storage) ListScaledOrdersByMetadata(ctx context.Context, md metadata.Metadata) ([]ScaledOrderAudit, error) {
@@ -258,4 +471,71 @@ func convertScaledOrder(row sqlcgen.ScaledOrder) (ScaledOrderAudit, error) {
 		CreatedAt:           time.UnixMilli(row.CreatedAtUtc).UTC(),
 		SubmittedOrderID:    row.SubmittedOrderID,
 	}, nil
+}
+
+func (s *Storage) publishOrderScalerEventLocked(md metadata.Metadata, effective EffectiveOrderScaler, actor string, observedAt time.Time) {
+	if s.stream == nil {
+		return
+	}
+	if observedAt.IsZero() {
+		observedAt = time.Now().UTC()
+	}
+
+	cfg := toAPIEffectiveOrderScaler(effective)
+	actorCopy := actor
+	s.publishStreamEventLocked(api.StreamEvent{
+		Type:         api.OrderScalerConfigEntry,
+		Metadata:     md,
+		ObservedAt:   observedAt,
+		Actor:        &actorCopy,
+		ScalerConfig: cfg,
+	})
+}
+
+func toAPIEffectiveOrderScaler(e EffectiveOrderScaler) *api.EffectiveOrderScaler {
+	cfg := api.EffectiveOrderScaler{
+		Metadata:   e.Metadata.Hex(),
+		Multiplier: e.Multiplier,
+		Source:     api.OrderScalerSource(e.Source),
+		Default: api.OrderScalerState{
+			Multiplier: e.Default.Multiplier,
+			UpdatedAt:  e.Default.UpdatedAt,
+			UpdatedBy:  e.Default.UpdatedBy,
+			Notes:      e.Default.Notes,
+		},
+	}
+	if e.Override != nil {
+		override := api.OrderScalerOverride{
+			BotId:         int64(e.Override.BotID),
+			EffectiveFrom: e.Override.EffectiveFrom,
+			UpdatedAt:     e.Override.UpdatedAt,
+			UpdatedBy:     e.Override.UpdatedBy,
+			Notes:         e.Override.Notes,
+		}
+		if e.Override.Multiplier != nil {
+			value := *e.Override.Multiplier
+			override.Multiplier = &value
+		}
+		cfg.Override = &override
+	}
+	return &cfg
+}
+
+func toAPIScaledOrderAudit(audit ScaledOrderAudit) *api.ScaledOrderAudit {
+	out := api.ScaledOrderAudit{
+		DealId:              int64(audit.DealID),
+		BotId:               int64(audit.BotID),
+		OriginalSize:        audit.OriginalSize,
+		ScaledSize:          audit.ScaledSize,
+		Multiplier:          audit.Multiplier,
+		RoundingDelta:       audit.RoundingDelta,
+		StackIndex:          audit.StackIndex,
+		OrderSide:           audit.OrderSide,
+		MultiplierUpdatedBy: audit.MultiplierUpdatedBy,
+		CreatedAt:           audit.CreatedAt,
+	}
+	if audit.SubmittedOrderID != nil {
+		out.SubmittedOrderId = audit.SubmittedOrderID
+	}
+	return &out
 }

@@ -913,6 +913,71 @@ func (q *Queries) ListLatestHyperliquidSafetyStatuses(ctx context.Context, dealI
 	return items, nil
 }
 
+const listScaledOrderAuditsForMetadata = `-- name: ListScaledOrderAuditsForMetadata :many
+SELECT
+    id,
+    md,
+    deal_id,
+    bot_id,
+    original_size,
+    scaled_size,
+    multiplier,
+    rounding_delta,
+    stack_index,
+    order_side,
+    multiplier_updated_by,
+    created_at_utc,
+    submitted_order_id
+FROM scaled_orders
+WHERE md = ?1
+  AND created_at_utc >= ?2
+  AND created_at_utc <= ?3
+ORDER BY created_at_utc ASC, id ASC
+`
+
+type ListScaledOrderAuditsForMetadataParams struct {
+	Metadata     string `json:"metadata"`
+	ObservedFrom int64  `json:"observed_from"`
+	ObservedTo   int64  `json:"observed_to"`
+}
+
+func (q *Queries) ListScaledOrderAuditsForMetadata(ctx context.Context, arg ListScaledOrderAuditsForMetadataParams) ([]ScaledOrder, error) {
+	rows, err := q.db.QueryContext(ctx, listScaledOrderAuditsForMetadata, arg.Metadata, arg.ObservedFrom, arg.ObservedTo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ScaledOrder
+	for rows.Next() {
+		var i ScaledOrder
+		if err := rows.Scan(
+			&i.ID,
+			&i.Md,
+			&i.DealID,
+			&i.BotID,
+			&i.OriginalSize,
+			&i.ScaledSize,
+			&i.Multiplier,
+			&i.RoundingDelta,
+			&i.StackIndex,
+			&i.OrderSide,
+			&i.MultiplierUpdatedBy,
+			&i.CreatedAtUtc,
+			&i.SubmittedOrderID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listScaledOrdersByDeal = `-- name: ListScaledOrdersByDeal :many
 SELECT
     id,

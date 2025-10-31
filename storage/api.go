@@ -218,6 +218,46 @@ func (s *Storage) ListDeals(ctx context.Context, opts api.ListDealsOptions) ([]t
 	return items, nextToken, nil
 }
 
+func (s *Storage) ListOrderScalers(ctx context.Context, opts api.ListOrderScalersOptions) ([]api.OrderScalerConfigItem, *string, error) {
+	if opts.Limit <= 0 {
+		return nil, nil, fmt.Errorf("limit must be positive")
+	}
+
+	orderOpts := api.ListOrdersOptions{
+		MetadataPrefix: opts.MetadataPrefix,
+		BotID:          opts.BotID,
+		DealID:         opts.DealID,
+		BotEventID:     opts.BotEventID,
+		Limit:          opts.Limit,
+		PageToken:      opts.PageToken,
+	}
+
+	rows, next, err := s.ListOrders(ctx, orderOpts)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	items := make([]api.OrderScalerConfigItem, 0, len(rows))
+	for _, row := range rows {
+		effective, err := s.ResolveEffectiveOrderScaler(ctx, row.Metadata)
+		if err != nil {
+			return nil, nil, err
+		}
+		cfgPtr := toAPIEffectiveOrderScaler(effective)
+		if cfgPtr == nil {
+			return nil, nil, fmt.Errorf("build effective scaler for %s", row.Metadata.Hex())
+		}
+		items = append(items, api.OrderScalerConfigItem{
+			Metadata:   row.Metadata,
+			ObservedAt: effective.UpdatedAt(),
+			Actor:      effective.Actor(),
+			Config:     *cfgPtr,
+		})
+	}
+
+	return items, next, nil
+}
+
 func (s *Storage) ListOrders(ctx context.Context, opts api.ListOrdersOptions) ([]api.OrderItem, *string, error) {
 	if opts.Limit <= 0 {
 		return nil, nil, fmt.Errorf("limit must be positive")
@@ -453,7 +493,25 @@ WHERE md = ?
 				return nil, nil, fmt.Errorf("list bot event log for %s: %w", mdHex, err)
 			}
 
-			entries := make([]api.OrderLogItem, 0, len(logRows)+1)
+			statusRows, err := s.queries.ListHyperliquidStatusesForMetadata(ctx, sqlcgen.ListHyperliquidStatusesForMetadataParams{
+				Metadata:     mdHex,
+				ObservedFrom: logFrom,
+				ObservedTo:   logTo,
+			})
+			if err != nil {
+				return nil, nil, fmt.Errorf("list status history for %s: %w", mdHex, err)
+			}
+
+			auditRows, err := s.queries.ListScaledOrderAuditsForMetadata(ctx, sqlcgen.ListScaledOrderAuditsForMetadataParams{
+				Metadata:     mdHex,
+				ObservedFrom: logFrom,
+				ObservedTo:   logTo,
+			})
+			if err != nil {
+				return nil, nil, fmt.Errorf("list scaled order audits for %s: %w", mdHex, err)
+			}
+
+			entries := make([]api.OrderLogItem, 0, len(logRows)+len(statusRows)+len(auditRows)+1)
 
 			for _, logRow := range logRows {
 				var evt tc.BotEvent
@@ -469,14 +527,6 @@ WHERE md = ?
 				})
 			}
 
-			statusRows, err := s.queries.ListHyperliquidStatusesForMetadata(ctx, sqlcgen.ListHyperliquidStatusesForMetadataParams{
-				Metadata:     mdHex,
-				ObservedFrom: logFrom,
-				ObservedTo:   logTo,
-			})
-			if err != nil {
-				return nil, nil, fmt.Errorf("list status history for %s: %w", mdHex, err)
-			}
 			for _, statusRow := range statusRows {
 				var decoded hyperliquid.WsOrder
 				if err := json.Unmarshal(statusRow.Status, &decoded); err != nil {
@@ -490,6 +540,21 @@ WHERE md = ?
 					Status:     &statusCopy,
 				})
 				latestStatus = &statusCopy
+			}
+
+			for _, auditRow := range auditRows {
+				audit, err := convertScaledOrder(auditRow)
+				if err != nil {
+					return nil, nil, fmt.Errorf("decode scaled order audit for %s: %w", mdHex, err)
+				}
+				actor := audit.MultiplierUpdatedBy
+				entries = append(entries, api.OrderLogItem{
+					Type:        api.ScaledOrderAuditEntry,
+					Metadata:    metadataCopy,
+					ObservedAt:  audit.CreatedAt,
+					ScaledAudit: toAPIScaledOrderAudit(audit),
+					Actor:       &actor,
+				})
 			}
 
 			if submission != nil && updatedAtUTC.Valid {

@@ -642,3 +642,24 @@ SELECT
 FROM scaled_orders
 WHERE deal_id = sqlc.arg(deal_id)
 ORDER BY created_at_utc ASC, id ASC;
+
+-- name: ListScaledOrderAuditsForMetadata :many
+SELECT
+    id,
+    md,
+    deal_id,
+    bot_id,
+    original_size,
+    scaled_size,
+    multiplier,
+    rounding_delta,
+    stack_index,
+    order_side,
+    multiplier_updated_by,
+    created_at_utc,
+    submitted_order_id
+FROM scaled_orders
+WHERE md = sqlc.arg(metadata)
+  AND created_at_utc >= sqlc.arg(observed_from)
+  AND created_at_utc <= sqlc.arg(observed_to)
+ORDER BY created_at_utc ASC, id ASC;

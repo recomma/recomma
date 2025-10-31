@@ -200,6 +200,59 @@ func TestReconcileTakeProfits(t *testing.T) {
 	require.WithinDuration(t, now.Add(-2*time.Minute), snapshot.ActiveTakeProfit.StatusTime, time.Second)
 }
 
+func TestApplyScaledOrderUpdatesSnapshot(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := newTestStore(t)
+	logger := newTestLogger()
+	tracker := New(store, logger)
+
+	const (
+		dealID = uint32(9100)
+		botID  = uint32(71)
+		coin   = "SOL"
+	)
+
+	recordDeal(t, store, dealID, botID, coin)
+
+	baseMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 1}
+	now := time.Now().UTC()
+
+	baseEvent := tc.BotEvent{
+		CreatedAt: now.Add(-2 * time.Minute),
+		Action:    tc.BotEventActionPlace,
+		Coin:      coin,
+		Type:      tc.BUY,
+		Status:    tc.Active,
+		Price:     24.5,
+		Size:      100,
+		OrderType: tc.MarketOrderDealOrderTypeBase,
+	}
+	require.NoError(t, recordEvent(store, baseMD, baseEvent))
+
+	initialStatus := makeStatus(baseMD, coin, "B", hyperliquid.OrderStatusValueOpen, 100, 100, 24.5, now.Add(-90*time.Second))
+	require.NoError(t, recordStatus(store, baseMD, initialStatus))
+
+	require.NoError(t, tracker.Rebuild(ctx))
+
+	tracker.ApplyScaledOrder(baseMD, 40, 24.25)
+
+	snapshot, ok := tracker.Snapshot(dealID)
+	require.True(t, ok)
+	var order *OrderSnapshot
+	for i := range snapshot.Orders {
+		if snapshot.Orders[i].Metadata.Hex() == baseMD.Hex() {
+			order = &snapshot.Orders[i]
+			break
+		}
+	}
+	require.NotNil(t, order)
+	require.InDelta(t, 40, order.OriginalQty, 1e-6)
+	require.InDelta(t, 40, order.RemainingQty, 1e-6)
+	require.InDelta(t, 24.25, order.ReferencePrice, 1e-6)
+}
+
 func TestReconcileTakeProfitsCancelsWhenFlat(t *testing.T) {
 	t.Parallel()
 

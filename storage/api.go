@@ -258,6 +258,78 @@ func (s *Storage) ListOrderScalers(ctx context.Context, opts api.ListOrderScaler
 	return items, next, nil
 }
 
+func (s *Storage) GetDefaultOrderScaler(ctx context.Context) (api.OrderScalerState, error) {
+	state, err := s.GetOrderScaler(ctx)
+	if err != nil {
+		return api.OrderScalerState{}, err
+	}
+	return toAPIOrderScalerState(state), nil
+}
+
+func (s *Storage) UpsertDefaultOrderScaler(ctx context.Context, multiplier float64, updatedBy string, notes *string) (api.OrderScalerState, error) {
+	state, err := s.UpsertOrderScaler(ctx, multiplier, updatedBy, notes)
+	if err != nil {
+		return api.OrderScalerState{}, err
+	}
+	return toAPIOrderScalerState(state), nil
+}
+
+func (s *Storage) GetBotOrderScalerOverride(ctx context.Context, botID uint32) (*api.OrderScalerOverride, bool, error) {
+	state, found, err := s.GetBotOrderScaler(ctx, botID)
+	if err != nil {
+		return nil, false, err
+	}
+	if !found || state == nil {
+		return nil, false, nil
+	}
+	apiOverride := toAPIOrderScalerOverride(*state)
+	return &apiOverride, true, nil
+}
+
+func (s *Storage) UpsertBotOrderScalerOverride(ctx context.Context, botID uint32, multiplier *float64, notes *string, updatedBy string) (api.OrderScalerOverride, error) {
+	override, err := s.UpsertBotOrderScaler(ctx, botID, multiplier, notes, updatedBy)
+	if err != nil {
+		return api.OrderScalerOverride{}, err
+	}
+	return toAPIOrderScalerOverride(override), nil
+}
+
+func (s *Storage) DeleteBotOrderScalerOverride(ctx context.Context, botID uint32, updatedBy string) error {
+	return s.DeleteBotOrderScaler(ctx, botID, updatedBy)
+}
+
+func (s *Storage) ResolveEffectiveOrderScalerConfig(ctx context.Context, md metadata.Metadata) (api.EffectiveOrderScaler, error) {
+	effective, err := s.ResolveEffectiveOrderScaler(ctx, md)
+	if err != nil {
+		return api.EffectiveOrderScaler{}, err
+	}
+	apiEffective := toAPIEffectiveOrderScaler(effective)
+	if apiEffective == nil {
+		return api.EffectiveOrderScaler{}, fmt.Errorf("convert effective order scaler")
+	}
+	return *apiEffective, nil
+}
+
+func toAPIOrderScalerState(state OrderScalerState) api.OrderScalerState {
+	return api.OrderScalerState{
+		Multiplier: state.Multiplier,
+		Notes:      state.Notes,
+		UpdatedAt:  state.UpdatedAt,
+		UpdatedBy:  state.UpdatedBy,
+	}
+}
+
+func toAPIOrderScalerOverride(override BotOrderScalerOverride) api.OrderScalerOverride {
+	return api.OrderScalerOverride{
+		BotId:         int64(override.BotID),
+		Multiplier:    override.Multiplier,
+		Notes:         override.Notes,
+		EffectiveFrom: override.EffectiveFrom,
+		UpdatedAt:     override.UpdatedAt,
+		UpdatedBy:     override.UpdatedBy,
+	}
+}
+
 func (s *Storage) ListOrders(ctx context.Context, opts api.ListOrdersOptions) ([]api.OrderItem, *string, error) {
 	if opts.Limit <= 0 {
 		return nil, nil, fmt.Errorf("limit must be positive")

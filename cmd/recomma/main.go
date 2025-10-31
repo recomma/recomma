@@ -21,6 +21,7 @@ import (
 	"github.com/recomma/recomma/cmd/recomma/internal/config"
 	"github.com/recomma/recomma/emitter"
 	"github.com/recomma/recomma/engine"
+	"github.com/recomma/recomma/engine/orderscaler"
 	"github.com/recomma/recomma/filltracker"
 	"github.com/recomma/recomma/hl"
 	"github.com/recomma/recomma/hl/ws"
@@ -119,7 +120,9 @@ func main() {
 	apiHandler := api.NewHandler(store, streamController,
 		api.WithLogger(logger),
 		api.WithWebAuthnService(webAuthApi),
-		api.WithVaultController(vaultController))
+		api.WithVaultController(vaultController),
+		api.WithOrderScalerMaxMultiplier(cfg.OrderScalerMaxMultiplier),
+	)
 
 	strictServer := api.NewStrictHandler(apiHandler, []api.StrictMiddlewareFunc{
 		api.RequestContextMiddleware(),
@@ -225,6 +228,9 @@ func main() {
 		Wallet:  secrets.Secrets.HYPERLIQUIDWALLET,
 	})
 
+	constraints := hl.NewMetadataCache(info)
+	scaler := orderscaler.New(store, constraints, logger, orderscaler.WithMaxMultiplier(cfg.OrderScalerMaxMultiplier))
+
 	fillTracker := filltracker.New(store, logger)
 
 	statusRefresher := hl.NewStatusRefresher(info, store,
@@ -272,6 +278,7 @@ func main() {
 		engine.WithStorage(store),
 		engine.WithEmitter(engineEmitter),
 		engine.WithFillTracker(fillTracker),
+		engine.WithOrderScaler(scaler),
 	)
 
 	submitter := emitter.NewHyperLiquidEmitter(exchange, ws, store,

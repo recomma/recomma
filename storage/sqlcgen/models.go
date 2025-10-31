@@ -56,6 +56,8 @@ type ScaledOrder struct {
 	MultiplierUpdatedBy string  `json:"multiplier_updated_by"`
 	CreatedAtUtc        int64   `json:"created_at_utc"`
 	SubmittedOrderID    *string `json:"submitted_order_id"`
+	Skipped             int64   `json:"skipped"`
+	SkipReason          *string `json:"skip_reason"`
 }
 
 type ThreecommasBot struct {

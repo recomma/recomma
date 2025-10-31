@@ -1839,6 +1839,7 @@ components:
         - order_side
         - multiplier_updated_by
         - created_at
+        - skipped
       properties:
         deal_id:
           type: integer
@@ -1868,6 +1869,11 @@ components:
           type: string
           format: date-time
         submitted_order_id:
+          type: string
+          nullable: true
+        skipped:
+          type: boolean
+        skip_reason:
           type: string
           nullable: true
 

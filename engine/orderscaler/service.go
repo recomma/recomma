@@ -118,8 +118,35 @@ func (s *Service) Scale(ctx context.Context, req Request, order *hyperliquid.Cre
 
 	notional := math.Abs(roundedSize * roundedPrice)
 	if constraints.NotionalBelowMinimum(roundedSize, roundedPrice) {
-		s.logger.Warn("scaled order violates minimum notional", slog.String("coin", req.Coin), slog.Float64("price", roundedPrice), slog.Float64("size", roundedSize), slog.Float64("notional", notional), slog.Float64("min", constraints.MinNotional), slog.Float64("multiplier", multiplier), slog.Uint64("deal_id", uint64(req.Metadata.DealID)), slog.Uint64("bot_id", uint64(req.Metadata.BotID)))
-		return Result{}, ErrBelowMinimum
+		reason := fmt.Sprintf("scaled order below minimum notional (%.4f < %.4f)", notional, constraints.MinNotional)
+		auditParams := storage.RecordScaledOrderParams{
+			Metadata:          req.Metadata,
+			DealID:            req.Metadata.DealID,
+			BotID:             req.Metadata.BotID,
+			OriginalSize:      req.OriginalSize,
+			ScaledSize:        roundedSize,
+			AppliedMultiplier: &multiplier,
+			StackIndex:        req.StackIndex,
+			OrderSide:         req.Side,
+			CreatedAt:         req.Timestamp,
+			Skipped:           true,
+			SkipReason:        &reason,
+		}
+
+		audit, effectiveAfter, recordErr := s.store.RecordScaledOrder(ctx, auditParams)
+		if recordErr != nil {
+			return Result{}, fmt.Errorf("record skipped scaled order: %w", recordErr)
+		}
+
+		s.logger.Warn("scaled order violates minimum notional", slog.String("coin", req.Coin), slog.Float64("price", roundedPrice), slog.Float64("size", roundedSize), slog.Float64("notional", notional), slog.Float64("min", constraints.MinNotional), slog.Float64("multiplier", multiplier), slog.Uint64("deal_id", uint64(req.Metadata.DealID)), slog.Uint64("bot_id", uint64(req.Metadata.BotID)), slog.String("reason", reason))
+
+		return Result{
+			Size:       roundedSize,
+			Price:      roundedPrice,
+			Audit:      audit,
+			Effective:  effectiveAfter,
+			Multiplier: multiplier,
+		}, ErrBelowMinimum
 	}
 
 	order.Price = roundedPrice

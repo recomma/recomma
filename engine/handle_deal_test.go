@@ -304,6 +304,43 @@ func TestProcessDeal_AppliesOrderScaler(t *testing.T) {
 	require.Len(t, audits, 1)
 	require.InDelta(t, 2.0, audits[0].OriginalSize, 1e-6)
 	require.InDelta(t, 1.0, audits[0].ScaledSize, 1e-6)
+	require.False(t, audits[0].Skipped)
+	require.Nil(t, audits[0].SkipReason)
+}
+
+func TestProcessDeal_ScaledOrderBelowMinimumRecordsAudit(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	const (
+		botID  = uint32(55)
+		dealID = uint32(990)
+	)
+
+	h := newHarness(t, botID, dealID)
+	scaler := orderscaler.New(h.store, staticConstraints{constraint: hl.CoinConstraints{SizeStep: 0.01, PriceSigFigs: 5, MinNotional: 50}}, nil)
+	h.engine = NewEngine(nil, WithStorage(h.store), WithEmitter(h.emitter), WithOrderScaler(scaler))
+
+	_, err := h.store.UpsertOrderScaler(ctx, 1.0, "tester", nil)
+	require.NoError(t, err)
+
+	base := time.Now().UTC()
+	event, md := testutil.NewBotEvent(t, base, botID, dealID,
+		testutil.WithPrice(10.0),
+		testutil.WithSize(1.0),
+	)
+
+	err = h.engine.processDeal(ctx, h.key, "BTC", []tc.BotEvent{event})
+	require.NoError(t, err)
+
+	require.Empty(t, h.emitter.items)
+
+	audits, listErr := h.store.ListScaledOrdersByMetadata(ctx, md)
+	require.NoError(t, listErr)
+	require.Len(t, audits, 1)
+	require.True(t, audits[0].Skipped)
+	require.NotNil(t, audits[0].SkipReason)
+	require.Contains(t, *audits[0].SkipReason, "below minimum notional")
 }
 
 func makeWsStatus(md metadata.Metadata, coin, side string, status hyperliquid.OrderStatusValue, original, remaining, limit float64, ts time.Time) hyperliquid.WsOrder {

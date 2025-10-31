@@ -236,6 +236,8 @@ func TestRecordScaledOrderPublishesEvent(t *testing.T) {
 	require.InDelta(t, mult, effective.Multiplier, 1e-9)
 	require.InDelta(t, 0, audit.RoundingDelta, 1e-9)
 	require.Equal(t, "tester", audit.MultiplierUpdatedBy)
+	require.False(t, audit.Skipped)
+	require.Nil(t, audit.SkipReason)
 
 	events := stream.all()
 	require.GreaterOrEqual(t, len(events), 2)
@@ -251,6 +253,8 @@ func TestRecordScaledOrderPublishesEvent(t *testing.T) {
 	require.Equal(t, "tester", *auditEvt.Actor)
 	require.NotNil(t, auditEvt.ScaledOrderAudit)
 	require.InDelta(t, 100.0, auditEvt.ScaledOrderAudit.ScaledSize, 1e-9)
+	require.False(t, auditEvt.ScaledOrderAudit.Skipped)
+	require.Nil(t, auditEvt.ScaledOrderAudit.SkipReason)
 	require.NotNil(t, auditEvt.ScalerConfig)
 	require.InDelta(t, mult, auditEvt.ScalerConfig.Multiplier, 1e-9)
 	require.Equal(t, md.Hex(), auditEvt.ScalerConfig.Metadata)
@@ -295,6 +299,7 @@ func TestRecordScaledOrderUsesAppliedMultiplier(t *testing.T) {
 	require.InDelta(t, applied, effective.Multiplier, 1e-9)
 	require.Equal(t, OrderScalerSourceBotOverride, effective.Source)
 	require.InDelta(t, 0, audit.RoundingDelta, 1e-9)
+	require.False(t, audit.Skipped)
 
 	events := stream.all()
 	var auditEvt *api.StreamEvent
@@ -306,6 +311,7 @@ func TestRecordScaledOrderUsesAppliedMultiplier(t *testing.T) {
 	require.NotNil(t, auditEvt)
 	require.NotNil(t, auditEvt.ScaledOrderAudit)
 	require.InDelta(t, applied, auditEvt.ScaledOrderAudit.Multiplier, 1e-9)
+	require.False(t, auditEvt.ScaledOrderAudit.Skipped)
 	require.NotNil(t, auditEvt.ScalerConfig)
 	require.InDelta(t, applied, auditEvt.ScalerConfig.Multiplier, 1e-9)
 }
@@ -388,6 +394,8 @@ func TestScaledOrderAuditHistory(t *testing.T) {
 	require.Equal(t, md.Hex(), byMetadata[0].Metadata.Hex())
 	require.Equal(t, 0, byMetadata[0].StackIndex)
 	require.Equal(t, 1, byMetadata[1].StackIndex)
+	require.False(t, byMetadata[0].Skipped)
+	require.Nil(t, byMetadata[0].SkipReason)
 
 	byDeal, err := store.ListScaledOrdersByDeal(ctx, dealID)
 	require.NoError(t, err)
@@ -397,6 +405,7 @@ func TestScaledOrderAuditHistory(t *testing.T) {
 	require.Equal(t, submittedID, *byDeal[2].SubmittedOrderID)
 	require.Equal(t, "system", byDeal[2].MultiplierUpdatedBy)
 	require.Equal(t, audit3.CreatedAt.UTC().UnixMilli(), byDeal[2].CreatedAt.UTC().UnixMilli())
+	require.False(t, byDeal[2].Skipped)
 }
 
 func TestListOrderScalers(t *testing.T) {

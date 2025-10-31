@@ -59,6 +59,7 @@ func TestServiceScaleAppliesMultiplierAndRounding(t *testing.T) {
 	require.NoError(t, err)
 	require.InDelta(t, 2.0, result.Size, 1e-6)
 	require.InDelta(t, 15.0, result.Price, 1e-6)
+	require.False(t, result.Audit.Skipped)
 
 	audits, err := store.ListScaledOrdersByMetadata(ctx, md)
 	require.NoError(t, err)
@@ -89,8 +90,18 @@ func TestServiceScaleRejectsBelowMinimum(t *testing.T) {
 	event := tc.BotEvent{CreatedAt: time.Now(), Coin: "ETH", Price: 20.0, Size: 1.0}
 
 	req := BuildRequest(md, event, order)
-	_, err = scaler.Scale(ctx, req, &order)
+	result, err := scaler.Scale(ctx, req, &order)
 	require.ErrorIs(t, err, ErrBelowMinimum)
+
+	require.True(t, result.Audit.Skipped)
+	require.NotNil(t, result.Audit.SkipReason)
+	require.Contains(t, *result.Audit.SkipReason, "below minimum notional")
+
+	audits, listErr := store.ListScaledOrdersByMetadata(ctx, md)
+	require.NoError(t, listErr)
+	require.Len(t, audits, 1)
+	require.True(t, audits[0].Skipped)
+	require.NotNil(t, audits[0].SkipReason)
 }
 
 func newTestStore(t *testing.T) *storage.Storage {

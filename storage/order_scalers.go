@@ -41,6 +41,8 @@ type ScaledOrderAudit struct {
 	MultiplierUpdatedBy string
 	CreatedAt           time.Time
 	SubmittedOrderID    *string
+	Skipped             bool
+	SkipReason          *string
 }
 
 type ScaledOrderAuditParams struct {
@@ -56,6 +58,8 @@ type ScaledOrderAuditParams struct {
 	MultiplierUpdatedBy string
 	CreatedAt           time.Time
 	SubmittedOrderID    *string
+	Skipped             bool
+	SkipReason          *string
 }
 
 type OrderScalerSource string
@@ -100,6 +104,8 @@ type RecordScaledOrderParams struct {
 	OrderSide         string
 	CreatedAt         time.Time
 	SubmittedOrderID  *string
+	Skipped           bool
+	SkipReason        *string
 }
 
 func (s *Storage) GetOrderScaler(ctx context.Context) (OrderScalerState, error) {
@@ -309,6 +315,8 @@ func (s *Storage) RecordScaledOrder(ctx context.Context, params RecordScaledOrde
 		MultiplierUpdatedBy: effective.Actor(),
 		CreatedAt:           params.CreatedAt,
 		SubmittedOrderID:    params.SubmittedOrderID,
+		Skipped:             params.Skipped,
+		SkipReason:          params.SkipReason,
 	})
 	if err != nil {
 		return ScaledOrderAudit{}, EffectiveOrderScaler{}, err
@@ -341,6 +349,8 @@ func (s *Storage) InsertScaledOrderAudit(ctx context.Context, params ScaledOrder
 		MultiplierUpdatedBy: params.MultiplierUpdatedBy,
 		CreatedAtUtc:        createdAt.UTC().UnixMilli(),
 		SubmittedOrderID:    params.SubmittedOrderID,
+		Skipped:             boolToInt(params.Skipped),
+		SkipReason:          params.SkipReason,
 	}
 
 	id, err := s.queries.InsertScaledOrder(ctx, insert)
@@ -362,6 +372,8 @@ func (s *Storage) InsertScaledOrderAudit(ctx context.Context, params ScaledOrder
 		MultiplierUpdatedBy: params.MultiplierUpdatedBy,
 		CreatedAt:           createdAt,
 		SubmittedOrderID:    params.SubmittedOrderID,
+		Skipped:             params.Skipped,
+		SkipReason:          params.SkipReason,
 	}
 
 	stateRow, err := s.queries.GetOrderScaler(ctx)
@@ -426,6 +438,13 @@ func (s *Storage) ListScaledOrdersByDeal(ctx context.Context, dealID uint32) ([]
 	return convertScaledOrderRows(rows)
 }
 
+func boolToInt(v bool) int64 {
+	if v {
+		return 1
+	}
+	return 0
+}
+
 func convertOrderScaler(row sqlcgen.OrderScaler) OrderScalerState {
 	return OrderScalerState{
 		Multiplier: row.Multiplier,
@@ -478,6 +497,8 @@ func convertScaledOrder(row sqlcgen.ScaledOrder) (ScaledOrderAudit, error) {
 		MultiplierUpdatedBy: row.MultiplierUpdatedBy,
 		CreatedAt:           time.UnixMilli(row.CreatedAtUtc).UTC(),
 		SubmittedOrderID:    row.SubmittedOrderID,
+		Skipped:             row.Skipped != 0,
+		SkipReason:          row.SkipReason,
 	}, nil
 }
 
@@ -541,9 +562,13 @@ func toAPIScaledOrderAudit(audit ScaledOrderAudit) *api.ScaledOrderAudit {
 		OrderSide:           audit.OrderSide,
 		MultiplierUpdatedBy: audit.MultiplierUpdatedBy,
 		CreatedAt:           audit.CreatedAt,
+		Skipped:             audit.Skipped,
 	}
 	if audit.SubmittedOrderID != nil {
 		out.SubmittedOrderId = audit.SubmittedOrderID
+	}
+	if audit.SkipReason != nil {
+		out.SkipReason = audit.SkipReason
 	}
 	return &out
 }

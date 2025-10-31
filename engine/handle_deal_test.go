@@ -8,7 +8,9 @@ import (
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/adapter"
+	"github.com/recomma/recomma/engine/orderscaler"
 	"github.com/recomma/recomma/filltracker"
+	"github.com/recomma/recomma/hl"
 	"github.com/recomma/recomma/internal/testutil"
 	"github.com/recomma/recomma/metadata"
 	"github.com/recomma/recomma/recomma"
@@ -26,6 +28,16 @@ func (c *capturingEmitter) Emit(_ context.Context, w recomma.OrderWork) error {
 	return nil
 }
 
+type staticConstraints struct {
+	constraint hl.CoinConstraints
+}
+
+func (s staticConstraints) Resolve(_ context.Context, coin string) (hl.CoinConstraints, error) {
+	out := s.constraint
+	out.Coin = coin
+	return out, nil
+}
+
 type harness struct {
 	ctx     context.Context
 	store   *storage.Storage
@@ -35,7 +47,7 @@ type harness struct {
 	key     WorkKey
 }
 
-func newHarness(t *testing.T, botID, dealID uint32) *harness {
+func newHarness(t *testing.T, botID, dealID uint32, opts ...EngineOption) *harness {
 	t.Helper()
 
 	// storage.WithLogger(slog.Default())
@@ -43,7 +55,9 @@ func newHarness(t *testing.T, botID, dealID uint32) *harness {
 	require.NoError(t, err)
 
 	em := &capturingEmitter{}
-	engine := NewEngine(nil, WithStorage(store), WithEmitter(em))
+	engineOpts := []EngineOption{WithStorage(store), WithEmitter(em)}
+	engineOpts = append(engineOpts, opts...)
+	engine := NewEngine(nil, engineOpts...)
 
 	deal := &tc.Deal{
 		Id:           int(dealID),
@@ -251,6 +265,82 @@ func TestProcessDeal_TakeProfitSizedFromTracker(t *testing.T) {
 	require.InDelta(t, 5.0, got.Create.Size, 1e-6)
 	require.True(t, got.Create.ReduceOnly)
 	require.InDelta(t, 12.5, got.Create.Price, 1e-6)
+}
+
+func TestProcessDeal_AppliesOrderScaler(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	const (
+		botID  = uint32(99)
+		dealID = uint32(1234)
+	)
+
+	h := newHarness(t, botID, dealID)
+	scaler := orderscaler.New(h.store, staticConstraints{constraint: hl.CoinConstraints{SizeStep: 0.1, PriceSigFigs: 5}}, nil)
+	h.engine = NewEngine(nil, WithStorage(h.store), WithEmitter(h.emitter), WithOrderScaler(scaler))
+
+	_, err := h.store.UpsertOrderScaler(ctx, 0.5, "tester", nil)
+	require.NoError(t, err)
+
+	base := time.Now().UTC()
+	event, md := testutil.NewBotEvent(t, base, botID, dealID,
+		testutil.WithPrice(12.34),
+		testutil.WithSize(2.0),
+	)
+
+	err = h.engine.processDeal(ctx, h.key, "BTC", []tc.BotEvent{event})
+	require.NoError(t, err)
+
+	require.Len(t, h.emitter.items, 1)
+	work := h.emitter.items[0]
+	require.NotNil(t, work.Action.Create)
+	require.InDelta(t, 1.0, work.Action.Create.Size, 1e-6)
+	require.InDelta(t, 12.34, work.Action.Create.Price, 1e-6)
+	require.InDelta(t, 1.0, work.BotEvent.Size, 1e-6)
+
+	audits, err := h.store.ListScaledOrdersByMetadata(ctx, md)
+	require.NoError(t, err)
+	require.Len(t, audits, 1)
+	require.InDelta(t, 2.0, audits[0].OriginalSize, 1e-6)
+	require.InDelta(t, 1.0, audits[0].ScaledSize, 1e-6)
+	require.False(t, audits[0].Skipped)
+	require.Nil(t, audits[0].SkipReason)
+}
+
+func TestProcessDeal_ScaledOrderBelowMinimumRecordsAudit(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	const (
+		botID  = uint32(55)
+		dealID = uint32(990)
+	)
+
+	h := newHarness(t, botID, dealID)
+	scaler := orderscaler.New(h.store, staticConstraints{constraint: hl.CoinConstraints{SizeStep: 0.01, PriceSigFigs: 5, MinNotional: 50}}, nil)
+	h.engine = NewEngine(nil, WithStorage(h.store), WithEmitter(h.emitter), WithOrderScaler(scaler))
+
+	_, err := h.store.UpsertOrderScaler(ctx, 1.0, "tester", nil)
+	require.NoError(t, err)
+
+	base := time.Now().UTC()
+	event, md := testutil.NewBotEvent(t, base, botID, dealID,
+		testutil.WithPrice(10.0),
+		testutil.WithSize(1.0),
+	)
+
+	err = h.engine.processDeal(ctx, h.key, "BTC", []tc.BotEvent{event})
+	require.NoError(t, err)
+
+	require.Empty(t, h.emitter.items)
+
+	audits, listErr := h.store.ListScaledOrdersByMetadata(ctx, md)
+	require.NoError(t, listErr)
+	require.Len(t, audits, 1)
+	require.True(t, audits[0].Skipped)
+	require.NotNil(t, audits[0].SkipReason)
+	require.Contains(t, *audits[0].SkipReason, "below minimum notional")
 }
 
 func makeWsStatus(md metadata.Metadata, coin, side string, status hyperliquid.OrderStatusValue, original, remaining, limit float64, ts time.Time) hyperliquid.WsOrder {

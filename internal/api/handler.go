@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,13 @@ type Store interface {
 	ListBots(ctx context.Context, opts ListBotsOptions) ([]BotItem, *string, error)
 	ListDeals(ctx context.Context, opts ListDealsOptions) ([]tc.Deal, *string, error)
 	ListOrders(ctx context.Context, opts ListOrdersOptions) ([]OrderItem, *string, error)
+	ListOrderScalers(ctx context.Context, opts ListOrderScalersOptions) ([]OrderScalerConfigItem, *string, error)
+	GetDefaultOrderScaler(ctx context.Context) (OrderScalerState, error)
+	UpsertDefaultOrderScaler(ctx context.Context, multiplier float64, updatedBy string, notes *string) (OrderScalerState, error)
+	GetBotOrderScalerOverride(ctx context.Context, botID uint32) (*OrderScalerOverride, bool, error)
+	UpsertBotOrderScalerOverride(ctx context.Context, botID uint32, multiplier *float64, notes *string, updatedBy string) (OrderScalerOverride, error)
+	DeleteBotOrderScalerOverride(ctx context.Context, botID uint32, updatedBy string) error
+	ResolveEffectiveOrderScalerConfig(ctx context.Context, md metadata.Metadata) (EffectiveOrderScaler, error)
 	LoadHyperliquidSubmission(ctx context.Context, md metadata.Metadata) (recomma.Action, bool, error)
 	LoadHyperliquidStatus(ctx context.Context, md metadata.Metadata) (*hyperliquid.WsOrder, bool, error)
 }
@@ -50,8 +58,9 @@ type ApiHandler struct {
 	vault    *vault.Controller
 	session  *vaultSessionManager
 
-	orders recomma.Emitter
-	prices HyperliquidPriceSource
+	orderScalerMaxMultiplier float64
+	orders                   recomma.Emitter
+	prices                   HyperliquidPriceSource
 }
 
 // NewHandler wires everything together.
@@ -145,6 +154,15 @@ func WithVaultController(controller *vault.Controller) HandlerOption {
 func WithLogger(logger *slog.Logger) HandlerOption {
 	return func(h *ApiHandler) {
 		h.logger = logger
+	}
+}
+
+// WithOrderScalerMaxMultiplier sets the maximum allowable multiplier enforced by the API.
+func WithOrderScalerMaxMultiplier(max float64) HandlerOption {
+	return func(h *ApiHandler) {
+		if max > 0 {
+			h.orderScalerMaxMultiplier = max
+		}
 	}
 }
 
@@ -244,6 +262,248 @@ func (h *ApiHandler) ListOrders(ctx context.Context, req ListOrdersRequestObject
 	return resp, nil
 }
 
+// ListOrderScalers satisfies StrictServerInterface.
+func (h *ApiHandler) ListOrderScalers(ctx context.Context, req ListOrderScalersRequestObject) (ListOrderScalersResponseObject, error) {
+	limit := clampPageSize(req.Params.Limit)
+
+	opts := ListOrderScalersOptions{
+		MetadataPrefix: req.Params.Metadata,
+		BotID:          req.Params.BotId,
+		DealID:         req.Params.DealId,
+		BotEventID:     req.Params.BotEventId,
+		Limit:          limit,
+		PageToken:      deref(req.Params.PageToken),
+	}
+
+	rows, next, err := h.store.ListOrderScalers(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	records := make([]OrderScalerConfigRecord, 0, len(rows))
+	for _, item := range rows {
+		cfg := item.Config
+		cfg.Multiplier = clampOrderScalerMultiplier(cfg.Multiplier, h.orderScalerMaxMultiplier)
+		records = append(records, OrderScalerConfigRecord{
+			Metadata:   item.Metadata.Hex(),
+			ObservedAt: item.ObservedAt,
+			Actor:      item.Actor,
+			Config:     cfg,
+		})
+	}
+
+	resp := ListOrderScalers200JSONResponse{Items: records}
+	if next != nil {
+		resp.NextPageToken = next
+	}
+	return resp, nil
+}
+
+// GetOrderScalerConfig satisfies StrictServerInterface.
+func (h *ApiHandler) GetOrderScalerConfig(ctx context.Context, req GetOrderScalerConfigRequestObject) (GetOrderScalerConfigResponseObject, error) {
+	if ok, expired := h.requireSession(ctx); !ok {
+		if expired {
+			return GetOrderScalerConfig401Response{}, nil
+		}
+		return GetOrderScalerConfig401Response{}, nil
+	}
+
+	defaultState, err := h.store.GetDefaultOrderScaler(ctx)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "get default order scaler", slog.String("error", err.Error()))
+		return GetOrderScalerConfig500Response{}, nil
+	}
+
+	effective, err := h.store.ResolveEffectiveOrderScalerConfig(ctx, metadata.Metadata{})
+	if err != nil {
+		h.logger.ErrorContext(ctx, "resolve default order scaler", slog.String("error", err.Error()))
+		return GetOrderScalerConfig500Response{}, nil
+	}
+
+	response := OrderScalerConfigResponse{
+		Default:   defaultState,
+		Effective: buildOrderScalerEffectiveMultiplier(effective, h.orderScalerMaxMultiplier),
+	}
+	return GetOrderScalerConfig200JSONResponse(response), nil
+}
+
+// UpdateOrderScalerConfig satisfies StrictServerInterface.
+func (h *ApiHandler) UpdateOrderScalerConfig(ctx context.Context, req UpdateOrderScalerConfigRequestObject) (UpdateOrderScalerConfigResponseObject, error) {
+	if ok, expired := h.requireSession(ctx); !ok {
+		if expired {
+			return UpdateOrderScalerConfig401Response{}, nil
+		}
+		return UpdateOrderScalerConfig401Response{}, nil
+	}
+
+	if req.Body == nil {
+		return UpdateOrderScalerConfig400Response{}, nil
+	}
+
+	if err := h.validateOrderScalerMultiplier(req.Body.Multiplier); err != nil {
+		h.logger.WarnContext(ctx, "invalid order scaler multiplier", slog.String("error", err.Error()))
+		return UpdateOrderScalerConfig400Response{}, nil
+	}
+
+	actor := h.resolveActor()
+
+	state, err := h.store.UpsertDefaultOrderScaler(ctx, req.Body.Multiplier, actor, req.Body.Notes)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "upsert default order scaler", slog.String("error", err.Error()))
+		return UpdateOrderScalerConfig500Response{}, nil
+	}
+
+	effective := EffectiveOrderScaler{
+		Default:    state,
+		Metadata:   "",
+		Multiplier: state.Multiplier,
+		Source:     Default,
+	}
+
+	response := OrderScalerConfigResponse{
+		Default:   state,
+		Effective: buildOrderScalerEffectiveMultiplier(effective, h.orderScalerMaxMultiplier),
+	}
+	return UpdateOrderScalerConfig200JSONResponse(response), nil
+}
+
+// GetBotOrderScalerConfig satisfies StrictServerInterface.
+func (h *ApiHandler) GetBotOrderScalerConfig(ctx context.Context, req GetBotOrderScalerConfigRequestObject) (GetBotOrderScalerConfigResponseObject, error) {
+	if ok, expired := h.requireSession(ctx); !ok {
+		if expired {
+			return GetBotOrderScalerConfig401Response{}, nil
+		}
+		return GetBotOrderScalerConfig401Response{}, nil
+	}
+
+	botID, ok := normalizeBotID(req.BotId)
+	if !ok {
+		return GetBotOrderScalerConfig400Response{}, nil
+	}
+
+	defaultState, err := h.store.GetDefaultOrderScaler(ctx)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "get default order scaler", slog.String("error", err.Error()))
+		return GetBotOrderScalerConfig500Response{}, nil
+	}
+
+	override, overrideFound, err := h.store.GetBotOrderScalerOverride(ctx, botID)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "get bot order scaler override", slog.String("error", err.Error()), slog.Uint64("bot_id", uint64(botID)))
+		return GetBotOrderScalerConfig500Response{}, nil
+	}
+
+	effective, err := h.store.ResolveEffectiveOrderScalerConfig(ctx, metadata.Metadata{BotID: botID})
+	if err != nil {
+		h.logger.ErrorContext(ctx, "resolve bot order scaler", slog.String("error", err.Error()), slog.Uint64("bot_id", uint64(botID)))
+		return GetBotOrderScalerConfig500Response{}, nil
+	}
+
+	response := BotOrderScalerConfigResponse{
+		BotId:     int64(botID),
+		Default:   defaultState,
+		Effective: buildOrderScalerEffectiveMultiplier(effective, h.orderScalerMaxMultiplier),
+	}
+	if overrideFound && override != nil {
+		response.Override = override
+	}
+
+	return GetBotOrderScalerConfig200JSONResponse(response), nil
+}
+
+// UpsertBotOrderScalerConfig satisfies StrictServerInterface.
+func (h *ApiHandler) UpsertBotOrderScalerConfig(ctx context.Context, req UpsertBotOrderScalerConfigRequestObject) (UpsertBotOrderScalerConfigResponseObject, error) {
+	if ok, expired := h.requireSession(ctx); !ok {
+		if expired {
+			return UpsertBotOrderScalerConfig401Response{}, nil
+		}
+		return UpsertBotOrderScalerConfig401Response{}, nil
+	}
+
+	botID, ok := normalizeBotID(req.BotId)
+	if !ok {
+		return UpsertBotOrderScalerConfig400Response{}, nil
+	}
+
+	if req.Body == nil {
+		return UpsertBotOrderScalerConfig400Response{}, nil
+	}
+
+	if err := h.validateOrderScalerMultiplier(req.Body.Multiplier); err != nil {
+		h.logger.WarnContext(ctx, "invalid bot order scaler multiplier", slog.String("error", err.Error()), slog.Uint64("bot_id", uint64(botID)))
+		return UpsertBotOrderScalerConfig400Response{}, nil
+	}
+
+	actor := h.resolveActor()
+
+	override, err := h.store.UpsertBotOrderScalerOverride(ctx, botID, &req.Body.Multiplier, req.Body.Notes, actor)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "upsert bot order scaler override", slog.String("error", err.Error()), slog.Uint64("bot_id", uint64(botID)))
+		return UpsertBotOrderScalerConfig500Response{}, nil
+	}
+
+	defaultState, err := h.store.GetDefaultOrderScaler(ctx)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "get default order scaler", slog.String("error", err.Error()))
+		return UpsertBotOrderScalerConfig500Response{}, nil
+	}
+
+	effective, err := h.store.ResolveEffectiveOrderScalerConfig(ctx, metadata.Metadata{BotID: botID})
+	if err != nil {
+		h.logger.ErrorContext(ctx, "resolve bot order scaler", slog.String("error", err.Error()), slog.Uint64("bot_id", uint64(botID)))
+		return UpsertBotOrderScalerConfig500Response{}, nil
+	}
+
+	response := BotOrderScalerConfigResponse{
+		BotId:     int64(botID),
+		Default:   defaultState,
+		Override:  &override,
+		Effective: buildOrderScalerEffectiveMultiplier(effective, h.orderScalerMaxMultiplier),
+	}
+	return UpsertBotOrderScalerConfig200JSONResponse(response), nil
+}
+
+// DeleteBotOrderScalerConfig satisfies StrictServerInterface.
+func (h *ApiHandler) DeleteBotOrderScalerConfig(ctx context.Context, req DeleteBotOrderScalerConfigRequestObject) (DeleteBotOrderScalerConfigResponseObject, error) {
+	if ok, expired := h.requireSession(ctx); !ok {
+		if expired {
+			return DeleteBotOrderScalerConfig401Response{}, nil
+		}
+		return DeleteBotOrderScalerConfig401Response{}, nil
+	}
+
+	botID, ok := normalizeBotID(req.BotId)
+	if !ok {
+		return DeleteBotOrderScalerConfig400Response{}, nil
+	}
+
+	actor := h.resolveActor()
+
+	if err := h.store.DeleteBotOrderScalerOverride(ctx, botID, actor); err != nil {
+		h.logger.ErrorContext(ctx, "delete bot order scaler override", slog.String("error", err.Error()), slog.Uint64("bot_id", uint64(botID)))
+		return DeleteBotOrderScalerConfig500Response{}, nil
+	}
+
+	defaultState, err := h.store.GetDefaultOrderScaler(ctx)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "get default order scaler", slog.String("error", err.Error()))
+		return DeleteBotOrderScalerConfig500Response{}, nil
+	}
+
+	effective, err := h.store.ResolveEffectiveOrderScalerConfig(ctx, metadata.Metadata{BotID: botID})
+	if err != nil {
+		h.logger.ErrorContext(ctx, "resolve bot order scaler", slog.String("error", err.Error()), slog.Uint64("bot_id", uint64(botID)))
+		return DeleteBotOrderScalerConfig500Response{}, nil
+	}
+
+	response := BotOrderScalerConfigResponse{
+		BotId:     int64(botID),
+		Default:   defaultState,
+		Effective: buildOrderScalerEffectiveMultiplier(effective, h.orderScalerMaxMultiplier),
+	}
+	return DeleteBotOrderScalerConfig200JSONResponse(response), nil
+}
+
 func makeBotRecords(rows []BotItem) []BotRecord {
 	items := make([]BotRecord, 0, len(rows))
 	for _, item := range rows {
@@ -254,6 +514,76 @@ func makeBotRecords(rows []BotItem) []BotRecord {
 		})
 	}
 	return items
+}
+
+func (h *ApiHandler) validateOrderScalerMultiplier(multiplier float64) error {
+	if multiplier <= 0 {
+		return fmt.Errorf("multiplier must be positive")
+	}
+	if h.orderScalerMaxMultiplier > 0 && multiplier > h.orderScalerMaxMultiplier {
+		return fmt.Errorf("multiplier %.4f exceeds max %.4f", multiplier, h.orderScalerMaxMultiplier)
+	}
+	return nil
+}
+
+func (h *ApiHandler) resolveActor() string {
+	if h.vault != nil {
+		status := h.vault.Status()
+		if status.User != nil {
+			if username := strings.TrimSpace(status.User.Username); username != "" {
+				return username
+			}
+		}
+	}
+	return "system"
+}
+
+func normalizeBotID(raw int64) (uint32, bool) {
+	if raw <= 0 || raw > math.MaxUint32 {
+		return 0, false
+	}
+	return uint32(raw), true
+}
+
+func buildOrderScalerEffectiveMultiplier(effective EffectiveOrderScaler, maxMultiplier float64) OrderScalerEffectiveMultiplier {
+	notes := effective.Default.Notes
+	updatedBy := effective.Default.UpdatedBy
+	updatedAt := effective.Default.UpdatedAt
+
+	if effective.Source == BotOverride && effective.Override != nil {
+		updatedBy = effective.Override.UpdatedBy
+		updatedAt = effective.Override.UpdatedAt
+		if effective.Override.Notes != nil {
+			notes = effective.Override.Notes
+		} else {
+			notes = nil
+		}
+	}
+
+	return OrderScalerEffectiveMultiplier{
+		Source:    effective.Source,
+		Value:     clampOrderScalerMultiplier(effective.Multiplier, maxMultiplier),
+		UpdatedAt: updatedAt,
+		UpdatedBy: updatedBy,
+		Notes:     notes,
+	}
+}
+
+func clampOrderScalerMultiplier(multiplier, maxMultiplier float64) float64 {
+	if maxMultiplier > 0 && multiplier > maxMultiplier {
+		return maxMultiplier
+	}
+	return multiplier
+}
+
+func clampEffectiveOrderScaler(effective *EffectiveOrderScaler, maxMultiplier float64) *EffectiveOrderScaler {
+	if effective == nil {
+		return nil
+	}
+
+	clamped := *effective
+	clamped.Multiplier = clampOrderScalerMultiplier(clamped.Multiplier, maxMultiplier)
+	return &clamped
 }
 
 func makeDealRecords(rows []tc.Deal) []DealRecord {
@@ -306,7 +636,7 @@ func (h *ApiHandler) orderRecordFromItem(ctx context.Context, row OrderItem, inc
 		entries := make([]OrderLogEntry, 0, len(row.LogEntries))
 		identCopy := record.Identifiers
 		for _, logRow := range row.LogEntries {
-			entry, ok := h.makeOrderLogEntry(ctx, logRow.Metadata, logRow.ObservedAt, logRow.Type, logRow.BotEvent, logRow.Submission, logRow.Status, &identCopy, nil)
+			entry, ok := h.makeOrderLogEntry(ctx, logRow.Metadata, logRow.ObservedAt, logRow.Type, logRow.BotEvent, logRow.Submission, logRow.Status, logRow.ScalerConfig, logRow.ScaledAudit, logRow.Actor, &identCopy, nil)
 			if !ok {
 				continue
 			}
@@ -605,7 +935,7 @@ func (h *ApiHandler) StreamHyperliquidPrices(ctx context.Context, req StreamHype
 func (h *ApiHandler) writeSSEFrame(ctx context.Context, w io.Writer, evt StreamEvent) error {
 	ident := makeOrderIdentifiers(evt.Metadata, evt.BotEvent, evt.ObservedAt)
 
-	entry, ok := h.makeOrderLogEntry(ctx, evt.Metadata, evt.ObservedAt, evt.Type, evt.BotEvent, evt.Submission, evt.Status, &ident, evt.Sequence)
+	entry, ok := h.makeOrderLogEntry(ctx, evt.Metadata, evt.ObservedAt, evt.Type, evt.BotEvent, evt.Submission, evt.Status, evt.ScalerConfig, evt.ScaledOrderAudit, evt.Actor, &ident, evt.Sequence)
 	if !ok {
 		return nil
 	}
@@ -809,6 +1139,15 @@ type ListOrdersOptions struct {
 	PageToken      string
 }
 
+type ListOrderScalersOptions struct {
+	MetadataPrefix *string
+	BotID          *int64
+	DealID         *int64
+	BotEventID     *int64
+	Limit          int
+	PageToken      string
+}
+
 /* ---- streaming primitives ---- */
 
 type BotItem struct {
@@ -825,21 +1164,33 @@ type OrderItem struct {
 	LogEntries       []OrderLogItem
 }
 
+type OrderScalerConfigItem struct {
+	Metadata   metadata.Metadata
+	ObservedAt time.Time
+	Actor      string
+	Config     EffectiveOrderScaler
+}
+
 type OrderLogEntryType string
 
 const (
-	ThreeCommasEvent      OrderLogEntryType = "three_commas_event"
-	HyperliquidSubmission OrderLogEntryType = "hyperliquid_submission"
-	HyperliquidStatus     OrderLogEntryType = "hyperliquid_status"
+	ThreeCommasEvent       OrderLogEntryType = "three_commas_event"
+	HyperliquidSubmission  OrderLogEntryType = "hyperliquid_submission"
+	HyperliquidStatus      OrderLogEntryType = "hyperliquid_status"
+	OrderScalerConfigEntry OrderLogEntryType = "order_scaler_config"
+	ScaledOrderAuditEntry  OrderLogEntryType = "scaled_order_audit"
 )
 
 type OrderLogItem struct {
-	Type       OrderLogEntryType
-	Metadata   metadata.Metadata
-	ObservedAt time.Time
-	BotEvent   *tc.BotEvent
-	Submission interface{}
-	Status     *hyperliquid.WsOrder
+	Type         OrderLogEntryType
+	Metadata     metadata.Metadata
+	ObservedAt   time.Time
+	BotEvent     *tc.BotEvent
+	Submission   interface{}
+	Status       *hyperliquid.WsOrder
+	ScalerConfig *EffectiveOrderScaler
+	ScaledAudit  *ScaledOrderAudit
+	Actor        *string
 }
 
 type StreamFilter struct {
@@ -851,13 +1202,16 @@ type StreamFilter struct {
 }
 
 type StreamEvent struct {
-	Type       OrderLogEntryType
-	Metadata   metadata.Metadata
-	ObservedAt time.Time
-	BotEvent   *tc.BotEvent
-	Submission interface{}
-	Status     *hyperliquid.WsOrder
-	Sequence   *int64
+	Type             OrderLogEntryType
+	Metadata         metadata.Metadata
+	ObservedAt       time.Time
+	BotEvent         *tc.BotEvent
+	Submission       interface{}
+	Status           *hyperliquid.WsOrder
+	Sequence         *int64
+	ScalerConfig     *EffectiveOrderScaler
+	ScaledOrderAudit *ScaledOrderAudit
+	Actor            *string
 }
 
 func makeOrderIdentifiers(md metadata.Metadata, event *tc.BotEvent, fallback time.Time) OrderIdentifiers {
@@ -1101,7 +1455,7 @@ func cloneIdentifiers(base *OrderIdentifiers, md metadata.Metadata, createdAt, f
 	return &ident
 }
 
-func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata, observedAt time.Time, entryType OrderLogEntryType, botEvent *tc.BotEvent, submission interface{}, status *hyperliquid.WsOrder, baseIdentifiers *OrderIdentifiers, sequence *int64) (OrderLogEntry, bool) {
+func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata, observedAt time.Time, entryType OrderLogEntryType, botEvent *tc.BotEvent, submission interface{}, status *hyperliquid.WsOrder, config *EffectiveOrderScaler, audit *ScaledOrderAudit, actor *string, baseIdentifiers *OrderIdentifiers, sequence *int64) (OrderLogEntry, bool) {
 	metadataHex := md.Hex()
 	var entry OrderLogEntry
 	var botEventID *int64
@@ -1109,6 +1463,8 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata
 		val := int64(id)
 		botEventID = &val
 	}
+
+	clampedConfig := clampEffectiveOrderScaler(config, h.orderScalerMaxMultiplier)
 
 	switch entryType {
 	case ThreeCommasEvent:
@@ -1181,6 +1537,66 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata
 		}
 		if err := entry.FromHyperliquidStatusLogEntry(logEntry); err != nil {
 			h.logger.WarnContext(ctx, "marshal hyperliquid status log entry",
+				slog.String("metadata", metadataHex),
+				slog.String("error", err.Error()))
+			return OrderLogEntry{}, false
+		}
+	case OrderScalerConfigEntry:
+		if clampedConfig == nil {
+			h.logger.WarnContext(ctx, "missing scaler config payload",
+				slog.String("metadata", metadataHex))
+			return OrderLogEntry{}, false
+		}
+		actorVal := ""
+		if actor != nil {
+			actorVal = *actor
+		}
+		logEntry := OrderScalerConfigLogEntry{
+			Metadata:   metadataHex,
+			ObservedAt: observedAt,
+			Config:     *clampedConfig,
+			Actor:      actorVal,
+		}
+		if identifiers := cloneIdentifiers(baseIdentifiers, md, observedAt, observedAt); identifiers != nil {
+			logEntry.Identifiers = identifiers
+		}
+		if sequence != nil {
+			logEntry.Sequence = sequence
+		}
+		if err := entry.FromOrderScalerConfigLogEntry(logEntry); err != nil {
+			h.logger.WarnContext(ctx, "marshal scaler config log entry",
+				slog.String("metadata", metadataHex),
+				slog.String("error", err.Error()))
+			return OrderLogEntry{}, false
+		}
+	case ScaledOrderAuditEntry:
+		if audit == nil {
+			h.logger.WarnContext(ctx, "missing scaled order audit payload",
+				slog.String("metadata", metadataHex))
+			return OrderLogEntry{}, false
+		}
+		actorVal := ""
+		if actor != nil {
+			actorVal = *actor
+		}
+		logEntry := ScaledOrderAuditLogEntry{
+			Metadata:   metadataHex,
+			ObservedAt: observedAt,
+			Audit:      *audit,
+			Actor:      actorVal,
+		}
+		if clampedConfig != nil {
+			cfgCopy := *clampedConfig
+			logEntry.Effective = &cfgCopy
+		}
+		if identifiers := cloneIdentifiers(baseIdentifiers, md, createdAt(botEvent), observedAt); identifiers != nil {
+			logEntry.Identifiers = identifiers
+		}
+		if sequence != nil {
+			logEntry.Sequence = sequence
+		}
+		if err := entry.FromScaledOrderAuditLogEntry(logEntry); err != nil {
+			h.logger.WarnContext(ctx, "marshal scaled order audit log entry",
 				slog.String("metadata", metadataHex),
 				slog.String("error", err.Error()))
 			return OrderLogEntry{}, false

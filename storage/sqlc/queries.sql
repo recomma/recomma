@@ -399,6 +399,30 @@ WHERE deal_id = sqlc.arg(deal_id)
 ORDER BY created_at_utc DESC
 LIMIT 1;
 
+-- name: ListLatestTakeProfitStackSizes :many
+WITH ranked AS (
+    SELECT
+        CAST(json_extract(payload, '$.OrderPosition') AS INTEGER) AS order_position,
+        CAST(json_extract(payload, '$.OrderSize') AS INTEGER) AS order_size,
+        CAST(json_extract(payload, '$.Size') AS REAL) AS size,
+        created_at_utc,
+        id,
+        ROW_NUMBER() OVER (
+            PARTITION BY CAST(json_extract(payload, '$.OrderPosition') AS INTEGER)
+            ORDER BY created_at_utc DESC, id DESC
+        ) AS rn
+    FROM threecommas_botevents
+    WHERE deal_id = sqlc.arg(deal_id)
+      AND CAST(json_extract(payload, '$.OrderType') AS TEXT) = 'Take Profit'
+      AND CAST(json_extract(payload, '$.OrderSize') AS INTEGER) = CAST(sqlc.arg(order_size) AS INTEGER)
+)
+SELECT
+    order_position,
+    size
+FROM ranked
+WHERE rn = 1
+ORDER BY order_position ASC;
+
 -- Vault management
 
 -- name: EnsureVaultUser :one
@@ -519,3 +543,157 @@ WHERE credential_id = sqlc.arg(credential_id);
 -- name: DeleteWebauthnCredentialByID :exec
 DELETE FROM webauthn_credentials
 WHERE credential_id = sqlc.arg(credential_id);
+
+-- name: GetOrderScaler :one
+SELECT id, multiplier, updated_at_utc, updated_by, notes
+FROM order_scalers
+WHERE id = 1;
+
+-- name: UpsertOrderScaler :exec
+INSERT INTO order_scalers (
+    id,
+    multiplier,
+    updated_by,
+    notes
+) VALUES (
+    1,
+    sqlc.arg(multiplier),
+    sqlc.arg(updated_by),
+    sqlc.narg(notes)
+)
+ON CONFLICT(id) DO UPDATE SET
+    multiplier     = excluded.multiplier,
+    updated_by     = excluded.updated_by,
+    notes          = excluded.notes,
+    updated_at_utc = CAST(unixepoch('now','subsec') * 1000 AS INTEGER);
+
+-- name: ListBotOrderScalers :many
+SELECT bot_id, multiplier, notes, effective_from_utc, updated_at_utc, updated_by
+FROM bot_order_scalers
+ORDER BY bot_id ASC;
+
+-- name: GetBotOrderScaler :one
+SELECT bot_id, multiplier, notes, effective_from_utc, updated_at_utc, updated_by
+FROM bot_order_scalers
+WHERE bot_id = sqlc.arg(bot_id);
+
+-- name: UpsertBotOrderScaler :exec
+INSERT INTO bot_order_scalers (
+    bot_id,
+    multiplier,
+    notes,
+    updated_by
+) VALUES (
+    sqlc.arg(bot_id),
+    sqlc.narg(multiplier),
+    sqlc.narg(notes),
+    sqlc.arg(updated_by)
+)
+ON CONFLICT(bot_id) DO UPDATE SET
+    multiplier     = excluded.multiplier,
+    notes          = excluded.notes,
+    updated_by     = excluded.updated_by,
+    updated_at_utc = CAST(unixepoch('now','subsec') * 1000 AS INTEGER);
+
+-- name: DeleteBotOrderScaler :exec
+DELETE FROM bot_order_scalers
+WHERE bot_id = sqlc.arg(bot_id);
+
+-- name: InsertScaledOrder :one
+INSERT INTO scaled_orders (
+    md,
+    deal_id,
+    bot_id,
+    original_size,
+    scaled_size,
+    multiplier,
+    rounding_delta,
+    stack_index,
+    order_side,
+    multiplier_updated_by,
+    created_at_utc,
+    submitted_order_id,
+    skipped,
+    skip_reason
+) VALUES (
+    sqlc.arg(md),
+    sqlc.arg(deal_id),
+    sqlc.arg(bot_id),
+    sqlc.arg(original_size),
+    sqlc.arg(scaled_size),
+    sqlc.arg(multiplier),
+    sqlc.arg(rounding_delta),
+    sqlc.arg(stack_index),
+    sqlc.arg(order_side),
+    sqlc.arg(multiplier_updated_by),
+    sqlc.arg(created_at_utc),
+    sqlc.narg(submitted_order_id),
+    sqlc.arg(skipped),
+    sqlc.narg(skip_reason)
+)
+RETURNING id;
+
+-- name: ListScaledOrdersByMetadata :many
+SELECT
+    id,
+    md,
+    deal_id,
+    bot_id,
+    original_size,
+    scaled_size,
+    multiplier,
+    rounding_delta,
+    stack_index,
+    order_side,
+    multiplier_updated_by,
+    created_at_utc,
+    submitted_order_id,
+    skipped,
+    skip_reason
+FROM scaled_orders
+WHERE md = sqlc.arg(md)
+ORDER BY created_at_utc ASC, id ASC;
+
+-- name: ListScaledOrdersByDeal :many
+SELECT
+    id,
+    md,
+    deal_id,
+    bot_id,
+    original_size,
+    scaled_size,
+    multiplier,
+    rounding_delta,
+    stack_index,
+    order_side,
+    multiplier_updated_by,
+    created_at_utc,
+    submitted_order_id,
+    skipped,
+    skip_reason
+FROM scaled_orders
+WHERE deal_id = sqlc.arg(deal_id)
+ORDER BY created_at_utc ASC, id ASC;
+
+-- name: ListScaledOrderAuditsForMetadata :many
+SELECT
+    id,
+    md,
+    deal_id,
+    bot_id,
+    original_size,
+    scaled_size,
+    multiplier,
+    rounding_delta,
+    stack_index,
+    order_side,
+    multiplier_updated_by,
+    created_at_utc,
+    submitted_order_id,
+    skipped,
+    skip_reason
+FROM scaled_orders
+WHERE md = sqlc.arg(metadata)
+  AND created_at_utc >= sqlc.arg(observed_from)
+  AND created_at_utc <= sqlc.arg(observed_to)
+ORDER BY created_at_utc ASC, id ASC;

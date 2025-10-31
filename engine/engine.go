@@ -11,6 +11,7 @@ import (
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/adapter"
+	"github.com/recomma/recomma/engine/orderscaler"
 	"github.com/recomma/recomma/filltracker"
 	"github.com/recomma/recomma/metadata"
 	"github.com/recomma/recomma/recomma"
@@ -41,6 +42,7 @@ type Engine struct {
 	emitter recomma.Emitter
 	logger  *slog.Logger
 	tracker *filltracker.Service
+	scaler  *orderscaler.Service
 }
 
 type EngineOption func(*Engine)
@@ -60,6 +62,12 @@ func WithEmitter(emitter recomma.Emitter) EngineOption {
 func WithFillTracker(tracker *filltracker.Service) EngineOption {
 	return func(h *Engine) {
 		h.tracker = tracker
+	}
+}
+
+func WithOrderScaler(scaler *orderscaler.Service) EngineOption {
+	return func(h *Engine) {
+		h.scaler = scaler
 	}
 }
 
@@ -257,6 +265,20 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 			action, shouldEmit = e.adjustActionWithTracker(currency, md, *latestEvent, action, fillSnapshot, logger.With("botevent-id", md.BotEventID))
 			if !shouldEmit {
 				continue
+			}
+		}
+		var scaleResult *orderscaler.Result
+		if latestEvent != nil {
+			var err error
+			action, scaleResult, shouldEmit, err = e.applyScaling(ctx, md, latestEvent, action, logger.With("botevent-id", md.BotEventID))
+			if err != nil {
+				return fmt.Errorf("scale order %d: %w", md.BotEventID, err)
+			}
+			if !shouldEmit {
+				continue
+			}
+			if e.tracker != nil && scaleResult != nil {
+				e.tracker.ApplyScaledOrder(md, scaleResult.Size, scaleResult.Price)
 			}
 		}
 		work := recomma.OrderWork{MD: md, Action: action}
@@ -465,5 +487,70 @@ func (e *Engine) adjustActionWithTracker(
 		return action, true
 	default:
 		return action, true
+	}
+}
+
+func (e *Engine) applyScaling(
+	ctx context.Context,
+	md metadata.Metadata,
+	latest *recomma.BotEvent,
+	action recomma.Action,
+	logger *slog.Logger,
+) (recomma.Action, *orderscaler.Result, bool, error) {
+	if e.scaler == nil || latest == nil {
+		return action, nil, true, nil
+	}
+
+	switch action.Type {
+	case recomma.ActionCreate:
+		if action.Create == nil {
+			return action, nil, true, nil
+		}
+		req := orderscaler.BuildRequest(md, latest.BotEvent, *action.Create)
+		result, err := e.scaler.Scale(ctx, req, action.Create)
+		if err != nil {
+			if errors.Is(err, orderscaler.ErrBelowMinimum) {
+				reason := "scaled order below minimum"
+				if result.Audit.SkipReason != nil {
+					reason = *result.Audit.SkipReason
+				}
+				logger.Warn("skipping scaled order below venue minimum", slog.Float64("price", req.Price), slog.Float64("size", req.OriginalSize), slog.Float64("scaled_size", result.Size), slog.String("reason", reason))
+				return recomma.Action{Type: recomma.ActionNone, Reason: reason}, nil, false, nil
+			}
+			return action, nil, false, err
+		}
+		latest.Size = result.Size
+		latest.BotEvent.Size = result.Size
+		if result.Price > 0 {
+			latest.Price = result.Price
+			latest.BotEvent.Price = result.Price
+		}
+		return action, &result, true, nil
+	case recomma.ActionModify:
+		if action.Modify == nil {
+			return action, nil, true, nil
+		}
+		req := orderscaler.BuildRequest(md, latest.BotEvent, action.Modify.Order)
+		result, err := e.scaler.Scale(ctx, req, &action.Modify.Order)
+		if err != nil {
+			if errors.Is(err, orderscaler.ErrBelowMinimum) {
+				reason := "scaled order below minimum"
+				if result.Audit.SkipReason != nil {
+					reason = *result.Audit.SkipReason
+				}
+				logger.Warn("skipping scaled modify below venue minimum", slog.Float64("price", req.Price), slog.Float64("size", req.OriginalSize), slog.Float64("scaled_size", result.Size), slog.String("reason", reason))
+				return recomma.Action{Type: recomma.ActionNone, Reason: reason}, nil, false, nil
+			}
+			return action, nil, false, err
+		}
+		latest.Size = result.Size
+		latest.BotEvent.Size = result.Size
+		if result.Price > 0 {
+			latest.Price = result.Price
+			latest.BotEvent.Price = result.Price
+		}
+		return action, &result, true, nil
+	default:
+		return action, nil, true, nil
 	}
 }

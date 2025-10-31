@@ -1,0 +1,60 @@
+= Order scaler architecture
+:page-role: concept
+
+The order scaler layer sits between deal planning and Hyperliquid submission. It
+normalizes multiplier configuration, persists audit trails, and surfaces runtime changes
+through the existing storage streams.
+
+== Configuration hierarchy
+
+*Global default*:: Stored as a singleton row in `order_scalers`. It defines the multiplier
+applied when no override exists and records the actor (`updated_by`), timestamp, and
+optional notes. Updates hot-reload across the engine without a restart.
+
+*Per-bot override*:: Each bot ID may persist a row in `bot_order_scalers`. Overrides carry
+the requested multiplier (nullable so future designs can explicitly inherit), notes, the
+operator who set it, and the `effective_from` timestamp used to order history. Deleting an
+override removes the row and immediately falls back to the default multiplier.
+
+*Effective multiplier*:: Whenever the API reads configuration it resolves the override
+against the default and returns an `effective` block showing the source (`default` or
+`bot_override`), multiplier, audit metadata, and notes. The same structure shows up in the
+order log stream so consumers can reason about configuration drift.
+
+== Data flow
+
+1. The engine requests the effective multiplier for each deal before generating Hyperliquid
+   orders. It applies the multiplier across the initial order and every take-profit stack,
+   delegating final rounding to the Hyperliquid helpers so venue tick/lot constraints stay
+   intact.
+2. If a scaled leg would fall below Hyperliquid minimums the engine flags the deal for
+   operator review instead of submitting a non-compliant order.
+3. Once a scaled order is accepted for submission the storage layer records a row in
+   `scaled_orders`, capturing the bot/deal identifiers, original size, scaled size,
+   multiplier, rounding delta, stack index, order side, and timestamps. The record is
+   published to downstream consumers as part of the order log stream.
+
+== API and streaming
+
+*Configuration CRUD*:: The API exposes `GET`/`PUT` `/api/v1/order-scaler` for the global
+multiplier and `GET`/`PUT`/`DELETE` `/api/v1/bots/{botId}/order-scaler` for overrides.
+Handlers enforce multiplier bounds (`0 < value <= max`) and propagate the actor metadata
+into storage.
+
+*SSE integration*:: Storage publishes `order_scaler_config` events on `/sse/orders` every
+time a multiplier changes, and `scaled_order_audit` events whenever an order is written to
+`scaled_orders`. Consumers receive the effective multiplier payload alongside the actor so
+they can track configuration changes and reconcile why a mirrored order size differed from
+its 3Commas source.
+
+== Interaction with other subsystems
+
+*Fill tracker*:: Receives scaled sizes so it can reconcile take-profit cleanup without
+relying on original deal sizes.
+
+*Telemetry*:: Emitters include scaled vs. executed sizes in metrics, enabling alerting if
+the venue persistently fills at different quantities.
+
+*Vault access*:: All configuration endpoints rely on the same authenticated session as the
+rest of the control plane; the scaler never stores raw credential material and respects the
+vault's sealed state.

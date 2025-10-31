@@ -77,6 +77,8 @@ const (
 const (
 	HyperliquidStatusLogEntryTypeHyperliquidStatus     HyperliquidStatusLogEntryType = "hyperliquid_status"
 	HyperliquidStatusLogEntryTypeHyperliquidSubmission HyperliquidStatusLogEntryType = "hyperliquid_submission"
+	HyperliquidStatusLogEntryTypeOrderScalerConfig     HyperliquidStatusLogEntryType = "order_scaler_config"
+	HyperliquidStatusLogEntryTypeScaledOrderAudit      HyperliquidStatusLogEntryType = "scaled_order_audit"
 	HyperliquidStatusLogEntryTypeThreeCommasEvent      HyperliquidStatusLogEntryType = "three_commas_event"
 )
 
@@ -84,6 +86,8 @@ const (
 const (
 	HyperliquidSubmissionLogEntryTypeHyperliquidStatus     HyperliquidSubmissionLogEntryType = "hyperliquid_status"
 	HyperliquidSubmissionLogEntryTypeHyperliquidSubmission HyperliquidSubmissionLogEntryType = "hyperliquid_submission"
+	HyperliquidSubmissionLogEntryTypeOrderScalerConfig     HyperliquidSubmissionLogEntryType = "order_scaler_config"
+	HyperliquidSubmissionLogEntryTypeScaledOrderAudit      HyperliquidSubmissionLogEntryType = "scaled_order_audit"
 	HyperliquidSubmissionLogEntryTypeThreeCommasEvent      HyperliquidSubmissionLogEntryType = "three_commas_event"
 )
 
@@ -91,13 +95,41 @@ const (
 const (
 	OrderLogEntryBaseTypeHyperliquidStatus     OrderLogEntryBaseType = "hyperliquid_status"
 	OrderLogEntryBaseTypeHyperliquidSubmission OrderLogEntryBaseType = "hyperliquid_submission"
+	OrderLogEntryBaseTypeOrderScalerConfig     OrderLogEntryBaseType = "order_scaler_config"
+	OrderLogEntryBaseTypeScaledOrderAudit      OrderLogEntryBaseType = "scaled_order_audit"
 	OrderLogEntryBaseTypeThreeCommasEvent      OrderLogEntryBaseType = "three_commas_event"
+)
+
+// Defines values for OrderScalerConfigLogEntryType.
+const (
+	OrderScalerConfigLogEntryTypeHyperliquidStatus     OrderScalerConfigLogEntryType = "hyperliquid_status"
+	OrderScalerConfigLogEntryTypeHyperliquidSubmission OrderScalerConfigLogEntryType = "hyperliquid_submission"
+	OrderScalerConfigLogEntryTypeOrderScalerConfig     OrderScalerConfigLogEntryType = "order_scaler_config"
+	OrderScalerConfigLogEntryTypeScaledOrderAudit      OrderScalerConfigLogEntryType = "scaled_order_audit"
+	OrderScalerConfigLogEntryTypeThreeCommasEvent      OrderScalerConfigLogEntryType = "three_commas_event"
+)
+
+// Defines values for OrderScalerSource.
+const (
+	BotOverride OrderScalerSource = "bot_override"
+	Default     OrderScalerSource = "default"
+)
+
+// Defines values for ScaledOrderAuditLogEntryType.
+const (
+	ScaledOrderAuditLogEntryTypeHyperliquidStatus     ScaledOrderAuditLogEntryType = "hyperliquid_status"
+	ScaledOrderAuditLogEntryTypeHyperliquidSubmission ScaledOrderAuditLogEntryType = "hyperliquid_submission"
+	ScaledOrderAuditLogEntryTypeOrderScalerConfig     ScaledOrderAuditLogEntryType = "order_scaler_config"
+	ScaledOrderAuditLogEntryTypeScaledOrderAudit      ScaledOrderAuditLogEntryType = "scaled_order_audit"
+	ScaledOrderAuditLogEntryTypeThreeCommasEvent      ScaledOrderAuditLogEntryType = "three_commas_event"
 )
 
 // Defines values for ThreeCommasLogEntryType.
 const (
 	ThreeCommasLogEntryTypeHyperliquidStatus     ThreeCommasLogEntryType = "hyperliquid_status"
 	ThreeCommasLogEntryTypeHyperliquidSubmission ThreeCommasLogEntryType = "hyperliquid_submission"
+	ThreeCommasLogEntryTypeOrderScalerConfig     ThreeCommasLogEntryType = "order_scaler_config"
+	ThreeCommasLogEntryTypeScaledOrderAudit      ThreeCommasLogEntryType = "scaled_order_audit"
 	ThreeCommasLogEntryTypeThreeCommasEvent      ThreeCommasLogEntryType = "three_commas_event"
 )
 
@@ -107,6 +139,14 @@ const (
 	SetupRequired VaultState = "setup_required"
 	Unsealed      VaultState = "unsealed"
 )
+
+// BotOrderScalerConfigResponse defines model for BotOrderScalerConfigResponse.
+type BotOrderScalerConfigResponse struct {
+	BotId     int64                          `json:"bot_id"`
+	Default   OrderScalerState               `json:"default"`
+	Effective OrderScalerEffectiveMultiplier `json:"effective"`
+	Override  *OrderScalerOverride           `json:"override,omitempty"`
+}
 
 // BotRecord defines model for BotRecord.
 type BotRecord struct {
@@ -147,6 +187,15 @@ type DealRecord struct {
 	// Payload A single DCA‐bot deal, with all its execution and P/L details.
 	Payload   externalRef0.Deal `json:"payload"`
 	UpdatedAt time.Time         `json:"updated_at"`
+}
+
+// EffectiveOrderScaler defines model for EffectiveOrderScaler.
+type EffectiveOrderScaler struct {
+	Default    OrderScalerState     `json:"default"`
+	Metadata   string               `json:"metadata"`
+	Multiplier float64              `json:"multiplier"`
+	Override   *OrderScalerOverride `json:"override,omitempty"`
+	Source     OrderScalerSource    `json:"source"`
 }
 
 // HyperliquidAction defines model for HyperliquidAction.
@@ -356,6 +405,112 @@ type OrderRecord struct {
 	ObservedAt  time.Time             `json:"observed_at"`
 	ThreeCommas ThreeCommasOrderState `json:"three_commas"`
 }
+
+// OrderScalerConfigLogEntry defines model for OrderScalerConfigLogEntry.
+type OrderScalerConfigLogEntry struct {
+	Actor       string               `json:"actor"`
+	BotEventId  *int64               `json:"bot_event_id"`
+	Config      EffectiveOrderScaler `json:"config"`
+	Identifiers *OrderIdentifiers    `json:"identifiers,omitempty"`
+
+	// Metadata Metadata hash (hex) identifying the order context.
+	Metadata   string    `json:"metadata"`
+	ObservedAt time.Time `json:"observed_at"`
+
+	// Sequence Monotonic sequence counter assigned at publish time, useful for de-duplicating streamed events.
+	Sequence *int64                        `json:"sequence"`
+	Type     OrderScalerConfigLogEntryType `json:"type"`
+}
+
+// OrderScalerConfigLogEntryType defines model for OrderScalerConfigLogEntry.Type.
+type OrderScalerConfigLogEntryType string
+
+// OrderScalerConfigRecord defines model for OrderScalerConfigRecord.
+type OrderScalerConfigRecord struct {
+	Actor      string               `json:"actor"`
+	Config     EffectiveOrderScaler `json:"config"`
+	Metadata   string               `json:"metadata"`
+	ObservedAt time.Time            `json:"observed_at"`
+}
+
+// OrderScalerConfigResponse defines model for OrderScalerConfigResponse.
+type OrderScalerConfigResponse struct {
+	Default   OrderScalerState               `json:"default"`
+	Effective OrderScalerEffectiveMultiplier `json:"effective"`
+}
+
+// OrderScalerEffectiveMultiplier defines model for OrderScalerEffectiveMultiplier.
+type OrderScalerEffectiveMultiplier struct {
+	Notes     *string           `json:"notes"`
+	Source    OrderScalerSource `json:"source"`
+	UpdatedAt time.Time         `json:"updated_at"`
+	UpdatedBy string            `json:"updated_by"`
+	Value     float64           `json:"value"`
+}
+
+// OrderScalerOverride defines model for OrderScalerOverride.
+type OrderScalerOverride struct {
+	BotId         int64     `json:"bot_id"`
+	EffectiveFrom time.Time `json:"effective_from"`
+	Multiplier    *float64  `json:"multiplier"`
+	Notes         *string   `json:"notes"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	UpdatedBy     string    `json:"updated_by"`
+}
+
+// OrderScalerSource defines model for OrderScalerSource.
+type OrderScalerSource string
+
+// OrderScalerState defines model for OrderScalerState.
+type OrderScalerState struct {
+	Multiplier float64   `json:"multiplier"`
+	Notes      *string   `json:"notes"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	UpdatedBy  string    `json:"updated_by"`
+}
+
+// OrderScalerUpdateRequest defines model for OrderScalerUpdateRequest.
+type OrderScalerUpdateRequest struct {
+	Multiplier float64 `json:"multiplier"`
+	Notes      *string `json:"notes"`
+}
+
+// ScaledOrderAudit defines model for ScaledOrderAudit.
+type ScaledOrderAudit struct {
+	BotId               int64     `json:"bot_id"`
+	CreatedAt           time.Time `json:"created_at"`
+	DealId              int64     `json:"deal_id"`
+	Multiplier          float64   `json:"multiplier"`
+	MultiplierUpdatedBy string    `json:"multiplier_updated_by"`
+	OrderSide           string    `json:"order_side"`
+	OriginalSize        float64   `json:"original_size"`
+	RoundingDelta       float64   `json:"rounding_delta"`
+	ScaledSize          float64   `json:"scaled_size"`
+	SkipReason          *string   `json:"skip_reason"`
+	Skipped             bool      `json:"skipped"`
+	StackIndex          int       `json:"stack_index"`
+	SubmittedOrderId    *string   `json:"submitted_order_id"`
+}
+
+// ScaledOrderAuditLogEntry defines model for ScaledOrderAuditLogEntry.
+type ScaledOrderAuditLogEntry struct {
+	Actor       string                `json:"actor"`
+	Audit       ScaledOrderAudit      `json:"audit"`
+	BotEventId  *int64                `json:"bot_event_id"`
+	Effective   *EffectiveOrderScaler `json:"effective,omitempty"`
+	Identifiers *OrderIdentifiers     `json:"identifiers,omitempty"`
+
+	// Metadata Metadata hash (hex) identifying the order context.
+	Metadata   string    `json:"metadata"`
+	ObservedAt time.Time `json:"observed_at"`
+
+	// Sequence Monotonic sequence counter assigned at publish time, useful for de-duplicating streamed events.
+	Sequence *int64                       `json:"sequence"`
+	Type     ScaledOrderAuditLogEntryType `json:"type"`
+}
+
+// ScaledOrderAuditLogEntryType defines model for ScaledOrderAuditLogEntry.Type.
+type ScaledOrderAuditLogEntryType string
 
 // ThreeCommasBotEvent defines model for ThreeCommasBotEvent.
 type ThreeCommasBotEvent struct {
@@ -625,6 +780,27 @@ type ListOrdersParams struct {
 	PageToken *string `form:"page_token,omitempty" json:"page_token,omitempty"`
 }
 
+// ListOrderScalersParams defines parameters for ListOrderScalers.
+type ListOrderScalersParams struct {
+	// Metadata Case-insensitive prefix match on metadata hex; exact match recommended for drill-down.
+	Metadata *string `form:"metadata,omitempty" json:"metadata,omitempty"`
+
+	// BotId Restrict to metadata emitted by this bot ID.
+	BotId *int64 `form:"bot_id,omitempty" json:"bot_id,omitempty"`
+
+	// DealId Restrict to metadata emitted by this deal ID.
+	DealId *int64 `form:"deal_id,omitempty" json:"deal_id,omitempty"`
+
+	// BotEventId Restrict to a specific 3Commas bot-event ID (exact match).
+	BotEventId *int64 `form:"bot_event_id,omitempty" json:"bot_event_id,omitempty"`
+
+	// Limit Maximum number of rows (default 100, max 500).
+	Limit *int32 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// PageToken Opaque cursor returned by a previous call.
+	PageToken *string `form:"page_token,omitempty" json:"page_token,omitempty"`
+}
+
 // StreamHyperliquidPricesParams defines parameters for StreamHyperliquidPrices.
 type StreamHyperliquidPricesParams struct {
 	// Coin One or more Hyperliquid coin tickers to subscribe to. Repeat the parameter to request multiple coins.
@@ -651,6 +827,12 @@ type StreamOrdersParams struct {
 
 // CancelOrderByMetadataJSONRequestBody defines body for CancelOrderByMetadata for application/json ContentType.
 type CancelOrderByMetadataJSONRequestBody = CancelOrderByMetadataRequest
+
+// UpsertBotOrderScalerConfigJSONRequestBody defines body for UpsertBotOrderScalerConfig for application/json ContentType.
+type UpsertBotOrderScalerConfigJSONRequestBody = OrderScalerUpdateRequest
+
+// UpdateOrderScalerConfigJSONRequestBody defines body for UpdateOrderScalerConfig for application/json ContentType.
+type UpdateOrderScalerConfigJSONRequestBody = OrderScalerUpdateRequest
 
 // SetupVaultJSONRequestBody defines body for SetupVault for application/json ContentType.
 type SetupVaultJSONRequestBody = VaultSetupRequest
@@ -903,6 +1085,62 @@ func (t *OrderLogEntry) MergeHyperliquidStatusLogEntry(v HyperliquidStatusLogEnt
 	return err
 }
 
+// AsOrderScalerConfigLogEntry returns the union data inside the OrderLogEntry as a OrderScalerConfigLogEntry
+func (t OrderLogEntry) AsOrderScalerConfigLogEntry() (OrderScalerConfigLogEntry, error) {
+	var body OrderScalerConfigLogEntry
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromOrderScalerConfigLogEntry overwrites any union data inside the OrderLogEntry as the provided OrderScalerConfigLogEntry
+func (t *OrderLogEntry) FromOrderScalerConfigLogEntry(v OrderScalerConfigLogEntry) error {
+	v.Type = "order_scaler_config"
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeOrderScalerConfigLogEntry performs a merge with any union data inside the OrderLogEntry, using the provided OrderScalerConfigLogEntry
+func (t *OrderLogEntry) MergeOrderScalerConfigLogEntry(v OrderScalerConfigLogEntry) error {
+	v.Type = "order_scaler_config"
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsScaledOrderAuditLogEntry returns the union data inside the OrderLogEntry as a ScaledOrderAuditLogEntry
+func (t OrderLogEntry) AsScaledOrderAuditLogEntry() (ScaledOrderAuditLogEntry, error) {
+	var body ScaledOrderAuditLogEntry
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromScaledOrderAuditLogEntry overwrites any union data inside the OrderLogEntry as the provided ScaledOrderAuditLogEntry
+func (t *OrderLogEntry) FromScaledOrderAuditLogEntry(v ScaledOrderAuditLogEntry) error {
+	v.Type = "scaled_order_audit"
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeScaledOrderAuditLogEntry performs a merge with any union data inside the OrderLogEntry, using the provided ScaledOrderAuditLogEntry
+func (t *OrderLogEntry) MergeScaledOrderAuditLogEntry(v ScaledOrderAuditLogEntry) error {
+	v.Type = "scaled_order_audit"
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t OrderLogEntry) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"type"`
@@ -921,6 +1159,10 @@ func (t OrderLogEntry) ValueByDiscriminator() (interface{}, error) {
 		return t.AsHyperliquidStatusLogEntry()
 	case "hyperliquid_submission":
 		return t.AsHyperliquidSubmissionLogEntry()
+	case "order_scaler_config":
+		return t.AsOrderScalerConfigLogEntry()
+	case "scaled_order_audit":
+		return t.AsScaledOrderAuditLogEntry()
 	case "three_commas_event":
 		return t.AsThreeCommasLogEntry()
 	default:
@@ -949,9 +1191,27 @@ type ServerInterface interface {
 	// List acted-on bot events with Hyperliquid context
 	// (GET /api/orders)
 	ListOrders(w http.ResponseWriter, r *http.Request, params ListOrdersParams)
+	// List effective order scaler configurations for observed metadata
+	// (GET /api/orders/scalers)
+	ListOrderScalers(w http.ResponseWriter, r *http.Request, params ListOrderScalersParams)
 	// Cancel Hyperliquid order by metadata
 	// (POST /api/orders/{metadata}/cancel)
 	CancelOrderByMetadata(w http.ResponseWriter, r *http.Request, metadata string)
+	// Delete a bot-specific order scaler override
+	// (DELETE /api/v1/bots/{botId}/order-scaler)
+	DeleteBotOrderScalerConfig(w http.ResponseWriter, r *http.Request, botId int64)
+	// Retrieve the effective order scaler for a bot
+	// (GET /api/v1/bots/{botId}/order-scaler)
+	GetBotOrderScalerConfig(w http.ResponseWriter, r *http.Request, botId int64)
+	// Upsert a bot-specific order scaler override
+	// (PUT /api/v1/bots/{botId}/order-scaler)
+	UpsertBotOrderScalerConfig(w http.ResponseWriter, r *http.Request, botId int64)
+	// Retrieve the global order scaler multiplier
+	// (GET /api/v1/order-scaler)
+	GetOrderScalerConfig(w http.ResponseWriter, r *http.Request)
+	// Update the global order scaler multiplier
+	// (PUT /api/v1/order-scaler)
+	UpdateOrderScalerConfig(w http.ResponseWriter, r *http.Request)
 	// Stream Hyperliquid best bid/offer quotes
 	// (GET /sse/hyperliquid/prices)
 	StreamHyperliquidPrices(w http.ResponseWriter, r *http.Request, params StreamHyperliquidPricesParams)
@@ -1231,6 +1491,79 @@ func (siw *ServerInterfaceWrapper) ListOrders(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// ListOrderScalers operation middleware
+func (siw *ServerInterfaceWrapper) ListOrderScalers(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListOrderScalersParams
+
+	// ------------- Optional query parameter "metadata" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "metadata", r.URL.Query(), &params.Metadata)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "metadata", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "bot_id" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "bot_id", r.URL.Query(), &params.BotId)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bot_id", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "deal_id" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "deal_id", r.URL.Query(), &params.DealId)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "deal_id", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "bot_event_id" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "bot_event_id", r.URL.Query(), &params.BotEventId)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bot_event_id", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "page_token" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "page_token", r.URL.Query(), &params.PageToken)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page_token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListOrderScalers(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CancelOrderByMetadata operation middleware
 func (siw *ServerInterfaceWrapper) CancelOrderByMetadata(w http.ResponseWriter, r *http.Request) {
 
@@ -1253,6 +1586,139 @@ func (siw *ServerInterfaceWrapper) CancelOrderByMetadata(w http.ResponseWriter, 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CancelOrderByMetadata(w, r, metadata)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteBotOrderScalerConfig operation middleware
+func (siw *ServerInterfaceWrapper) DeleteBotOrderScalerConfig(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "botId" -------------
+	var botId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "botId", r.PathValue("botId"), &botId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "botId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteBotOrderScalerConfig(w, r, botId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBotOrderScalerConfig operation middleware
+func (siw *ServerInterfaceWrapper) GetBotOrderScalerConfig(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "botId" -------------
+	var botId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "botId", r.PathValue("botId"), &botId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "botId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBotOrderScalerConfig(w, r, botId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpsertBotOrderScalerConfig operation middleware
+func (siw *ServerInterfaceWrapper) UpsertBotOrderScalerConfig(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "botId" -------------
+	var botId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "botId", r.PathValue("botId"), &botId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "botId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpsertBotOrderScalerConfig(w, r, botId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOrderScalerConfig operation middleware
+func (siw *ServerInterfaceWrapper) GetOrderScalerConfig(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOrderScalerConfig(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateOrderScalerConfig operation middleware
+func (siw *ServerInterfaceWrapper) UpdateOrderScalerConfig(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateOrderScalerConfig(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1628,7 +2094,13 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/api/bots", wrapper.ListBots)
 	m.HandleFunc("GET "+options.BaseURL+"/api/deals", wrapper.ListDeals)
 	m.HandleFunc("GET "+options.BaseURL+"/api/orders", wrapper.ListOrders)
+	m.HandleFunc("GET "+options.BaseURL+"/api/orders/scalers", wrapper.ListOrderScalers)
 	m.HandleFunc("POST "+options.BaseURL+"/api/orders/{metadata}/cancel", wrapper.CancelOrderByMetadata)
+	m.HandleFunc("DELETE "+options.BaseURL+"/api/v1/bots/{botId}/order-scaler", wrapper.DeleteBotOrderScalerConfig)
+	m.HandleFunc("GET "+options.BaseURL+"/api/v1/bots/{botId}/order-scaler", wrapper.GetBotOrderScalerConfig)
+	m.HandleFunc("PUT "+options.BaseURL+"/api/v1/bots/{botId}/order-scaler", wrapper.UpsertBotOrderScalerConfig)
+	m.HandleFunc("GET "+options.BaseURL+"/api/v1/order-scaler", wrapper.GetOrderScalerConfig)
+	m.HandleFunc("PUT "+options.BaseURL+"/api/v1/order-scaler", wrapper.UpdateOrderScalerConfig)
 	m.HandleFunc("GET "+options.BaseURL+"/sse/hyperliquid/prices", wrapper.StreamHyperliquidPrices)
 	m.HandleFunc("GET "+options.BaseURL+"/sse/orders", wrapper.StreamOrders)
 	m.HandleFunc("GET "+options.BaseURL+"/vault/payload", wrapper.GetVaultPayload)
@@ -1752,6 +2224,42 @@ func (response ListOrders500Response) VisitListOrdersResponse(w http.ResponseWri
 	return nil
 }
 
+type ListOrderScalersRequestObject struct {
+	Params ListOrderScalersParams
+}
+
+type ListOrderScalersResponseObject interface {
+	VisitListOrderScalersResponse(w http.ResponseWriter) error
+}
+
+type ListOrderScalers200JSONResponse struct {
+	Items         []OrderScalerConfigRecord `json:"items"`
+	NextPageToken *string                   `json:"next_page_token"`
+}
+
+func (response ListOrderScalers200JSONResponse) VisitListOrderScalersResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListOrderScalers400Response struct {
+}
+
+func (response ListOrderScalers400Response) VisitListOrderScalersResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type ListOrderScalers500Response struct {
+}
+
+func (response ListOrderScalers500Response) VisitListOrderScalersResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
 type CancelOrderByMetadataRequestObject struct {
 	Metadata string `json:"metadata"`
 	Body     *CancelOrderByMetadataJSONRequestBody
@@ -1798,6 +2306,203 @@ type CancelOrderByMetadata500Response struct {
 }
 
 func (response CancelOrderByMetadata500Response) VisitCancelOrderByMetadataResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type DeleteBotOrderScalerConfigRequestObject struct {
+	BotId int64 `json:"botId"`
+}
+
+type DeleteBotOrderScalerConfigResponseObject interface {
+	VisitDeleteBotOrderScalerConfigResponse(w http.ResponseWriter) error
+}
+
+type DeleteBotOrderScalerConfig200JSONResponse BotOrderScalerConfigResponse
+
+func (response DeleteBotOrderScalerConfig200JSONResponse) VisitDeleteBotOrderScalerConfigResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteBotOrderScalerConfig400Response struct {
+}
+
+func (response DeleteBotOrderScalerConfig400Response) VisitDeleteBotOrderScalerConfigResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type DeleteBotOrderScalerConfig401Response struct {
+}
+
+func (response DeleteBotOrderScalerConfig401Response) VisitDeleteBotOrderScalerConfigResponse(w http.ResponseWriter) error {
+	w.WriteHeader(401)
+	return nil
+}
+
+type DeleteBotOrderScalerConfig500Response struct {
+}
+
+func (response DeleteBotOrderScalerConfig500Response) VisitDeleteBotOrderScalerConfigResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type GetBotOrderScalerConfigRequestObject struct {
+	BotId int64 `json:"botId"`
+}
+
+type GetBotOrderScalerConfigResponseObject interface {
+	VisitGetBotOrderScalerConfigResponse(w http.ResponseWriter) error
+}
+
+type GetBotOrderScalerConfig200JSONResponse BotOrderScalerConfigResponse
+
+func (response GetBotOrderScalerConfig200JSONResponse) VisitGetBotOrderScalerConfigResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetBotOrderScalerConfig400Response struct {
+}
+
+func (response GetBotOrderScalerConfig400Response) VisitGetBotOrderScalerConfigResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type GetBotOrderScalerConfig401Response struct {
+}
+
+func (response GetBotOrderScalerConfig401Response) VisitGetBotOrderScalerConfigResponse(w http.ResponseWriter) error {
+	w.WriteHeader(401)
+	return nil
+}
+
+type GetBotOrderScalerConfig500Response struct {
+}
+
+func (response GetBotOrderScalerConfig500Response) VisitGetBotOrderScalerConfigResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type UpsertBotOrderScalerConfigRequestObject struct {
+	BotId int64 `json:"botId"`
+	Body  *UpsertBotOrderScalerConfigJSONRequestBody
+}
+
+type UpsertBotOrderScalerConfigResponseObject interface {
+	VisitUpsertBotOrderScalerConfigResponse(w http.ResponseWriter) error
+}
+
+type UpsertBotOrderScalerConfig200JSONResponse BotOrderScalerConfigResponse
+
+func (response UpsertBotOrderScalerConfig200JSONResponse) VisitUpsertBotOrderScalerConfigResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type UpsertBotOrderScalerConfig400Response struct {
+}
+
+func (response UpsertBotOrderScalerConfig400Response) VisitUpsertBotOrderScalerConfigResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type UpsertBotOrderScalerConfig401Response struct {
+}
+
+func (response UpsertBotOrderScalerConfig401Response) VisitUpsertBotOrderScalerConfigResponse(w http.ResponseWriter) error {
+	w.WriteHeader(401)
+	return nil
+}
+
+type UpsertBotOrderScalerConfig500Response struct {
+}
+
+func (response UpsertBotOrderScalerConfig500Response) VisitUpsertBotOrderScalerConfigResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type GetOrderScalerConfigRequestObject struct {
+}
+
+type GetOrderScalerConfigResponseObject interface {
+	VisitGetOrderScalerConfigResponse(w http.ResponseWriter) error
+}
+
+type GetOrderScalerConfig200JSONResponse OrderScalerConfigResponse
+
+func (response GetOrderScalerConfig200JSONResponse) VisitGetOrderScalerConfigResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetOrderScalerConfig401Response struct {
+}
+
+func (response GetOrderScalerConfig401Response) VisitGetOrderScalerConfigResponse(w http.ResponseWriter) error {
+	w.WriteHeader(401)
+	return nil
+}
+
+type GetOrderScalerConfig500Response struct {
+}
+
+func (response GetOrderScalerConfig500Response) VisitGetOrderScalerConfigResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type UpdateOrderScalerConfigRequestObject struct {
+	Body *UpdateOrderScalerConfigJSONRequestBody
+}
+
+type UpdateOrderScalerConfigResponseObject interface {
+	VisitUpdateOrderScalerConfigResponse(w http.ResponseWriter) error
+}
+
+type UpdateOrderScalerConfig200JSONResponse OrderScalerConfigResponse
+
+func (response UpdateOrderScalerConfig200JSONResponse) VisitUpdateOrderScalerConfigResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type UpdateOrderScalerConfig400Response struct {
+}
+
+func (response UpdateOrderScalerConfig400Response) VisitUpdateOrderScalerConfigResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type UpdateOrderScalerConfig401Response struct {
+}
+
+func (response UpdateOrderScalerConfig401Response) VisitUpdateOrderScalerConfigResponse(w http.ResponseWriter) error {
+	w.WriteHeader(401)
+	return nil
+}
+
+type UpdateOrderScalerConfig500Response struct {
+}
+
+func (response UpdateOrderScalerConfig500Response) VisitUpdateOrderScalerConfigResponse(w http.ResponseWriter) error {
 	w.WriteHeader(500)
 	return nil
 }
@@ -2297,9 +3002,27 @@ type StrictServerInterface interface {
 	// List acted-on bot events with Hyperliquid context
 	// (GET /api/orders)
 	ListOrders(ctx context.Context, request ListOrdersRequestObject) (ListOrdersResponseObject, error)
+	// List effective order scaler configurations for observed metadata
+	// (GET /api/orders/scalers)
+	ListOrderScalers(ctx context.Context, request ListOrderScalersRequestObject) (ListOrderScalersResponseObject, error)
 	// Cancel Hyperliquid order by metadata
 	// (POST /api/orders/{metadata}/cancel)
 	CancelOrderByMetadata(ctx context.Context, request CancelOrderByMetadataRequestObject) (CancelOrderByMetadataResponseObject, error)
+	// Delete a bot-specific order scaler override
+	// (DELETE /api/v1/bots/{botId}/order-scaler)
+	DeleteBotOrderScalerConfig(ctx context.Context, request DeleteBotOrderScalerConfigRequestObject) (DeleteBotOrderScalerConfigResponseObject, error)
+	// Retrieve the effective order scaler for a bot
+	// (GET /api/v1/bots/{botId}/order-scaler)
+	GetBotOrderScalerConfig(ctx context.Context, request GetBotOrderScalerConfigRequestObject) (GetBotOrderScalerConfigResponseObject, error)
+	// Upsert a bot-specific order scaler override
+	// (PUT /api/v1/bots/{botId}/order-scaler)
+	UpsertBotOrderScalerConfig(ctx context.Context, request UpsertBotOrderScalerConfigRequestObject) (UpsertBotOrderScalerConfigResponseObject, error)
+	// Retrieve the global order scaler multiplier
+	// (GET /api/v1/order-scaler)
+	GetOrderScalerConfig(ctx context.Context, request GetOrderScalerConfigRequestObject) (GetOrderScalerConfigResponseObject, error)
+	// Update the global order scaler multiplier
+	// (PUT /api/v1/order-scaler)
+	UpdateOrderScalerConfig(ctx context.Context, request UpdateOrderScalerConfigRequestObject) (UpdateOrderScalerConfigResponseObject, error)
 	// Stream Hyperliquid best bid/offer quotes
 	// (GET /sse/hyperliquid/prices)
 	StreamHyperliquidPrices(ctx context.Context, request StreamHyperliquidPricesRequestObject) (StreamHyperliquidPricesResponseObject, error)
@@ -2442,6 +3165,32 @@ func (sh *strictHandler) ListOrders(w http.ResponseWriter, r *http.Request, para
 	}
 }
 
+// ListOrderScalers operation middleware
+func (sh *strictHandler) ListOrderScalers(w http.ResponseWriter, r *http.Request, params ListOrderScalersParams) {
+	var request ListOrderScalersRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListOrderScalers(ctx, request.(ListOrderScalersRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListOrderScalers")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListOrderScalersResponseObject); ok {
+		if err := validResponse.VisitListOrderScalersResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // CancelOrderByMetadata operation middleware
 func (sh *strictHandler) CancelOrderByMetadata(w http.ResponseWriter, r *http.Request, metadata string) {
 	var request CancelOrderByMetadataRequestObject
@@ -2468,6 +3217,146 @@ func (sh *strictHandler) CancelOrderByMetadata(w http.ResponseWriter, r *http.Re
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CancelOrderByMetadataResponseObject); ok {
 		if err := validResponse.VisitCancelOrderByMetadataResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteBotOrderScalerConfig operation middleware
+func (sh *strictHandler) DeleteBotOrderScalerConfig(w http.ResponseWriter, r *http.Request, botId int64) {
+	var request DeleteBotOrderScalerConfigRequestObject
+
+	request.BotId = botId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteBotOrderScalerConfig(ctx, request.(DeleteBotOrderScalerConfigRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteBotOrderScalerConfig")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteBotOrderScalerConfigResponseObject); ok {
+		if err := validResponse.VisitDeleteBotOrderScalerConfigResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetBotOrderScalerConfig operation middleware
+func (sh *strictHandler) GetBotOrderScalerConfig(w http.ResponseWriter, r *http.Request, botId int64) {
+	var request GetBotOrderScalerConfigRequestObject
+
+	request.BotId = botId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetBotOrderScalerConfig(ctx, request.(GetBotOrderScalerConfigRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetBotOrderScalerConfig")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetBotOrderScalerConfigResponseObject); ok {
+		if err := validResponse.VisitGetBotOrderScalerConfigResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpsertBotOrderScalerConfig operation middleware
+func (sh *strictHandler) UpsertBotOrderScalerConfig(w http.ResponseWriter, r *http.Request, botId int64) {
+	var request UpsertBotOrderScalerConfigRequestObject
+
+	request.BotId = botId
+
+	var body UpsertBotOrderScalerConfigJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpsertBotOrderScalerConfig(ctx, request.(UpsertBotOrderScalerConfigRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpsertBotOrderScalerConfig")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpsertBotOrderScalerConfigResponseObject); ok {
+		if err := validResponse.VisitUpsertBotOrderScalerConfigResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetOrderScalerConfig operation middleware
+func (sh *strictHandler) GetOrderScalerConfig(w http.ResponseWriter, r *http.Request) {
+	var request GetOrderScalerConfigRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetOrderScalerConfig(ctx, request.(GetOrderScalerConfigRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetOrderScalerConfig")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetOrderScalerConfigResponseObject); ok {
+		if err := validResponse.VisitGetOrderScalerConfigResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateOrderScalerConfig operation middleware
+func (sh *strictHandler) UpdateOrderScalerConfig(w http.ResponseWriter, r *http.Request) {
+	var request UpdateOrderScalerConfigRequestObject
+
+	var body UpdateOrderScalerConfigJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateOrderScalerConfig(ctx, request.(UpdateOrderScalerConfigRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateOrderScalerConfig")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateOrderScalerConfigResponseObject); ok {
+		if err := validResponse.VisitUpdateOrderScalerConfigResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

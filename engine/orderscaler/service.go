@@ -31,17 +31,34 @@ type Constraints interface {
 
 // Service applies multiplier + rounding rules to Hyperliquid orders.
 type Service struct {
-	store       Store
-	constraints Constraints
-	logger      *slog.Logger
+	store         Store
+	constraints   Constraints
+	logger        *slog.Logger
+	maxMultiplier float64
 }
 
 // New constructs a scaling service.
-func New(store Store, constraints Constraints, logger *slog.Logger) *Service {
+func New(store Store, constraints Constraints, logger *slog.Logger, opts ...Option) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{store: store, constraints: constraints, logger: logger.WithGroup("orderscaler")}
+	svc := &Service{store: store, constraints: constraints, logger: logger.WithGroup("orderscaler")}
+	for _, opt := range opts {
+		opt(svc)
+	}
+	return svc
+}
+
+// Option configures optional service behaviour.
+type Option func(*Service)
+
+// WithMaxMultiplier overrides the maximum multiplier safety clamp. Values <= 0 disable clamping.
+func WithMaxMultiplier(max float64) Option {
+	return func(s *Service) {
+		if max > 0 {
+			s.maxMultiplier = max
+		}
+	}
 }
 
 // Request captures the details required to scale an order.
@@ -79,6 +96,10 @@ func (s *Service) Scale(ctx context.Context, req Request, order *hyperliquid.Cre
 	}
 
 	multiplier := effective.Multiplier
+	if s.maxMultiplier > 0 && multiplier > s.maxMultiplier {
+		s.logger.Warn("effective multiplier exceeds configured max; clamping", slog.Float64("multiplier", multiplier), slog.Float64("max", s.maxMultiplier), slog.Uint64("deal_id", uint64(req.Metadata.DealID)), slog.Uint64("bot_id", uint64(req.Metadata.BotID)))
+		multiplier = s.maxMultiplier
+	}
 	scaledSize := req.OriginalSize * multiplier
 
 	constraints, err := s.constraints.Resolve(ctx, req.Coin)
@@ -105,14 +126,15 @@ func (s *Service) Scale(ctx context.Context, req Request, order *hyperliquid.Cre
 	order.Size = roundedSize
 
 	auditParams := storage.RecordScaledOrderParams{
-		Metadata:     req.Metadata,
-		DealID:       req.Metadata.DealID,
-		BotID:        req.Metadata.BotID,
-		OriginalSize: req.OriginalSize,
-		ScaledSize:   roundedSize,
-		StackIndex:   req.StackIndex,
-		OrderSide:    req.Side,
-		CreatedAt:    req.Timestamp,
+		Metadata:          req.Metadata,
+		DealID:            req.Metadata.DealID,
+		BotID:             req.Metadata.BotID,
+		OriginalSize:      req.OriginalSize,
+		ScaledSize:        roundedSize,
+		AppliedMultiplier: &multiplier,
+		StackIndex:        req.StackIndex,
+		OrderSide:         req.Side,
+		CreatedAt:         req.Timestamp,
 	}
 
 	audit, effectiveAfter, err := s.store.RecordScaledOrder(ctx, auditParams)

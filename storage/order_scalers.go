@@ -90,15 +90,16 @@ func (e EffectiveOrderScaler) UpdatedAt() time.Time {
 }
 
 type RecordScaledOrderParams struct {
-	Metadata         metadata.Metadata
-	DealID           uint32
-	BotID            uint32
-	OriginalSize     float64
-	ScaledSize       float64
-	StackIndex       int
-	OrderSide        string
-	CreatedAt        time.Time
-	SubmittedOrderID *string
+	Metadata          metadata.Metadata
+	DealID            uint32
+	BotID             uint32
+	OriginalSize      float64
+	ScaledSize        float64
+	AppliedMultiplier *float64
+	StackIndex        int
+	OrderSide         string
+	CreatedAt         time.Time
+	SubmittedOrderID  *string
 }
 
 func (s *Storage) GetOrderScaler(ctx context.Context) (OrderScalerState, error) {
@@ -288,7 +289,12 @@ func (s *Storage) RecordScaledOrder(ctx context.Context, params RecordScaledOrde
 		return ScaledOrderAudit{}, EffectiveOrderScaler{}, err
 	}
 
-	roundingDelta := params.ScaledSize - (params.OriginalSize * effective.Multiplier)
+	multiplier := effective.Multiplier
+	if params.AppliedMultiplier != nil {
+		multiplier = *params.AppliedMultiplier
+	}
+
+	roundingDelta := params.ScaledSize - (params.OriginalSize * multiplier)
 
 	audit, err := s.InsertScaledOrderAudit(ctx, ScaledOrderAuditParams{
 		Metadata:            params.Metadata,
@@ -296,7 +302,7 @@ func (s *Storage) RecordScaledOrder(ctx context.Context, params RecordScaledOrde
 		BotID:               params.BotID,
 		OriginalSize:        params.OriginalSize,
 		ScaledSize:          params.ScaledSize,
-		Multiplier:          effective.Multiplier,
+		Multiplier:          multiplier,
 		RoundingDelta:       roundingDelta,
 		StackIndex:          params.StackIndex,
 		OrderSide:           params.OrderSide,
@@ -307,6 +313,8 @@ func (s *Storage) RecordScaledOrder(ctx context.Context, params RecordScaledOrde
 	if err != nil {
 		return ScaledOrderAudit{}, EffectiveOrderScaler{}, err
 	}
+
+	effective.Multiplier = multiplier
 
 	return audit, effective, nil
 }

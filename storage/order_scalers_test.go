@@ -256,6 +256,60 @@ func TestRecordScaledOrderPublishesEvent(t *testing.T) {
 	require.Equal(t, md.Hex(), auditEvt.ScalerConfig.Metadata)
 }
 
+func TestRecordScaledOrderUsesAppliedMultiplier(t *testing.T) {
+	stream := &captureStream{}
+	store := newTestStorageWithStream(t, stream)
+	ctx := context.Background()
+
+	botID := uint32(333)
+	dealID := uint32(444)
+	base := time.Now().UTC()
+
+	err := store.RecordBot(ctx, tc.Bot{Id: int(botID)}, base)
+	require.NoError(t, err)
+
+	err = store.RecordThreeCommasDeal(ctx, tc.Deal{Id: int(dealID), BotId: int(botID), CreatedAt: base, UpdatedAt: base})
+	require.NoError(t, err)
+
+	overrideMult := 3.0
+	_, err = store.UpsertBotOrderScaler(ctx, botID, &overrideMult, nil, "tester")
+	require.NoError(t, err)
+
+	applied := 1.5
+	md := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 7}
+	params := RecordScaledOrderParams{
+		Metadata:          md,
+		DealID:            dealID,
+		BotID:             botID,
+		OriginalSize:      100.0,
+		ScaledSize:        150.0,
+		AppliedMultiplier: &applied,
+		StackIndex:        0,
+		OrderSide:         "buy",
+		CreatedAt:         base.Add(3 * time.Second),
+	}
+
+	audit, effective, err := store.RecordScaledOrder(ctx, params)
+	require.NoError(t, err)
+	require.InDelta(t, applied, audit.Multiplier, 1e-9)
+	require.InDelta(t, applied, effective.Multiplier, 1e-9)
+	require.Equal(t, OrderScalerSourceBotOverride, effective.Source)
+	require.InDelta(t, 0, audit.RoundingDelta, 1e-9)
+
+	events := stream.all()
+	var auditEvt *api.StreamEvent
+	for i := range events {
+		if events[i].Type == api.ScaledOrderAuditEntry {
+			auditEvt = &events[i]
+		}
+	}
+	require.NotNil(t, auditEvt)
+	require.NotNil(t, auditEvt.ScaledOrderAudit)
+	require.InDelta(t, applied, auditEvt.ScaledOrderAudit.Multiplier, 1e-9)
+	require.NotNil(t, auditEvt.ScalerConfig)
+	require.InDelta(t, applied, auditEvt.ScalerConfig.Multiplier, 1e-9)
+}
+
 func TestScaledOrderAuditHistory(t *testing.T) {
 	store := newTestStorage(t)
 	ctx := context.Background()

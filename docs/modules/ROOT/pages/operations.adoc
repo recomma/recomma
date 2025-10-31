@@ -38,3 +38,10 @@ This runbook summarizes routine operational tasks, troubleshooting tips, and exp
 *Missing SSE Updates*:: Consumers must read streams promptly; slow readers trigger buffer drops logged as warnings.
 
 Reach out to the operations channel with log excerpts and configuration details when issues persist.
+
+== Order scaler
+
+Use the order scaler to shrink or expand mirrored exposure without touching the source bot.
+Review the xref:operations/order-scaler.adoc[order scaler runbook] for end-to-end guidance on
+viewing the global default multiplier, managing per-bot overrides, and understanding the
+resulting SSE/audit records.

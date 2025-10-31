@@ -1,5 +1,7 @@
 * xref:index.adoc[Overview]
 * xref:setup.adoc[Setup]
 * xref:architecture.adoc[Architecture]
+** xref:architecture/order-scaler.adoc[Order scaler]
 * xref:operations.adoc[Operations]
+** xref:operations/order-scaler.adoc[Order scaler runbook]
 * xref:contributors.adoc[Contributors]

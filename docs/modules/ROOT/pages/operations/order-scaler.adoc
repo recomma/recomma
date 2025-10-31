@@ -1,0 +1,145 @@
+= Order scaler runbook
+:page-role: guide
+
+The order scaler shrinks or expands every mirrored order before it reaches Hyperliquid.
+Operators can tune exposure with a global multiplier, override specific bots, and audit
+what multiplier was applied to every submission. All configuration changes require an
+active vault session (the same session cookie used by the rest of the API).
+
+== Prerequisites and validation bounds
+
+* Multipliers must be greater than zero and may not exceed the configured ceiling. The
+  ceiling defaults to `1.0` and can be raised with the
+  `--order-scaler-max-multiplier` flag or the
+  `RECOMMA_ORDER_SCALER_MAX_MULTIPLIER` environment variable.
+* Requests accept fractional values; `0.25` scales orders down to a quarter of the
+  source size, `2.5` doubles and a half.
+* The optional `notes` field lets operators explain why a multiplier was chosen.
+  `updated_by` and `updated_at` are populated by the backend so audit history always
+  identifies who made the change.
+
+== Manage the global default multiplier
+
+Global configuration applies whenever a bot does not have an override.
+
+.View the current default
+[source,bash]
+----
+curl -b cookie.txt https://recomma.example.com/api/v1/order-scaler
+----
+
+The response includes the stored default and the effective multiplier that the engine
+currently uses:
+
+[source,json]
+----
+{
+  "default": {
+    "multiplier": 1.0,
+    "updated_at": "2025-01-02T03:04:05Z",
+    "updated_by": "system",
+    "notes": null
+  },
+  "effective": {
+    "source": "default",
+    "value": 1.0,
+    "updated_at": "2025-01-02T03:04:05Z",
+    "updated_by": "system",
+    "notes": null
+  }
+}
+----
+
+.Update the default (idempotent)
+[source,bash]
+----
+curl -X PUT -H 'Content-Type: application/json' \
+  -b cookie.txt \
+  -d '{"multiplier":0.5,"notes":"risk-off sizing"}' \
+  https://recomma.example.com/api/v1/order-scaler
+----
+
+Replaying the same multiplier yields the same response body. If the multiplier violates
+bounds the API returns `400` with details.
+
+== Manage per-bot overrides
+
+Overrides replace the global multiplier for a specific 3Commas bot ID. Removing the
+override immediately falls back to the default multiplier.
+
+.View the effective configuration for a bot
+[source,bash]
+----
+curl -b cookie.txt https://recomma.example.com/api/v1/bots/16538545/order-scaler
+----
+
+The response shows the default, the stored override (if any), and the effective
+multiplier:
+
+[source,json]
+----
+{
+  "bot_id": 16538545,
+  "default": {
+    "multiplier": 1.0,
+    "updated_at": "2025-01-02T03:04:05Z",
+    "updated_by": "system",
+    "notes": null
+  },
+  "override": {
+    "bot_id": 16538545,
+    "multiplier": 0.5,
+    "notes": "risk-off sizing",
+    "effective_from": "2025-01-02T03:04:05Z",
+    "updated_at": "2025-01-02T03:04:05Z",
+    "updated_by": "operator"
+  },
+  "effective": {
+    "source": "bot_override",
+    "value": 0.5,
+    "updated_at": "2025-01-02T03:04:05Z",
+    "updated_by": "operator",
+    "notes": "risk-off sizing"
+  }
+}
+----
+
+.Create or update an override
+[source,bash]
+----
+curl -X PUT -H 'Content-Type: application/json' \
+  -b cookie.txt \
+  -d '{"multiplier":0.5,"notes":"risk-off sizing"}' \
+  https://recomma.example.com/api/v1/bots/16538545/order-scaler
+----
+
+.Delete an override
+[source,bash]
+----
+curl -X DELETE -b cookie.txt \
+  https://recomma.example.com/api/v1/bots/16538545/order-scaler
+----
+
+The delete response echoes the effective configuration after removal so automation can
+confirm the bot now inherits the default multiplier.
+
+== Streaming updates and audit history
+
+* Every `PUT` or `DELETE` produces an `order_scaler_config` event on the `/sse/orders`
+  stream. The event body carries the actor, default configuration, any override, and the
+  metadata hex that downstream services can use to correlate changes.
+* Whenever the engine scales a mirrored order it writes a `scaled_order_audit` record.
+  The audit entry captures the original and scaled sizes, the multiplier that was used,
+  any rounding delta, and the operator who configured the multiplier at the time. These
+  rows are available through the same order log stream and via the order history APIs,
+  making it clear why a submission deviated from the 3Commas source.
+* Take-profit stacks reuse the same multiplier, so every leg that passes validation will
+  report the identical scaling factor in its audit entries. Legs that would fall below
+  Hyperliquid minimums are skipped; check engine logs for the matching warning.
+
+== Automating configuration
+
+The endpoints are idempotent, so declarative tooling can safely replay the desired state.
+Persist the session cookie created during vault authentication and reuse it for each
+request. Combine `GET` calls with configuration management to detect drift, and monitor
+`order_scaler_config` events to alert when someone changes multipliers outside automation.

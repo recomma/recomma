@@ -29,6 +29,13 @@ Recomma is composed of cooperating services that replay 3Commas bot actions onto
 *SSE Streams*:: Storage methods emit `StreamEvent`s. The API fan-outs updates so the UI and auxiliary services can react without polling.
 *Work Queues*:: Deal and order queues drive goroutine workers that keep the Hyperliquid mirror in sync while respecting venue rate limits.
 
+== Order scaler
+
+The scaler layer sits between deal planning and Hyperliquid submission. It applies global
+and per-bot multipliers, records scaled order audits, and streams configuration changes via
+SSE. See xref:architecture/order-scaler.adoc[Order scaler architecture] for the data model
+and runtime flow.
+
 == Code Generation
 
 `go generate ./...` runs both OpenAPI and sqlc generation. Always commit generated files so CI and other operators stay in sync.

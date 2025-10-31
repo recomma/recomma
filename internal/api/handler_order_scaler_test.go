@@ -230,6 +230,73 @@ func TestBotOrderScalerOverrideLifecycle(t *testing.T) {
 	require.Equal(t, Default, delOK.Effective.Source)
 }
 
+func TestGetOrderScalerConfigClampsEffectiveMultiplier(t *testing.T) {
+	handler, ctx, cleanup := newOrderScalerTestHarness(t)
+	t.Cleanup(cleanup)
+
+	store, ok := handler.store.(*orderScalerStubStore)
+	require.True(t, ok)
+
+	store.defaultState.Multiplier = 3.5
+
+	resp, err := handler.GetOrderScalerConfig(ctx, GetOrderScalerConfigRequestObject{})
+	require.NoError(t, err)
+
+	okResp, ok := resp.(GetOrderScalerConfig200JSONResponse)
+	require.True(t, ok)
+	require.InDelta(t, 2.0, okResp.Effective.Value, 1e-9)
+	require.InDelta(t, 3.5, okResp.Default.Multiplier, 1e-9)
+}
+
+func TestGetBotOrderScalerConfigClampsEffectiveMultiplier(t *testing.T) {
+	handler, ctx, cleanup := newOrderScalerTestHarness(t)
+	t.Cleanup(cleanup)
+
+	store, ok := handler.store.(*orderScalerStubStore)
+	require.True(t, ok)
+
+	now := time.Now().UTC()
+	multiplier := 4.5
+	store.overrides[42] = &OrderScalerOverride{
+		BotId:         42,
+		Multiplier:    &multiplier,
+		EffectiveFrom: now,
+		UpdatedAt:     now,
+		UpdatedBy:     "tester",
+	}
+
+	resp, err := handler.GetBotOrderScalerConfig(ctx, GetBotOrderScalerConfigRequestObject{BotId: 42})
+	require.NoError(t, err)
+
+	okResp, ok := resp.(GetBotOrderScalerConfig200JSONResponse)
+	require.True(t, ok)
+	require.InDelta(t, 2.0, okResp.Effective.Value, 1e-9)
+	require.NotNil(t, okResp.Override)
+	require.NotNil(t, okResp.Override.Multiplier)
+	require.InDelta(t, multiplier, *okResp.Override.Multiplier, 1e-9)
+}
+
+func TestMakeOrderLogEntryClampsEffectiveMultiplier(t *testing.T) {
+	handler, _, cleanup := newOrderScalerTestHarness(t)
+	t.Cleanup(cleanup)
+
+	md := metadata.Metadata{BotID: 7}
+	metaHex := md.Hex()
+	effective := EffectiveOrderScaler{
+		Metadata:   metaHex,
+		Multiplier: 3.25,
+		Source:     Default,
+		Default:    OrderScalerState{Multiplier: 3.25},
+	}
+
+	entry, ok := handler.makeOrderLogEntry(context.Background(), md, time.Now().UTC(), OrderScalerConfigEntry, nil, nil, nil, &effective, nil, nil, nil, nil)
+	require.True(t, ok)
+
+	logEntry, err := entry.AsOrderScalerConfigLogEntry()
+	require.NoError(t, err)
+	require.InDelta(t, 2.0, logEntry.Config.Multiplier, 1e-9)
+}
+
 func newOrderScalerTestHarness(t *testing.T) (*ApiHandler, context.Context, func()) {
 	stream := NewStreamController()
 	store := newOrderScalerStubStore(stream)

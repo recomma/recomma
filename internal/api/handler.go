@@ -282,11 +282,13 @@ func (h *ApiHandler) ListOrderScalers(ctx context.Context, req ListOrderScalersR
 
 	records := make([]OrderScalerConfigRecord, 0, len(rows))
 	for _, item := range rows {
+		cfg := item.Config
+		cfg.Multiplier = clampOrderScalerMultiplier(cfg.Multiplier, h.orderScalerMaxMultiplier)
 		records = append(records, OrderScalerConfigRecord{
 			Metadata:   item.Metadata.Hex(),
 			ObservedAt: item.ObservedAt,
 			Actor:      item.Actor,
-			Config:     item.Config,
+			Config:     cfg,
 		})
 	}
 
@@ -320,7 +322,7 @@ func (h *ApiHandler) GetOrderScalerConfig(ctx context.Context, req GetOrderScale
 
 	response := OrderScalerConfigResponse{
 		Default:   defaultState,
-		Effective: buildOrderScalerEffectiveMultiplier(effective),
+		Effective: buildOrderScalerEffectiveMultiplier(effective, h.orderScalerMaxMultiplier),
 	}
 	return GetOrderScalerConfig200JSONResponse(response), nil
 }
@@ -360,7 +362,7 @@ func (h *ApiHandler) UpdateOrderScalerConfig(ctx context.Context, req UpdateOrde
 
 	response := OrderScalerConfigResponse{
 		Default:   state,
-		Effective: buildOrderScalerEffectiveMultiplier(effective),
+		Effective: buildOrderScalerEffectiveMultiplier(effective, h.orderScalerMaxMultiplier),
 	}
 	return UpdateOrderScalerConfig200JSONResponse(response), nil
 }
@@ -400,7 +402,7 @@ func (h *ApiHandler) GetBotOrderScalerConfig(ctx context.Context, req GetBotOrde
 	response := BotOrderScalerConfigResponse{
 		BotId:     int64(botID),
 		Default:   defaultState,
-		Effective: buildOrderScalerEffectiveMultiplier(effective),
+		Effective: buildOrderScalerEffectiveMultiplier(effective, h.orderScalerMaxMultiplier),
 	}
 	if overrideFound && override != nil {
 		response.Override = override
@@ -456,7 +458,7 @@ func (h *ApiHandler) UpsertBotOrderScalerConfig(ctx context.Context, req UpsertB
 		BotId:     int64(botID),
 		Default:   defaultState,
 		Override:  &override,
-		Effective: buildOrderScalerEffectiveMultiplier(effective),
+		Effective: buildOrderScalerEffectiveMultiplier(effective, h.orderScalerMaxMultiplier),
 	}
 	return UpsertBotOrderScalerConfig200JSONResponse(response), nil
 }
@@ -497,7 +499,7 @@ func (h *ApiHandler) DeleteBotOrderScalerConfig(ctx context.Context, req DeleteB
 	response := BotOrderScalerConfigResponse{
 		BotId:     int64(botID),
 		Default:   defaultState,
-		Effective: buildOrderScalerEffectiveMultiplier(effective),
+		Effective: buildOrderScalerEffectiveMultiplier(effective, h.orderScalerMaxMultiplier),
 	}
 	return DeleteBotOrderScalerConfig200JSONResponse(response), nil
 }
@@ -543,7 +545,7 @@ func normalizeBotID(raw int64) (uint32, bool) {
 	return uint32(raw), true
 }
 
-func buildOrderScalerEffectiveMultiplier(effective EffectiveOrderScaler) OrderScalerEffectiveMultiplier {
+func buildOrderScalerEffectiveMultiplier(effective EffectiveOrderScaler, maxMultiplier float64) OrderScalerEffectiveMultiplier {
 	notes := effective.Default.Notes
 	updatedBy := effective.Default.UpdatedBy
 	updatedAt := effective.Default.UpdatedAt
@@ -560,11 +562,28 @@ func buildOrderScalerEffectiveMultiplier(effective EffectiveOrderScaler) OrderSc
 
 	return OrderScalerEffectiveMultiplier{
 		Source:    effective.Source,
-		Value:     effective.Multiplier,
+		Value:     clampOrderScalerMultiplier(effective.Multiplier, maxMultiplier),
 		UpdatedAt: updatedAt,
 		UpdatedBy: updatedBy,
 		Notes:     notes,
 	}
+}
+
+func clampOrderScalerMultiplier(multiplier, maxMultiplier float64) float64 {
+	if maxMultiplier > 0 && multiplier > maxMultiplier {
+		return maxMultiplier
+	}
+	return multiplier
+}
+
+func clampEffectiveOrderScaler(effective *EffectiveOrderScaler, maxMultiplier float64) *EffectiveOrderScaler {
+	if effective == nil {
+		return nil
+	}
+
+	clamped := *effective
+	clamped.Multiplier = clampOrderScalerMultiplier(clamped.Multiplier, maxMultiplier)
+	return &clamped
 }
 
 func makeDealRecords(rows []tc.Deal) []DealRecord {
@@ -1445,6 +1464,8 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata
 		botEventID = &val
 	}
 
+	clampedConfig := clampEffectiveOrderScaler(config, h.orderScalerMaxMultiplier)
+
 	switch entryType {
 	case ThreeCommasEvent:
 		if botEvent == nil {
@@ -1521,7 +1542,7 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata
 			return OrderLogEntry{}, false
 		}
 	case OrderScalerConfigEntry:
-		if config == nil {
+		if clampedConfig == nil {
 			h.logger.WarnContext(ctx, "missing scaler config payload",
 				slog.String("metadata", metadataHex))
 			return OrderLogEntry{}, false
@@ -1533,7 +1554,7 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata
 		logEntry := OrderScalerConfigLogEntry{
 			Metadata:   metadataHex,
 			ObservedAt: observedAt,
-			Config:     *config,
+			Config:     *clampedConfig,
 			Actor:      actorVal,
 		}
 		if identifiers := cloneIdentifiers(baseIdentifiers, md, observedAt, observedAt); identifiers != nil {
@@ -1564,8 +1585,8 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata
 			Audit:      *audit,
 			Actor:      actorVal,
 		}
-		if config != nil {
-			cfgCopy := *config
+		if clampedConfig != nil {
+			cfgCopy := *clampedConfig
 			logEntry.Effective = &cfgCopy
 		}
 		if identifiers := cloneIdentifiers(baseIdentifiers, md, createdAt(botEvent), observedAt); identifiers != nil {

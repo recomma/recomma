@@ -6,28 +6,34 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sort"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/oapi-codegen/nullable"
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
+	api "github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/metadata"
 	"github.com/recomma/recomma/recomma"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
 	"github.com/stretchr/testify/require"
 )
 
-func newTestStorage(t *testing.T) *Storage {
+func newTestStorage(t *testing.T, opts ...StorageOption) *Storage {
 	t.Helper()
 
-	return newTestStorageWithLogger(t, nil)
+	return newTestStorageWithLogger(t, nil, opts...)
 }
 
-func newTestStorageWithLogger(t *testing.T, logger *slog.Logger) *Storage {
+func newTestStorageWithLogger(t *testing.T, logger *slog.Logger, opts ...StorageOption) *Storage {
 	t.Helper()
 
-	store, err := New(":memory:", WithLogger(logger))
+	allOpts := append([]StorageOption{}, opts...)
+	allOpts = append(allOpts, WithLogger(logger))
+
+	store, err := New(":memory:", allOpts...)
 	if err != nil {
 		t.Fatalf("open sqlite storage: %v", err)
 	}
@@ -39,6 +45,182 @@ func newTestStorageWithLogger(t *testing.T, logger *slog.Logger) *Storage {
 	})
 
 	return store
+}
+
+type streamRecorder struct {
+	mu     sync.Mutex
+	events []api.StreamEvent
+}
+
+func (r *streamRecorder) Publish(evt api.StreamEvent) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, evt)
+}
+
+func (r *streamRecorder) Events() []api.StreamEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]api.StreamEvent, len(r.events))
+	copy(out, r.events)
+	return out
+}
+
+func (r *streamRecorder) Reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = nil
+}
+
+func TestStorageSeedsGlobalOrderScaler(t *testing.T) {
+	recorder := &streamRecorder{}
+	store := newTestStorage(t, WithStreamPublisher(recorder))
+	ctx := context.Background()
+
+	scaler, err := store.LoadGlobalOrderScaler(ctx)
+	require.NoError(t, err)
+	require.InDelta(t, 1.0, scaler.Multiplier, 1e-9)
+	require.Equal(t, "system", scaler.UpdatedBy)
+	require.False(t, scaler.UpdatedAt.IsZero())
+
+	require.Empty(t, recorder.Events())
+}
+
+func TestStorageUpdateGlobalOrderScalerPublishesEvent(t *testing.T) {
+	recorder := &streamRecorder{}
+	store := newTestStorage(t, WithStreamPublisher(recorder))
+	ctx := context.Background()
+
+	updated, err := store.UpdateGlobalOrderScaler(ctx, 2.25, "operator")
+	require.NoError(t, err)
+	require.InDelta(t, 2.25, updated.Multiplier, 1e-9)
+	require.Equal(t, "operator", updated.UpdatedBy)
+
+	events := recorder.Events()
+	require.Len(t, events, 1)
+	evt := events[0]
+	require.Equal(t, orderScalerEventType, evt.Type)
+	require.Equal(t, metadata.Metadata{}, evt.Metadata)
+
+	payload, ok := evt.Submission.(OrderScalerUpdate)
+	require.True(t, ok)
+	require.Equal(t, OrderScalerScopeGlobal, payload.Scope)
+	require.NotNil(t, payload.Multiplier)
+	require.InDelta(t, 2.25, *payload.Multiplier, 1e-9)
+	require.Equal(t, "operator", payload.UpdatedBy)
+	require.False(t, payload.UpdatedAt.IsZero())
+}
+
+func TestStorageBotOrderScalerLifecycle(t *testing.T) {
+	recorder := &streamRecorder{}
+	store := newTestStorage(t, WithStreamPublisher(recorder))
+	ctx := context.Background()
+
+	now := time.Now().UTC()
+	bot := tc.Bot{Id: 404}
+	require.NoError(t, store.RecordBot(ctx, bot, now))
+
+	multiplier := 0.5
+	notes := " scale-down "
+	record, err := store.UpsertBotOrderScaler(ctx, int64(bot.Id), &multiplier, "operator", &notes)
+	require.NoError(t, err)
+	require.NotNil(t, record.Multiplier)
+	require.InDelta(t, 0.5, *record.Multiplier, 1e-9)
+	require.Equal(t, "operator", record.UpdatedBy)
+	require.NotNil(t, record.Notes)
+	require.Equal(t, strings.TrimSpace(notes), *record.Notes)
+
+	events := recorder.Events()
+	require.Len(t, events, 1)
+	payload, ok := events[0].Submission.(OrderScalerUpdate)
+	require.True(t, ok)
+	require.Equal(t, OrderScalerScopeBot, payload.Scope)
+	require.NotNil(t, payload.Multiplier)
+	require.InDelta(t, 0.5, *payload.Multiplier, 1e-9)
+	require.NotNil(t, payload.EffectiveFrom)
+
+	effective, err := store.ResolveEffectiveOrderScaler(ctx, int64(bot.Id))
+	require.NoError(t, err)
+	require.Equal(t, OrderScalerScopeBot, effective.Scope)
+	require.InDelta(t, 0.5, effective.Multiplier, 1e-9)
+	require.NotNil(t, effective.Override)
+
+	recorder.Reset()
+	record, err = store.UpsertBotOrderScaler(ctx, int64(bot.Id), nil, "operator", nil)
+	require.NoError(t, err)
+	require.Nil(t, record.Multiplier)
+
+	events = recorder.Events()
+	require.Len(t, events, 1)
+	payload, ok = events[0].Submission.(OrderScalerUpdate)
+	require.True(t, ok)
+	require.Nil(t, payload.Multiplier)
+
+	effective, err = store.ResolveEffectiveOrderScaler(ctx, int64(bot.Id))
+	require.NoError(t, err)
+	require.Equal(t, OrderScalerScopeGlobal, effective.Scope)
+	require.NotNil(t, effective.Override)
+	require.Nil(t, effective.Override.Multiplier)
+
+	list, err := store.ListBotOrderScalers(ctx)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+
+	recorder.Reset()
+	deleted, err := store.DeleteBotOrderScaler(ctx, int64(bot.Id), "operator")
+	require.NoError(t, err)
+	require.True(t, deleted)
+
+	events = recorder.Events()
+	require.Len(t, events, 1)
+	payload, ok = events[0].Submission.(OrderScalerUpdate)
+	require.True(t, ok)
+	require.Nil(t, payload.Multiplier)
+	require.Equal(t, OrderScalerScopeBot, payload.Scope)
+
+	list, err = store.ListBotOrderScalers(ctx)
+	require.NoError(t, err)
+	require.Empty(t, list)
+}
+
+func TestStorageRecordScaledOrderAudit(t *testing.T) {
+	store := newTestStorage(t)
+	ctx := context.Background()
+
+	now := time.Now().UTC()
+	bot := tc.Bot{Id: 5150}
+	require.NoError(t, store.RecordBot(ctx, bot, now))
+
+	deal := tc.Deal{Id: 88, BotId: bot.Id, CreatedAt: now, UpdatedAt: now}
+	require.NoError(t, store.RecordThreeCommasDeal(ctx, deal))
+
+	md := metadata.Metadata{BotID: uint32(bot.Id), DealID: uint32(deal.Id), BotEventID: 33}
+	submitted := "hl-order-1"
+
+	record, err := store.RecordScaledOrderAudit(ctx, ScaledOrderAudit{
+		Metadata:       md,
+		BotID:          int64(bot.Id),
+		DealID:         int64(deal.Id),
+		BotEventID:     33,
+		OriginalSize:   10,
+		ScaledSize:     5,
+		Multiplier:     0.5,
+		RoundingDelta:  -0.1,
+		StackIndex:     1,
+		Side:           "BUY",
+		SubmittedOrder: &submitted,
+	})
+	require.NoError(t, err)
+	require.Equal(t, md.Hex(), record.Metadata.Hex())
+	require.Equal(t, "buy", record.Side)
+	require.NotNil(t, record.SubmittedOrder)
+	require.Equal(t, submitted, *record.SubmittedOrder)
+
+	orders, err := store.ListScaledOrdersForDeal(ctx, int64(bot.Id), int64(deal.Id))
+	require.NoError(t, err)
+	require.Len(t, orders, 1)
+	require.Equal(t, record.ID, orders[0].ID)
+	require.InDelta(t, 5.0, orders[0].ScaledSize, 1e-9)
 }
 
 func TestStorageThreeCommasRoundTrip(t *testing.T) {

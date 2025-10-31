@@ -152,6 +152,112 @@ WHERE md = sqlc.arg(md)
 ORDER BY recorded_at_utc DESC, id DESC
 LIMIT 1;
 
+-- name: GetGlobalOrderScaler :one
+SELECT id, multiplier, updated_at_utc, updated_by
+FROM order_scalers
+WHERE id = 1;
+
+-- name: UpsertGlobalOrderScaler :one
+INSERT INTO order_scalers (
+    id,
+    multiplier,
+    updated_at_utc,
+    updated_by
+) VALUES (
+    1,
+    sqlc.arg(multiplier),
+    CAST(unixepoch('now','subsec') * 1000 AS INTEGER),
+    sqlc.arg(updated_by)
+)
+ON CONFLICT(id) DO UPDATE SET
+    multiplier = excluded.multiplier,
+    updated_at_utc = excluded.updated_at_utc,
+    updated_by = excluded.updated_by
+RETURNING id, multiplier, updated_at_utc, updated_by;
+
+-- name: UpsertBotOrderScaler :one
+INSERT INTO bot_order_scalers (
+    bot_id,
+    multiplier,
+    effective_from_utc,
+    updated_by,
+    notes
+) VALUES (
+    sqlc.arg(bot_id),
+    sqlc.arg(multiplier),
+    CAST(unixepoch('now','subsec') * 1000 AS INTEGER),
+    sqlc.arg(updated_by),
+    sqlc.arg(notes)
+)
+ON CONFLICT(bot_id) DO UPDATE SET
+    multiplier = excluded.multiplier,
+    effective_from_utc = excluded.effective_from_utc,
+    updated_by = excluded.updated_by,
+    notes = excluded.notes
+RETURNING bot_id, multiplier, effective_from_utc, updated_by, notes;
+
+-- name: DeleteBotOrderScaler :execresult
+DELETE FROM bot_order_scalers
+WHERE bot_id = sqlc.arg(bot_id);
+
+-- name: GetBotOrderScaler :one
+SELECT bot_id, multiplier, effective_from_utc, updated_by, notes
+FROM bot_order_scalers
+WHERE bot_id = sqlc.arg(bot_id);
+
+-- name: ListBotOrderScalers :many
+SELECT bot_id, multiplier, effective_from_utc, updated_by, notes
+FROM bot_order_scalers
+ORDER BY bot_id ASC;
+
+-- name: InsertScaledOrderAudit :one
+INSERT INTO scaled_orders (
+    metadata_hex,
+    bot_id,
+    deal_id,
+    botevent_id,
+    original_size,
+    scaled_size,
+    multiplier,
+    rounding_delta,
+    stack_index,
+    order_side,
+    submitted_order_id
+) VALUES (
+    sqlc.arg(metadata_hex),
+    sqlc.arg(bot_id),
+    sqlc.arg(deal_id),
+    sqlc.arg(botevent_id),
+    sqlc.arg(original_size),
+    sqlc.arg(scaled_size),
+    sqlc.arg(multiplier),
+    sqlc.arg(rounding_delta),
+    sqlc.arg(stack_index),
+    sqlc.arg(order_side),
+    sqlc.arg(submitted_order_id)
+)
+RETURNING id, metadata_hex, bot_id, deal_id, botevent_id, original_size, scaled_size, multiplier, rounding_delta, stack_index, order_side, submitted_order_id, created_at_utc;
+
+-- name: ListScaledOrdersForDeal :many
+SELECT
+    id,
+    metadata_hex,
+    bot_id,
+    deal_id,
+    botevent_id,
+    original_size,
+    scaled_size,
+    multiplier,
+    rounding_delta,
+    stack_index,
+    order_side,
+    submitted_order_id,
+    created_at_utc
+FROM scaled_orders
+WHERE bot_id = sqlc.arg(bot_id)
+  AND deal_id = sqlc.arg(deal_id)
+ORDER BY created_at_utc ASC, id ASC;
+
 -- name: ListHyperliquidStatuses :many
 SELECT status, recorded_at_utc
 FROM hyperliquid_status_history

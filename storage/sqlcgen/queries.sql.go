@@ -7,6 +7,7 @@ package sqlcgen
 
 import (
 	"context"
+	"database/sql"
 )
 
 const appendHyperliquidModify = `-- name: AppendHyperliquidModify :exec
@@ -171,6 +172,275 @@ func (q *Queries) FetchLatestHyperliquidStatus(ctx context.Context, md string) (
 	var status []byte
 	err := row.Scan(&status)
 	return status, err
+}
+
+const getGlobalOrderScaler = `-- name: GetGlobalOrderScaler :one
+SELECT id, multiplier, updated_at_utc, updated_by
+FROM order_scalers
+WHERE id = 1
+`
+
+func (q *Queries) GetGlobalOrderScaler(ctx context.Context) (OrderScaler, error) {
+	row := q.db.QueryRowContext(ctx, getGlobalOrderScaler)
+	var i OrderScaler
+	err := row.Scan(&i.ID, &i.Multiplier, &i.UpdatedAtUtc, &i.UpdatedBy)
+	return i, err
+}
+
+const upsertGlobalOrderScaler = `-- name: UpsertGlobalOrderScaler :one
+INSERT INTO order_scalers (
+    id,
+    multiplier,
+    updated_at_utc,
+    updated_by
+) VALUES (
+    1,
+    ?1,
+    CAST(unixepoch('now','subsec') * 1000 AS INTEGER),
+    ?2
+)
+ON CONFLICT(id) DO UPDATE SET
+    multiplier = excluded.multiplier,
+    updated_at_utc = excluded.updated_at_utc,
+    updated_by = excluded.updated_by
+RETURNING id, multiplier, updated_at_utc, updated_by
+`
+
+type UpsertGlobalOrderScalerParams struct {
+	Multiplier float64 `json:"multiplier"`
+	UpdatedBy  string  `json:"updated_by"`
+}
+
+func (q *Queries) UpsertGlobalOrderScaler(ctx context.Context, arg UpsertGlobalOrderScalerParams) (OrderScaler, error) {
+	row := q.db.QueryRowContext(ctx, upsertGlobalOrderScaler, arg.Multiplier, arg.UpdatedBy)
+	var i OrderScaler
+	err := row.Scan(&i.ID, &i.Multiplier, &i.UpdatedAtUtc, &i.UpdatedBy)
+	return i, err
+}
+
+const upsertBotOrderScaler = `-- name: UpsertBotOrderScaler :one
+INSERT INTO bot_order_scalers (
+    bot_id,
+    multiplier,
+    effective_from_utc,
+    updated_by,
+    notes
+) VALUES (
+    ?1,
+    ?2,
+    CAST(unixepoch('now','subsec') * 1000 AS INTEGER),
+    ?3,
+    ?4
+)
+ON CONFLICT(bot_id) DO UPDATE SET
+    multiplier = excluded.multiplier,
+    effective_from_utc = excluded.effective_from_utc,
+    updated_by = excluded.updated_by,
+    notes = excluded.notes
+RETURNING bot_id, multiplier, effective_from_utc, updated_by, notes
+`
+
+type UpsertBotOrderScalerParams struct {
+	BotID      int64           `json:"bot_id"`
+	Multiplier sql.NullFloat64 `json:"multiplier"`
+	UpdatedBy  string          `json:"updated_by"`
+	Notes      sql.NullString  `json:"notes"`
+}
+
+func (q *Queries) UpsertBotOrderScaler(ctx context.Context, arg UpsertBotOrderScalerParams) (BotOrderScaler, error) {
+	row := q.db.QueryRowContext(ctx, upsertBotOrderScaler,
+		arg.BotID,
+		arg.Multiplier,
+		arg.UpdatedBy,
+		arg.Notes,
+	)
+	var i BotOrderScaler
+	err := row.Scan(&i.BotID, &i.Multiplier, &i.EffectiveFromUtc, &i.UpdatedBy, &i.Notes)
+	return i, err
+}
+
+const deleteBotOrderScaler = `-- name: DeleteBotOrderScaler :execresult
+DELETE FROM bot_order_scalers
+WHERE bot_id = ?1
+`
+
+func (q *Queries) DeleteBotOrderScaler(ctx context.Context, botID int64) (sql.Result, error) {
+	return q.db.ExecContext(ctx, deleteBotOrderScaler, botID)
+}
+
+const getBotOrderScaler = `-- name: GetBotOrderScaler :one
+SELECT bot_id, multiplier, effective_from_utc, updated_by, notes
+FROM bot_order_scalers
+WHERE bot_id = ?1
+`
+
+func (q *Queries) GetBotOrderScaler(ctx context.Context, botID int64) (BotOrderScaler, error) {
+	row := q.db.QueryRowContext(ctx, getBotOrderScaler, botID)
+	var i BotOrderScaler
+	err := row.Scan(&i.BotID, &i.Multiplier, &i.EffectiveFromUtc, &i.UpdatedBy, &i.Notes)
+	return i, err
+}
+
+const listBotOrderScalers = `-- name: ListBotOrderScalers :many
+SELECT bot_id, multiplier, effective_from_utc, updated_by, notes
+FROM bot_order_scalers
+ORDER BY bot_id ASC
+`
+
+func (q *Queries) ListBotOrderScalers(ctx context.Context) ([]BotOrderScaler, error) {
+	rows, err := q.db.QueryContext(ctx, listBotOrderScalers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []BotOrderScaler{}
+	for rows.Next() {
+		var i BotOrderScaler
+		if err := rows.Scan(&i.BotID, &i.Multiplier, &i.EffectiveFromUtc, &i.UpdatedBy, &i.Notes); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const insertScaledOrderAudit = `-- name: InsertScaledOrderAudit :one
+INSERT INTO scaled_orders (
+    metadata_hex,
+    bot_id,
+    deal_id,
+    botevent_id,
+    original_size,
+    scaled_size,
+    multiplier,
+    rounding_delta,
+    stack_index,
+    order_side,
+    submitted_order_id
+) VALUES (
+    ?1,
+    ?2,
+    ?3,
+    ?4,
+    ?5,
+    ?6,
+    ?7,
+    ?8,
+    ?9,
+    ?10,
+    ?11
+)
+RETURNING id, metadata_hex, bot_id, deal_id, botevent_id, original_size, scaled_size, multiplier, rounding_delta, stack_index, order_side, submitted_order_id, created_at_utc
+`
+
+type InsertScaledOrderAuditParams struct {
+	MetadataHex      string         `json:"metadata_hex"`
+	BotID            int64          `json:"bot_id"`
+	DealID           int64          `json:"deal_id"`
+	BoteventID       int64          `json:"botevent_id"`
+	OriginalSize     float64        `json:"original_size"`
+	ScaledSize       float64        `json:"scaled_size"`
+	Multiplier       float64        `json:"multiplier"`
+	RoundingDelta    float64        `json:"rounding_delta"`
+	StackIndex       int64          `json:"stack_index"`
+	OrderSide        string         `json:"order_side"`
+	SubmittedOrderID sql.NullString `json:"submitted_order_id"`
+}
+
+func (q *Queries) InsertScaledOrderAudit(ctx context.Context, arg InsertScaledOrderAuditParams) (ScaledOrder, error) {
+	row := q.db.QueryRowContext(ctx, insertScaledOrderAudit,
+		arg.MetadataHex,
+		arg.BotID,
+		arg.DealID,
+		arg.BoteventID,
+		arg.OriginalSize,
+		arg.ScaledSize,
+		arg.Multiplier,
+		arg.RoundingDelta,
+		arg.StackIndex,
+		arg.OrderSide,
+		arg.SubmittedOrderID,
+	)
+	var i ScaledOrder
+	err := row.Scan(
+		&i.ID,
+		&i.MetadataHex,
+		&i.BotID,
+		&i.DealID,
+		&i.BoteventID,
+		&i.OriginalSize,
+		&i.ScaledSize,
+		&i.Multiplier,
+		&i.RoundingDelta,
+		&i.StackIndex,
+		&i.OrderSide,
+		&i.SubmittedOrderID,
+		&i.CreatedAtUtc,
+	)
+	return i, err
+}
+
+const listScaledOrdersForDeal = `-- name: ListScaledOrdersForDeal :many
+SELECT
+    id,
+    metadata_hex,
+    bot_id,
+    deal_id,
+    botevent_id,
+    original_size,
+    scaled_size,
+    multiplier,
+    rounding_delta,
+    stack_index,
+    order_side,
+    submitted_order_id,
+    created_at_utc
+FROM scaled_orders
+WHERE bot_id = ?1
+  AND deal_id = ?2
+ORDER BY created_at_utc ASC, id ASC
+`
+
+type ListScaledOrdersForDealParams struct {
+	BotID  int64 `json:"bot_id"`
+	DealID int64 `json:"deal_id"`
+}
+
+func (q *Queries) ListScaledOrdersForDeal(ctx context.Context, arg ListScaledOrdersForDealParams) ([]ScaledOrder, error) {
+	rows, err := q.db.QueryContext(ctx, listScaledOrdersForDeal, arg.BotID, arg.DealID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ScaledOrder{}
+	for rows.Next() {
+		var i ScaledOrder
+		if err := rows.Scan(
+			&i.ID,
+			&i.MetadataHex,
+			&i.BotID,
+			&i.DealID,
+			&i.BoteventID,
+			&i.OriginalSize,
+			&i.ScaledSize,
+			&i.Multiplier,
+			&i.RoundingDelta,
+			&i.StackIndex,
+			&i.OrderSide,
+			&i.SubmittedOrderID,
+			&i.CreatedAtUtc,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const fetchThreeCommasBotEvent = `-- name: FetchThreeCommasBotEvent :one

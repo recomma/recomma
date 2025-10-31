@@ -831,6 +831,7 @@ const (
 	ThreeCommasEvent      OrderLogEntryType = "three_commas_event"
 	HyperliquidSubmission OrderLogEntryType = "hyperliquid_submission"
 	HyperliquidStatus     OrderLogEntryType = "hyperliquid_status"
+	OrderScalerUpdate     OrderLogEntryType = "order_scaler_update"
 )
 
 type OrderLogItem struct {

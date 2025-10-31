@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +33,76 @@ type Storage struct {
 	mu      sync.Mutex
 	stream  api.StreamPublisher
 }
+
+type OrderScalerRecord struct {
+	Multiplier float64
+	UpdatedAt  time.Time
+	UpdatedBy  string
+}
+
+type OrderScalerScope string
+
+const (
+	OrderScalerScopeGlobal OrderScalerScope = "global"
+	OrderScalerScopeBot    OrderScalerScope = "bot"
+)
+
+type BotOrderScalerRecord struct {
+	BotID         int64
+	Multiplier    *float64
+	EffectiveFrom time.Time
+	UpdatedBy     string
+	Notes         *string
+}
+
+type EffectiveOrderScaler struct {
+	Multiplier float64
+	Scope      OrderScalerScope
+	Global     OrderScalerRecord
+	Override   *BotOrderScalerRecord
+}
+
+type OrderScalerUpdate struct {
+	Scope         OrderScalerScope `json:"scope"`
+	Multiplier    *float64         `json:"multiplier,omitempty"`
+	UpdatedAt     time.Time        `json:"updated_at"`
+	UpdatedBy     string           `json:"updated_by"`
+	BotID         *int64           `json:"bot_id,omitempty"`
+	Notes         *string          `json:"notes,omitempty"`
+	EffectiveFrom *time.Time       `json:"effective_from,omitempty"`
+}
+
+type ScaledOrderAudit struct {
+	Metadata       metadata.Metadata
+	BotID          int64
+	DealID         int64
+	BotEventID     int64
+	OriginalSize   float64
+	ScaledSize     float64
+	Multiplier     float64
+	RoundingDelta  float64
+	StackIndex     int64
+	Side           string
+	SubmittedOrder *string
+}
+
+type ScaledOrderRecord struct {
+	ID             int64
+	Metadata       metadata.Metadata
+	BotID          int64
+	DealID         int64
+	BotEventID     int64
+	OriginalSize   float64
+	ScaledSize     float64
+	Multiplier     float64
+	RoundingDelta  float64
+	StackIndex     int64
+	Side           string
+	SubmittedOrder *string
+	CreatedAt      time.Time
+}
+
+const orderScalerEventType api.OrderLogEntryType = api.OrderScalerUpdate
 
 // StorageOption configures Storage optional dependencies.
 type StorageOption func(*Storage)
@@ -72,6 +143,11 @@ func New(path string, opts ...StorageOption) (*Storage, error) {
 	if err := db.PingContext(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("ping sqlite db: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, "INSERT INTO order_scalers (id, multiplier, updated_by) VALUES (1, 1.0, 'system') ON CONFLICT(id) DO NOTHING"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("seed global order scaler: %w", err)
 	}
 
 	s := &Storage{
@@ -640,6 +716,251 @@ func (s *Storage) LoadHyperliquidRequest(ctx context.Context, md metadata.Metada
 	return action.Create, found, err
 }
 
+func (s *Storage) LoadGlobalOrderScaler(ctx context.Context) (OrderScalerRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	row, err := s.queries.GetGlobalOrderScaler(ctx)
+	if err != nil {
+		return OrderScalerRecord{}, err
+	}
+
+	return convertOrderScalerRow(row), nil
+}
+
+func (s *Storage) UpdateGlobalOrderScaler(ctx context.Context, multiplier float64, updatedBy string) (OrderScalerRecord, error) {
+	if multiplier <= 0 {
+		return OrderScalerRecord{}, fmt.Errorf("multiplier must be positive")
+	}
+	if strings.TrimSpace(updatedBy) == "" {
+		return OrderScalerRecord{}, fmt.Errorf("updatedBy is required")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	row, err := s.queries.UpsertGlobalOrderScaler(ctx, sqlcgen.UpsertGlobalOrderScalerParams{
+		Multiplier: multiplier,
+		UpdatedBy:  updatedBy,
+	})
+	if err != nil {
+		return OrderScalerRecord{}, err
+	}
+
+	record := convertOrderScalerRow(row)
+
+	payload := OrderScalerUpdate{
+		Scope:      OrderScalerScopeGlobal,
+		UpdatedAt:  record.UpdatedAt,
+		UpdatedBy:  record.UpdatedBy,
+		Multiplier: &record.Multiplier,
+	}
+
+	s.publishOrderScalerEventLocked(metadata.Metadata{}, payload)
+
+	return record, nil
+}
+
+func (s *Storage) UpsertBotOrderScaler(ctx context.Context, botID int64, multiplier *float64, updatedBy string, notes *string) (BotOrderScalerRecord, error) {
+	if botID <= 0 {
+		return BotOrderScalerRecord{}, fmt.Errorf("botID must be positive")
+	}
+	if multiplier != nil && *multiplier <= 0 {
+		return BotOrderScalerRecord{}, fmt.Errorf("multiplier must be positive")
+	}
+	if strings.TrimSpace(updatedBy) == "" {
+		return BotOrderScalerRecord{}, fmt.Errorf("updatedBy is required")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	row, err := s.queries.UpsertBotOrderScaler(ctx, sqlcgen.UpsertBotOrderScalerParams{
+		BotID:      botID,
+		Multiplier: toNullFloat64(multiplier),
+		UpdatedBy:  updatedBy,
+		Notes:      toNullString(notes),
+	})
+	if err != nil {
+		return BotOrderScalerRecord{}, err
+	}
+
+	record := convertBotOrderScalerRow(row)
+	payload := OrderScalerUpdate{
+		Scope:     OrderScalerScopeBot,
+		UpdatedAt: record.EffectiveFrom,
+		UpdatedBy: record.UpdatedBy,
+		BotID:     &record.BotID,
+		Notes:     record.Notes,
+	}
+	if record.Multiplier != nil {
+		payload.Multiplier = record.Multiplier
+	}
+	effective := record.EffectiveFrom
+	payload.EffectiveFrom = &effective
+
+	s.publishOrderScalerEventLocked(metadata.Metadata{BotID: uint32(record.BotID)}, payload)
+
+	return record, nil
+}
+
+func (s *Storage) DeleteBotOrderScaler(ctx context.Context, botID int64, updatedBy string) (bool, error) {
+	if botID <= 0 {
+		return false, fmt.Errorf("botID must be positive")
+	}
+	if strings.TrimSpace(updatedBy) == "" {
+		return false, fmt.Errorf("updatedBy is required")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	res, err := s.queries.DeleteBotOrderScaler(ctx, botID)
+	if err != nil {
+		return false, err
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if affected == 0 {
+		return false, nil
+	}
+
+	now := time.Now().UTC()
+	payload := OrderScalerUpdate{
+		Scope:     OrderScalerScopeBot,
+		UpdatedAt: now,
+		UpdatedBy: updatedBy,
+		BotID:     &botID,
+	}
+	s.publishOrderScalerEventLocked(metadata.Metadata{BotID: uint32(botID)}, payload)
+
+	return true, nil
+}
+
+func (s *Storage) ListBotOrderScalers(ctx context.Context) ([]BotOrderScalerRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.queries.ListBotOrderScalers(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]BotOrderScalerRecord, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, convertBotOrderScalerRow(row))
+	}
+
+	return out, nil
+}
+
+func (s *Storage) ResolveEffectiveOrderScaler(ctx context.Context, botID int64) (EffectiveOrderScaler, error) {
+	if botID <= 0 {
+		return EffectiveOrderScaler{}, fmt.Errorf("botID must be positive")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	globalRow, err := s.queries.GetGlobalOrderScaler(ctx)
+	if err != nil {
+		return EffectiveOrderScaler{}, err
+	}
+	global := convertOrderScalerRow(globalRow)
+
+	var override *BotOrderScalerRecord
+	if row, err := s.queries.GetBotOrderScaler(ctx, botID); err == nil {
+		rec := convertBotOrderScalerRow(row)
+		override = &rec
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return EffectiveOrderScaler{}, err
+	}
+
+	effective := EffectiveOrderScaler{
+		Multiplier: global.Multiplier,
+		Scope:      OrderScalerScopeGlobal,
+		Global:     global,
+	}
+	if override != nil {
+		effective.Override = override
+		if override.Multiplier != nil {
+			effective.Multiplier = *override.Multiplier
+			effective.Scope = OrderScalerScopeBot
+		}
+	}
+
+	return effective, nil
+}
+
+func (s *Storage) RecordScaledOrderAudit(ctx context.Context, audit ScaledOrderAudit) (ScaledOrderRecord, error) {
+	if strings.TrimSpace(audit.Side) == "" {
+		return ScaledOrderRecord{}, fmt.Errorf("order side is required")
+	}
+	side := strings.ToLower(audit.Side)
+	if side != "buy" && side != "sell" {
+		return ScaledOrderRecord{}, fmt.Errorf("order side must be 'buy' or 'sell'")
+	}
+	if audit.Multiplier <= 0 {
+		return ScaledOrderRecord{}, fmt.Errorf("multiplier must be positive")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	row, err := s.queries.InsertScaledOrderAudit(ctx, sqlcgen.InsertScaledOrderAuditParams{
+		MetadataHex:      audit.Metadata.Hex(),
+		BotID:            audit.BotID,
+		DealID:           audit.DealID,
+		BoteventID:       audit.BotEventID,
+		OriginalSize:     audit.OriginalSize,
+		ScaledSize:       audit.ScaledSize,
+		Multiplier:       audit.Multiplier,
+		RoundingDelta:    audit.RoundingDelta,
+		StackIndex:       audit.StackIndex,
+		OrderSide:        side,
+		SubmittedOrderID: toNullString(audit.SubmittedOrder),
+	})
+	if err != nil {
+		return ScaledOrderRecord{}, err
+	}
+
+	return convertScaledOrderRow(row)
+}
+
+func (s *Storage) ListScaledOrdersForDeal(ctx context.Context, botID, dealID int64) ([]ScaledOrderRecord, error) {
+	if botID <= 0 {
+		return nil, fmt.Errorf("botID must be positive")
+	}
+	if dealID <= 0 {
+		return nil, fmt.Errorf("dealID must be positive")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.queries.ListScaledOrdersForDeal(ctx, sqlcgen.ListScaledOrdersForDealParams{
+		BotID:  botID,
+		DealID: dealID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]ScaledOrderRecord, 0, len(rows))
+	for _, row := range rows {
+		rec, err := convertScaledOrderRow(row)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+
+	return out, nil
+}
+
 func (s *Storage) RecordBot(ctx context.Context, bot tc.Bot, syncedAt time.Time) error {
 	raw, err := json.Marshal(bot)
 	if err != nil {
@@ -760,4 +1081,91 @@ func (s *Storage) LoadTakeProfitForDeal(ctx context.Context, dealID uint32) (*me
 	}
 
 	return md, &evt, nil
+}
+
+func convertOrderScalerRow(row sqlcgen.OrderScaler) OrderScalerRecord {
+	return OrderScalerRecord{
+		Multiplier: row.Multiplier,
+		UpdatedAt:  time.UnixMilli(row.UpdatedAtUtc).UTC(),
+		UpdatedBy:  row.UpdatedBy,
+	}
+}
+
+func convertBotOrderScalerRow(row sqlcgen.BotOrderScaler) BotOrderScalerRecord {
+	var multiplierPtr *float64
+	if row.Multiplier.Valid {
+		value := row.Multiplier.Float64
+		multiplierPtr = &value
+	}
+	var notesPtr *string
+	if row.Notes.Valid {
+		value := row.Notes.String
+		notesPtr = &value
+	}
+
+	return BotOrderScalerRecord{
+		BotID:         row.BotID,
+		Multiplier:    multiplierPtr,
+		EffectiveFrom: time.UnixMilli(row.EffectiveFromUtc).UTC(),
+		UpdatedBy:     row.UpdatedBy,
+		Notes:         notesPtr,
+	}
+}
+
+func convertScaledOrderRow(row sqlcgen.ScaledOrder) (ScaledOrderRecord, error) {
+	md, err := metadata.FromHexString(row.MetadataHex)
+	if err != nil {
+		return ScaledOrderRecord{}, fmt.Errorf("decode metadata %q: %w", row.MetadataHex, err)
+	}
+
+	var submitted *string
+	if row.SubmittedOrderID.Valid {
+		value := row.SubmittedOrderID.String
+		submitted = &value
+	}
+
+	return ScaledOrderRecord{
+		ID:             row.ID,
+		Metadata:       *md,
+		BotID:          row.BotID,
+		DealID:         row.DealID,
+		BotEventID:     row.BoteventID,
+		OriginalSize:   row.OriginalSize,
+		ScaledSize:     row.ScaledSize,
+		Multiplier:     row.Multiplier,
+		RoundingDelta:  row.RoundingDelta,
+		StackIndex:     row.StackIndex,
+		Side:           row.OrderSide,
+		SubmittedOrder: submitted,
+		CreatedAt:      time.UnixMilli(row.CreatedAtUtc).UTC(),
+	}, nil
+}
+
+func toNullFloat64(value *float64) sql.NullFloat64 {
+	if value == nil {
+		return sql.NullFloat64{}
+	}
+	return sql.NullFloat64{Float64: *value, Valid: true}
+}
+
+func toNullString(value *string) sql.NullString {
+	if value == nil {
+		return sql.NullString{}
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: trimmed, Valid: true}
+}
+
+func (s *Storage) publishOrderScalerEventLocked(md metadata.Metadata, payload OrderScalerUpdate) {
+	if s.stream == nil {
+		return
+	}
+	s.publishStreamEventLocked(api.StreamEvent{
+		Type:       orderScalerEventType,
+		Metadata:   md,
+		Submission: payload,
+	})
 }

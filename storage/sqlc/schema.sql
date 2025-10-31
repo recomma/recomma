@@ -66,6 +66,48 @@ CREATE TABLE IF NOT EXISTS hyperliquid_status_history (
     recorded_at_utc INTEGER NOT NULL DEFAULT(unixepoch('now','subsec') * 1000)
 );
 
+CREATE TABLE IF NOT EXISTS order_scalers (
+    id              INTEGER PRIMARY KEY CHECK(id = 1),
+    multiplier      REAL    NOT NULL CHECK(multiplier > 0),
+    updated_at_utc  INTEGER NOT NULL DEFAULT(unixepoch('now','subsec') * 1000),
+    updated_by      TEXT    NOT NULL
+);
+
+INSERT INTO order_scalers (id, multiplier, updated_by)
+VALUES (1, 1.0, 'system')
+ON CONFLICT(id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS bot_order_scalers (
+    bot_id             INTEGER PRIMARY KEY,
+    multiplier         REAL,
+    effective_from_utc INTEGER NOT NULL DEFAULT(unixepoch('now','subsec') * 1000),
+    updated_by         TEXT    NOT NULL,
+    notes              TEXT,
+    CHECK(multiplier IS NULL OR multiplier > 0),
+    FOREIGN KEY(bot_id) REFERENCES threecommas_bots(bot_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS scaled_orders (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    metadata_hex      TEXT    NOT NULL,
+    bot_id            INTEGER NOT NULL,
+    deal_id           INTEGER NOT NULL,
+    botevent_id       INTEGER NOT NULL,
+    original_size     REAL    NOT NULL,
+    scaled_size       REAL    NOT NULL,
+    multiplier        REAL    NOT NULL,
+    rounding_delta    REAL    NOT NULL DEFAULT 0,
+    stack_index       INTEGER NOT NULL,
+    order_side        TEXT    NOT NULL CHECK(order_side IN ('buy', 'sell')),
+    submitted_order_id TEXT,
+    created_at_utc    INTEGER NOT NULL DEFAULT(unixepoch('now','subsec') * 1000),
+    FOREIGN KEY(bot_id) REFERENCES threecommas_bots(bot_id) ON DELETE CASCADE,
+    FOREIGN KEY(deal_id) REFERENCES threecommas_deals(deal_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_scaled_orders_deal
+    ON scaled_orders(deal_id, bot_id, stack_index);
+
 -- Vault tables for WebAuthn-backed secret storage
 CREATE TABLE IF NOT EXISTS vault_users (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,

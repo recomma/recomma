@@ -101,6 +101,12 @@ func TestHyperLiquidEmitterIOCRetriesLogSuccess(t *testing.T) {
 			lastErr, ok := entry.Attrs["last-error"].(string)
 			require.True(t, ok, "expected last-error attribute to be a string")
 			require.Contains(t, lastErr, "Order could not immediately match")
+			requested, ok := entry.Attrs["requested_size"].(float64)
+			require.True(t, ok)
+			require.InDelta(t, 1.0, requested, 1e-9)
+			executed, ok := entry.Attrs["executed_size"].(float64)
+			require.True(t, ok)
+			require.InDelta(t, 0.0, executed, 1e-9)
 		}
 	}
 

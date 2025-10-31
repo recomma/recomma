@@ -76,3 +76,6 @@ Download the format that suits your setup; every artifact bundles the web UI and
 ## Documentation
 
 The long-form documentation now lives under `docs/` in AsciiDoc format and is rendered with Antora. Start with `docs/modules/ROOT/pages/index.adoc` for an overview, setup guidance, and contributor workflow. The GitHub README will be generated from these sources once the Antora pipeline lands.
+
+- Operational runbook coverage, including detailed order scaler instructions and API examples,
+  lives in `docs/modules/ROOT/pages/operations/order-scaler.adoc`.

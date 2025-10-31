@@ -31,6 +31,11 @@
 - Docker: multi-stage image builds a static binary; `docker-compose.yml` has dev vs. released image profiles.
 - Optional local SDK work: uncomment the `replace` directives in `go.mod` to point at sibling checkouts of `3commas-sdk-go` or `go-hyperliquid`.
 
+## Generated Artifacts
+- Do not edit generated code. Rerun `go generate ./...` after changing `openapi.yaml`, `oapi.yaml`, or anything under `storage/sqlc/`.
+- The outputs land in `internal/api/ops.gen.go` and the entire `storage/sqlcgen/` directory (including `storage/sqlcgen/models.go`). Treat these files as read-only or they will be overwritten and drift from the source schema/spec.
+- If you are unable to generate the code, do not edit the files anyway. Let the maintainer generate.
+
 ### Git Submodules
 - Clone with submodules so the 3Commas spec is available: `git clone --recurse-submodules git@github.com:recomma/recomma.git`
 - For existing clones, pull the spec by running: `git submodule update --init --recursive`
@@ -70,7 +75,6 @@
 
 ## Testing & Fixtures
 - Unit tests across `engine`, `filltracker`, `storage`, and `internal/api` validate diffing logic, fill tracking, and API contracts.
-- `cmd/generate` is a helper that dumps captured DB bot events into Go fixtures for deterministic tests (`go run ./cmd/generate <db.sqlite3>`).
 - `internal/testutil` hosts builders for 3Commas bot events.
 
 ## Documentation

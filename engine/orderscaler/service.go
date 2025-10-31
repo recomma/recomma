@@ -126,14 +126,15 @@ func (s *Service) Scale(ctx context.Context, req Request, order *hyperliquid.Cre
 	order.Size = roundedSize
 
 	auditParams := storage.RecordScaledOrderParams{
-		Metadata:     req.Metadata,
-		DealID:       req.Metadata.DealID,
-		BotID:        req.Metadata.BotID,
-		OriginalSize: req.OriginalSize,
-		ScaledSize:   roundedSize,
-		StackIndex:   req.StackIndex,
-		OrderSide:    req.Side,
-		CreatedAt:    req.Timestamp,
+		Metadata:          req.Metadata,
+		DealID:            req.Metadata.DealID,
+		BotID:             req.Metadata.BotID,
+		OriginalSize:      req.OriginalSize,
+		ScaledSize:        roundedSize,
+		AppliedMultiplier: &multiplier,
+		StackIndex:        req.StackIndex,
+		OrderSide:         req.Side,
+		CreatedAt:         req.Timestamp,
 	}
 
 	audit, effectiveAfter, err := s.store.RecordScaledOrder(ctx, auditParams)

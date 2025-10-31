@@ -8,6 +8,15 @@ import (
 	"encoding/json"
 )
 
+type BotOrderScaler struct {
+	BotID            int64    `json:"bot_id"`
+	Multiplier       *float64 `json:"multiplier"`
+	Notes            *string  `json:"notes"`
+	EffectiveFromUtc int64    `json:"effective_from_utc"`
+	UpdatedAtUtc     int64    `json:"updated_at_utc"`
+	UpdatedBy        string   `json:"updated_by"`
+}
+
 type HyperliquidStatusHistory struct {
 	ID            int64  `json:"id"`
 	Md            string `json:"md"`
@@ -23,6 +32,30 @@ type HyperliquidSubmission struct {
 	CancelPayload  json.RawMessage `json:"cancel_payload"`
 	UpdatedAtUtc   int64           `json:"updated_at_utc"`
 	BoteventRowID  int64           `json:"botevent_row_id"`
+}
+
+type OrderScaler struct {
+	ID           int64   `json:"id"`
+	Multiplier   float64 `json:"multiplier"`
+	UpdatedAtUtc int64   `json:"updated_at_utc"`
+	UpdatedBy    string  `json:"updated_by"`
+	Notes        *string `json:"notes"`
+}
+
+type ScaledOrder struct {
+	ID                  int64   `json:"id"`
+	Md                  string  `json:"md"`
+	DealID              int64   `json:"deal_id"`
+	BotID               int64   `json:"bot_id"`
+	OriginalSize        float64 `json:"original_size"`
+	ScaledSize          float64 `json:"scaled_size"`
+	Multiplier          float64 `json:"multiplier"`
+	RoundingDelta       float64 `json:"rounding_delta"`
+	StackIndex          int64   `json:"stack_index"`
+	OrderSide           string  `json:"order_side"`
+	MultiplierUpdatedBy string  `json:"multiplier_updated_by"`
+	CreatedAtUtc        int64   `json:"created_at_utc"`
+	SubmittedOrderID    *string `json:"submitted_order_id"`
 }
 
 type ThreecommasBot struct {

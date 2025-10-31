@@ -22,6 +22,7 @@ type AppConfig struct {
 	LogLevel                       string
 	LogFormatJSON                  bool
 	HyperliquidIOCInitialOffsetBps float64
+	OrderScalerMaxMultiplier       float64
 }
 
 func DefaultConfig() AppConfig {
@@ -34,6 +35,7 @@ func DefaultConfig() AppConfig {
 		LogLevel:                       "info",
 		LogFormatJSON:                  false,
 		HyperliquidIOCInitialOffsetBps: 0,
+		OrderScalerMaxMultiplier:       5,
 	}
 }
 
@@ -51,6 +53,7 @@ func NewConfigFlagSet(cfg *AppConfig) *pflag.FlagSet {
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "Log level (env: RECOMMA_LOG_LEVEL)")
 	fs.BoolVar(&cfg.LogFormatJSON, "log-json", cfg.LogFormatJSON, "Emit logs as JSON (env: RECOMMA_LOG_JSON)")
 	fs.Float64Var(&cfg.HyperliquidIOCInitialOffsetBps, "hyperliquid-ioc-offset-bps", cfg.HyperliquidIOCInitialOffsetBps, "Basis points to widen the first IOC price check (env: RECOMMA_HYPERLIQUID_IOC_OFFSET_BPS)")
+	fs.Float64Var(&cfg.OrderScalerMaxMultiplier, "order-scaler-max-multiplier", cfg.OrderScalerMaxMultiplier, "Maximum allowed order scaler multiplier (env: RECOMMA_ORDER_SCALER_MAX_MULTIPLIER)")
 
 	return fs
 }
@@ -118,12 +121,17 @@ func ApplyEnvDefaults(fs *pflag.FlagSet, cfg *AppConfig) error {
 	setString("log-level", "RECOMMA_LOG_LEVEL", &cfg.LogLevel)
 	setBool("log-json", "RECOMMA_LOG_JSON", &cfg.LogFormatJSON)
 	setFloat("hyperliquid-ioc-offset-bps", "RECOMMA_HYPERLIQUID_IOC_OFFSET_BPS", &cfg.HyperliquidIOCInitialOffsetBps)
+	setFloat("order-scaler-max-multiplier", "RECOMMA_ORDER_SCALER_MAX_MULTIPLIER", &cfg.OrderScalerMaxMultiplier)
 
 	return nil
 }
 
 func ValidateConfig(cfg AppConfig) error {
 	var missing []string
+
+	if cfg.OrderScalerMaxMultiplier <= 0 {
+		return fmt.Errorf("order scaler max multiplier must be positive")
+	}
 
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required config: %s", strings.Join(missing, ", "))

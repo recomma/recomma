@@ -100,6 +100,44 @@ func (s *Service) UpdateStatus(ctx context.Context, md metadata.Metadata, status
 	return nil
 }
 
+// ApplyScaledOrder updates the cached state with a scaled order size/price.
+func (s *Service) ApplyScaledOrder(md metadata.Metadata, size, price float64) {
+	if s == nil {
+		return
+	}
+	if size <= 0 && price <= 0 {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state := s.ensureOrderLocked(md)
+	if size > 0 {
+		state.originalQty = size
+		if state.filledQty > size {
+			state.filledQty = size
+		}
+		remaining := size - state.filledQty
+		if remaining < 0 {
+			remaining = 0
+		}
+		state.remainingQty = remaining
+	}
+	if price > 0 {
+		state.price = price
+		if state.limitPrice == 0 {
+			state.limitPrice = price
+		}
+	}
+	state.lastUpdate = time.Now().UTC()
+
+	deal := s.ensureDealLocked(md)
+	deal.orders[md.Hex()] = state
+	deal.lastUpdate = time.Now().UTC()
+	deal.recompute()
+}
+
 // Snapshot returns a copy of the tracked deal state. ok=false if unknown.
 func (s *Service) Snapshot(dealID uint32) (DealSnapshot, bool) {
 	s.mu.RLock()
@@ -473,6 +511,16 @@ func (s *Service) reloadDeal(ctx context.Context, dealID uint32) error {
 			return err
 		}
 
+		scaledOrders, err := s.store.ListScaledOrdersByMetadata(ctx, md)
+		if err != nil {
+			s.logger.Warn("load scaled orders", slog.Uint64("deal_id", uint64(md.DealID)), slog.String("error", err.Error()))
+		}
+		var latestScaled *storage.ScaledOrderAudit
+		if err == nil && len(scaledOrders) > 0 {
+			copy := scaledOrders[len(scaledOrders)-1]
+			latestScaled = &copy
+		}
+
 		s.mu.Lock()
 		state := s.ensureOrderLocked(md)
 		if event != nil {
@@ -483,6 +531,19 @@ func (s *Service) reloadDeal(ctx context.Context, dealID uint32) error {
 			state.applyStatus(*status)
 		} else {
 			state.inferFromEvent()
+		}
+		if latestScaled != nil {
+			if latestScaled.ScaledSize > 0 {
+				state.originalQty = latestScaled.ScaledSize
+				if state.filledQty > state.originalQty {
+					state.filledQty = state.originalQty
+				}
+				remaining := state.originalQty - state.filledQty
+				if remaining < 0 {
+					remaining = 0
+				}
+				state.remainingQty = remaining
+			}
 		}
 
 		deal := s.ensureDealLocked(md)

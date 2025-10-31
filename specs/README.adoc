@@ -1,0 +1,3 @@
+= Recomma Design Specs Index
+
+* link:order_scaler.adoc[Hyperliquid Order Scaler]

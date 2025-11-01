@@ -365,7 +365,7 @@ func (s *Storage) ListOrders(ctx context.Context, opts api.ListOrdersOptions) ([
 
 	if opts.OrderIdPrefix != nil {
 		if prefix := strings.TrimSpace(*opts.OrderIdPrefix); prefix != "" {
-			conditions = append(conditions, "LOWER(oid) LIKE ?")
+			conditions = append(conditions, "LOWER(order_id) LIKE ?")
 			args = append(args, strings.ToLower(prefix)+"%")
 		}
 	}

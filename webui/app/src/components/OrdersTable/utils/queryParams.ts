@@ -11,7 +11,7 @@ export const createOrderQueryParams = (
   const params = new URLSearchParams();
 
   if (filters.order_id?.trim()) {
-    params.append('orderId', filters.order_id.trim());
+    params.append('order_id', filters.order_id.trim());
   }
   if (filters.bot_id?.trim()) {
     params.append('bot_id', filters.bot_id.trim());

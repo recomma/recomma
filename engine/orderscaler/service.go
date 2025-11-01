@@ -11,7 +11,7 @@ import (
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/hl"
-	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/storage"
 	"github.com/sonirico/go-hyperliquid"
 )
@@ -21,9 +21,9 @@ var ErrBelowMinimum = errors.New("scaled order below venue minimum")
 
 // Store defines the storage subset required by the scaler.
 type Store interface {
-	ResolveEffectiveOrderScaler(ctx context.Context, md metadata.Metadata) (storage.EffectiveOrderScaler, error)
+	ResolveEffectiveOrderScaler(ctx context.Context, oid orderid.OrderId) (storage.EffectiveOrderScaler, error)
 	RecordScaledOrder(ctx context.Context, params storage.RecordScaledOrderParams) (storage.ScaledOrderAudit, storage.EffectiveOrderScaler, error)
-	ListTakeProfitStackSizes(ctx context.Context, md metadata.Metadata, stackSize int) ([]float64, error)
+	ListTakeProfitStackSizes(ctx context.Context, oid orderid.OrderId, stackSize int) ([]float64, error)
 }
 
 // Constraints resolves Hyperliquid rounding requirements.
@@ -65,7 +65,7 @@ func WithMaxMultiplier(max float64) Option {
 
 // Request captures the details required to scale an order.
 type Request struct {
-	Metadata     metadata.Metadata
+	OrderId      orderid.OrderId
 	Coin         string
 	Side         string
 	OriginalSize float64
@@ -93,14 +93,14 @@ func (s *Service) Scale(ctx context.Context, req Request, order *hyperliquid.Cre
 		req.Coin = order.Coin
 	}
 
-	effective, err := s.store.ResolveEffectiveOrderScaler(ctx, req.Metadata)
+	effective, err := s.store.ResolveEffectiveOrderScaler(ctx, req.OrderId)
 	if err != nil {
 		return Result{}, fmt.Errorf("resolve multiplier: %w", err)
 	}
 
 	multiplier := effective.Multiplier
 	if s.maxMultiplier > 0 && multiplier > s.maxMultiplier {
-		s.logger.Warn("effective multiplier exceeds configured max; clamping", slog.Float64("multiplier", multiplier), slog.Float64("max", s.maxMultiplier), slog.Uint64("deal_id", uint64(req.Metadata.DealID)), slog.Uint64("bot_id", uint64(req.Metadata.BotID)))
+		s.logger.Warn("effective multiplier exceeds configured max; clamping", slog.Float64("multiplier", multiplier), slog.Float64("max", s.maxMultiplier), slog.Uint64("deal_id", uint64(req.OrderId.DealID)), slog.Uint64("bot_id", uint64(req.OrderId.BotID)))
 		multiplier = s.maxMultiplier
 	}
 	scaledSize := req.OriginalSize * multiplier
@@ -119,9 +119,9 @@ func (s *Service) Scale(ctx context.Context, req Request, order *hyperliquid.Cre
 	roundedSize := constraints.RoundSize(scaledSize)
 
 	if req.StackSize > 1 && req.StackIndex >= 0 {
-		stackSizes, stackErr := s.store.ListTakeProfitStackSizes(ctx, req.Metadata, req.StackSize)
+		stackSizes, stackErr := s.store.ListTakeProfitStackSizes(ctx, req.OrderId, req.StackSize)
 		if stackErr != nil {
-			s.logger.Debug("resolve stack sizes", slog.Any("error", stackErr), slog.Uint64("deal_id", uint64(req.Metadata.DealID)), slog.Int("stack_size", req.StackSize))
+			s.logger.Debug("resolve stack sizes", slog.Any("error", stackErr), slog.Uint64("deal_id", uint64(req.OrderId.DealID)), slog.Int("stack_size", req.StackSize))
 		} else if len(stackSizes) == req.StackSize {
 			stackRounded := computeStackRoundedSizes(stackSizes, multiplier, constraints.SizeStep)
 			if req.StackIndex >= 0 && req.StackIndex < len(stackRounded) {
@@ -136,9 +136,9 @@ func (s *Service) Scale(ctx context.Context, req Request, order *hyperliquid.Cre
 	if constraints.NotionalBelowMinimum(roundedSize, roundedPrice) {
 		reason := fmt.Sprintf("scaled order below minimum notional (%.4f < %.4f)", notional, constraints.MinNotional)
 		auditParams := storage.RecordScaledOrderParams{
-			Metadata:          req.Metadata,
-			DealID:            req.Metadata.DealID,
-			BotID:             req.Metadata.BotID,
+			OrderId:           req.OrderId,
+			DealID:            req.OrderId.DealID,
+			BotID:             req.OrderId.BotID,
 			OriginalSize:      req.OriginalSize,
 			ScaledSize:        roundedSize,
 			AppliedMultiplier: &multiplier,
@@ -154,7 +154,7 @@ func (s *Service) Scale(ctx context.Context, req Request, order *hyperliquid.Cre
 			return Result{}, fmt.Errorf("record skipped scaled order: %w", recordErr)
 		}
 
-		s.logger.Warn("scaled order violates minimum notional", slog.String("coin", req.Coin), slog.Float64("price", roundedPrice), slog.Float64("size", roundedSize), slog.Float64("notional", notional), slog.Float64("min", constraints.MinNotional), slog.Float64("multiplier", multiplier), slog.Uint64("deal_id", uint64(req.Metadata.DealID)), slog.Uint64("bot_id", uint64(req.Metadata.BotID)), slog.String("reason", reason))
+		s.logger.Warn("scaled order violates minimum notional", slog.String("coin", req.Coin), slog.Float64("price", roundedPrice), slog.Float64("size", roundedSize), slog.Float64("notional", notional), slog.Float64("min", constraints.MinNotional), slog.Float64("multiplier", multiplier), slog.Uint64("deal_id", uint64(req.OrderId.DealID)), slog.Uint64("bot_id", uint64(req.OrderId.BotID)), slog.String("reason", reason))
 
 		return Result{
 			Size:       roundedSize,
@@ -169,9 +169,9 @@ func (s *Service) Scale(ctx context.Context, req Request, order *hyperliquid.Cre
 	order.Size = roundedSize
 
 	auditParams := storage.RecordScaledOrderParams{
-		Metadata:          req.Metadata,
-		DealID:            req.Metadata.DealID,
-		BotID:             req.Metadata.BotID,
+		OrderId:           req.OrderId,
+		DealID:            req.OrderId.DealID,
+		BotID:             req.OrderId.BotID,
 		OriginalSize:      req.OriginalSize,
 		ScaledSize:        roundedSize,
 		AppliedMultiplier: &multiplier,
@@ -321,7 +321,7 @@ func evaluateStackCost(original, targets, sizes []float64) float64 {
 }
 
 // BuildRequest from a bot event + order.
-func BuildRequest(md metadata.Metadata, evt tc.BotEvent, order hyperliquid.CreateOrderRequest) Request {
+func BuildRequest(oid orderid.OrderId, evt tc.BotEvent, order hyperliquid.CreateOrderRequest) Request {
 	side := "sell"
 	if order.IsBuy {
 		side = "buy"
@@ -346,7 +346,7 @@ func BuildRequest(md metadata.Metadata, evt tc.BotEvent, order hyperliquid.Creat
 	}
 
 	return Request{
-		Metadata:     md,
+		OrderId:      oid,
 		Coin:         order.Coin,
 		Side:         side,
 		OriginalSize: size,

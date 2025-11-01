@@ -141,7 +141,7 @@ paths:
       operationId: getVaultStatus
       summary: Inspect vault state
       description: >
-        Returns the current vault lifecycle state plus metadata about the active user
+        Returns the current vault lifecycle state plus meta data about the active user
         and session. This endpoint is unauthenticated so the frontend can poll during setup.
       responses:
         '200':
@@ -408,14 +408,14 @@ paths:
       description: >
         Returns rows from `threecommas_botevents` (the actionable subset). Each row includes the raw
         3Commas payload, plus the latest matching submission and status from Hyperliquid if present.
-        Use the filters to drill down to a single metadata hex, bot, deal, or bot-event ID.
+        Use the filters to drill down to a single OrderId hex, bot, deal, or bot-event ID.
         The `from`/`to` window operates on the bot-event `observed_at` timestamp so you can page through history.
         Setting `include_log=true` embeds matching entries from `threecommas_botevents_log` and
         `hyperliquid_status_history` within each result, filtered by the same time window.
       parameters:
-        - name: metadata
+        - name: order_id
           in: query
-          description: Case-insensitive prefix match on metadata hex; exact match recommended for drill-down.
+          description: Case-insensitive prefix match on OrderId hex; exact match recommended for drill-down.
           required: false
           schema:
             type: string
@@ -457,7 +457,7 @@ paths:
         - name: include_log
           in: query
           description: >
-            When true, embed `log_entries` for each order, limited to the same metadata and
+            When true, embed `log_entries` for each order, limited to the same OrderId and
             time range (default false).
           required: false
           schema:
@@ -502,29 +502,29 @@ paths:
   /api/orders/scalers:
     get:
       operationId: listOrderScalers
-      summary: List effective order scaler configurations for observed metadata
+      summary: List effective order scaler configurations for observed OrderId
       description: >
-        Returns the effective multiplier applied to each metadata tuple that has interacted with
+        Returns the effective multiplier applied to each OrderId tuple that has interacted with
         the scaler subsystem. The response resolves bot-level overrides against the global default
-        multiplier and surfaces the source metadata (default vs. override) along with operator notes.
-        Use the filters to scope results to a metadata prefix, bot, deal, or bot-event identifier.
+        multiplier and surfaces the source OrderId (default vs. override) along with operator notes.
+        Use the filters to scope results to a OrderId prefix, bot, deal, or bot-event identifier.
       parameters:
-        - name: metadata
+        - name: order_id
           in: query
-          description: Case-insensitive prefix match on metadata hex; exact match recommended for drill-down.
+          description: Case-insensitive prefix match on OrderId hex; exact match recommended for drill-down.
           required: false
           schema:
             type: string
         - name: bot_id
           in: query
-          description: Restrict to metadata emitted by this bot ID.
+          description: Restrict to OrderId emitted by this bot ID.
           required: false
           schema:
             type: integer
             format: int64
         - name: deal_id
           in: query
-          description: Restrict to metadata emitted by this deal ID.
+          description: Restrict to OrderId emitted by this deal ID.
           required: false
           schema:
             type: integer
@@ -579,7 +579,7 @@ paths:
       summary: Retrieve the global order scaler multiplier
       description: >
         Returns the current default multiplier applied to all mirrored orders when no per-bot override exists.
-        The response includes the underlying configuration record and the effective multiplier metadata that
+        The response includes the underlying configuration record and the effective multiplier OrderId that
         downstream components apply.
       security:
         - SessionCookie: []
@@ -717,18 +717,18 @@ paths:
         '500':
           description: Internal server error
 
-  /api/orders/{metadata}/cancel:
+  /api/orders/{order_id}/cancel:
     post:
-      operationId: cancelOrderByMetadata
-      summary: Cancel Hyperliquid order by metadata
+      operationId: cancelOrderByOrderId
+      summary: Cancel Hyperliquid order by OrderId
       description: >
-        Enqueues a Hyperliquid cancel action for the order identified by the supplied metadata hex.
-        The service resolves the most recent submission for the metadata to determine the CLOID and venue coin.
+        Enqueues a Hyperliquid cancel action for the order identified by the supplied OrderId hex.
+        The service resolves the most recent submission for the OrderId to determine the CLOID and venue coin.
       parameters:
-        - name: metadata
+        - name: order_id
           in: path
           required: true
-          description: Order metadata identifier (case-insensitive hex string with optional `0x` prefix).
+          description: Order OrderId identifier (case-insensitive hex string with optional `0x` prefix).
           schema:
             type: string
       requestBody:
@@ -736,18 +736,18 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CancelOrderByMetadataRequest'
+              $ref: '#/components/schemas/CancelOrderByOrderIdRequest'
       responses:
         '202':
           description: Cancel action accepted for processing.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CancelOrderByMetadataResponse'
+                $ref: '#/components/schemas/CancelOrderByOrderIdResponse'
         '400':
-          description: Invalid metadata or payload
+          description: Invalid OrderId or payload
         '404':
-          description: Metadata not found or no cancellable order present
+          description: OrderId not found or no cancellable order present
         '409':
           description: Order already completed or cancel currently in progress
         '500':
@@ -760,12 +760,12 @@ paths:
       description: >
         Server Sent Events channel fed by writes to `threecommas_botevents`, `hyperliquid_submissions`,
         and `hyperliquid_status_history`. Each `data:` frame is a JSON object containing the raw payload
-        we stored for that update, plus the metadata hex and timestamps. Filters match the query semantics
+        we stored for that update, plus the OrderId hex and timestamps. Filters match the query semantics
         of `/api/orders`.
       parameters:
-        - name: metadata
+        - name: order_id
           in: query
-          description: Case-insensitive prefix match; only events for matching metadata are emitted.
+          description: Case-insensitive prefix match; only events for matching OrderId are emitted.
           required: false
           schema:
             type: string
@@ -808,10 +808,10 @@ paths:
                   UTF-8 event stream. Example frames:
                   ```
                   event: three_commas_event
-                  data: {"type":"three_commas_event","metadata":"0x1234","identifiers":{"hex":"0x1234","bot_id":16538545,"deal_id":2381631392,"bot_event_id":1917367905,"created_at":"2025-01-02T01:02:03Z"},"observed_at":"2025-01-02T03:04:05Z","event":{"created_at":"2025-01-02T01:02:03Z","action":"Placing","coin":"DOGE","type":"BUY","status":"Active","price":0.19788,"size":105,"order_type":"base","order_size":0,"order_position":0,"quote_volume":20.7774,"quote_currency":"USDT","is_market":false,"text":"Placing base order..."}}
+                  data: {"type":"three_commas_event","order_id":"0x1234","identifiers":{"hex":"0x1234","bot_id":16538545,"deal_id":2381631392,"bot_event_id":1917367905,"created_at":"2025-01-02T01:02:03Z"},"observed_at":"2025-01-02T03:04:05Z","event":{"created_at":"2025-01-02T01:02:03Z","action":"Placing","coin":"DOGE","type":"BUY","status":"Active","price":0.19788,"size":105,"order_type":"base","order_size":0,"order_position":0,"quote_volume":20.7774,"quote_currency":"USDT","is_market":false,"text":"Placing base order..."}}
 
                   event: order_scaler_config
-                  data: {"type":"order_scaler_config","metadata":"0x1234","observed_at":"2025-01-02T03:04:05Z","config":{"metadata":"0x1234","multiplier":0.5,"source":"bot_override","default":{"multiplier":1.0,"updated_at":"2025-01-01T00:00:00Z","updated_by":"system"},"override":{"bot_id":16538545,"multiplier":0.5,"notes":"risk off","effective_from":"2025-01-02T03:04:05Z","updated_at":"2025-01-02T03:04:05Z","updated_by":"operator"}},"actor":"operator"}
+                  data: {"type":"order_scaler_config","order_id":"0x1234","observed_at":"2025-01-02T03:04:05Z","config":{"order_id":"0x1234","multiplier":0.5,"source":"bot_override","default":{"multiplier":1.0,"updated_at":"2025-01-01T00:00:00Z","updated_by":"system"},"override":{"bot_id":16538545,"multiplier":0.5,"notes":"risk off","effective_from":"2025-01-02T03:04:05Z","updated_at":"2025-01-02T03:04:05Z","updated_by":"operator"}},"actor":"operator"}
 
                   ```
         '400':
@@ -1149,28 +1149,28 @@ components:
     OrderRecord:
       type: object
       required:
-        - metadata
+        - order_id
         - identifiers
         - observed_at
         - three_commas
       properties:
-        metadata:
+        order_id:
           type: string
-          description: Metadata hash (hex) as stored in `threecommas_botevents`.
+          description: OrderId hash (hex) as stored in `threecommas_botevents`.
         identifiers:
           $ref: '#/components/schemas/OrderIdentifiers'
-          description: Parsed bot/deal information derived from the metadata. `hex` repeats the `metadata` value.
+          description: Parsed bot/deal information derived from the OrderId. `hex` repeats the `OrderId` value.
         observed_at:
           type: string
           format: date-time
           description: Timestamp when Recomma observed the order update.
         three_commas:
           $ref: '#/components/schemas/ThreeCommasOrderState'
-          description: Latest parsed 3Commas bot-event associated with this metadata.
+          description: Latest parsed 3Commas bot-event associated with this OrderId.
         hyperliquid:
           $ref: '#/components/schemas/HyperliquidOrderState'
           nullable: true
-          description: Latest Hyperliquid submission/status captured for this metadata.
+          description: Latest Hyperliquid submission/status captured for this OrderId.
         log_entries:
           type: array
           nullable: true
@@ -1178,7 +1178,7 @@ components:
           items:
             $ref: '#/components/schemas/OrderLogEntry'
 
-    CancelOrderByMetadataRequest:
+    CancelOrderByOrderIdRequest:
       type: object
       properties:
         reason:
@@ -1192,15 +1192,15 @@ components:
           default: false
       additionalProperties: false
 
-    CancelOrderByMetadataResponse:
+    CancelOrderByOrderIdResponse:
       type: object
       required:
-        - metadata
+        - order_id
         - status
       properties:
-        metadata:
+        order_id:
           type: string
-          description: Metadata hex identifying the targeted order.
+          description: OrderID hex identifying the targeted order.
         status:
           type: string
           description: Outcome of the cancel attempt (for example `queued`, `skipped`, or `noop`).
@@ -1225,7 +1225,7 @@ components:
       properties:
         hex:
           type: string
-          description: Case-insensitive hash deriving from the 3Commas metadata payload.
+          description: Case-insensitive hash deriving from the 3Commas OrderId payload.
         bot_id:
           type: integer
           format: int64
@@ -1247,7 +1247,7 @@ components:
       properties:
         event:
           $ref: '#/components/schemas/ThreeCommasBotEvent'
-          description: Parsed 3Commas bot event emitted for this metadata.
+          description: Parsed 3Commas bot event emitted for this OrderId.
 
     ThreeCommasBotEvent:
       type: object
@@ -1327,11 +1327,11 @@ components:
         latest_submission:
           $ref: '#/components/schemas/HyperliquidAction'
           nullable: true
-          description: Most recent action we submitted to Hyperliquid for this metadata (last write wins).
+          description: Most recent action we submitted to Hyperliquid for this OrderId (last write wins).
         latest_status:
           $ref: '#/components/schemas/HyperliquidWsOrder'
           nullable: true
-          description: Most recent order status update received from Hyperliquid for this metadata.
+          description: Most recent order status update received from Hyperliquid for this OrderId.
 
     HyperliquidAction:
       oneOf:
@@ -1399,13 +1399,13 @@ components:
               format: int64
               nullable: true
               description: Target order identifier when available.
-            client_order_id:
+            cloid:
               type: string
               nullable: true
               description: Client order identifier (CLOID) to target when `oid` is not available.
             order:
               $ref: '#/components/schemas/HyperliquidCreateOrder'
-          description: At least one of `oid` or `client_order_id` must be supplied to identify the order to modify.
+          description: At least one of `oid` or `cloid` must be supplied to identify the order to modify.
 
     HyperliquidCancelAction:
       allOf:
@@ -1445,7 +1445,7 @@ components:
           type: boolean
         order_type:
           $ref: '#/components/schemas/HyperliquidOrderType'
-        client_order_id:
+        cloid:
           type: string
           nullable: true
 
@@ -1487,11 +1487,11 @@ components:
       type: object
       required:
         - coin
-        - client_order_id
+        - cloid
       properties:
         coin:
           type: string
-        client_order_id:
+        cloid:
           type: string
 
     HyperliquidBestBidOffer:
@@ -1574,7 +1574,7 @@ components:
           format: int64
         orig_size:
           type: string
-        client_order_id:
+        cloid:
           type: string
           nullable: true
 
@@ -1628,7 +1628,7 @@ components:
       type: object
       required:
         - type
-        - metadata
+        - order_id
         - observed_at
       properties:
         type:
@@ -1639,13 +1639,13 @@ components:
             - hyperliquid_status
             - order_scaler_config
             - scaled_order_audit
-        metadata:
+        order_id:
           type: string
-          description: Metadata hash (hex) identifying the order context.
+          description: OrderId hash (hex) identifying the order context.
         identifiers:
           $ref: '#/components/schemas/OrderIdentifiers'
           nullable: true
-          description: Bot/deal identifiers derived from the metadata when available.
+          description: Bot/deal identifiers derived from the OrderId when available.
         observed_at:
           type: string
           format: date-time
@@ -1777,12 +1777,12 @@ components:
     EffectiveOrderScaler:
       type: object
       required:
-        - metadata
+        - order_id
         - multiplier
         - source
         - default
       properties:
-        metadata:
+        order_id:
           type: string
         multiplier:
           type: number
@@ -1811,12 +1811,12 @@ components:
     OrderScalerConfigRecord:
       type: object
       required:
-        - metadata
+        - order_id
         - observed_at
         - actor
         - config
       properties:
-        metadata:
+        order_id:
           type: string
         observed_at:
           type: string

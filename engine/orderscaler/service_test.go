@@ -7,7 +7,7 @@ import (
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/hl"
-	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/storage"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
 	"github.com/stretchr/testify/require"
@@ -40,7 +40,7 @@ func TestServiceScaleAppliesMultiplierAndRounding(t *testing.T) {
 	_, err = store.UpsertOrderScaler(ctx, 0.5, "tester", nil)
 	require.NoError(t, err)
 
-	md := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 1}
+	oid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
 	event := tc.BotEvent{
 		CreatedAt: time.Now(),
 		Coin:      "BTC",
@@ -54,14 +54,14 @@ func TestServiceScaleAppliesMultiplierAndRounding(t *testing.T) {
 		Size:  4.0,
 	}
 
-	req := BuildRequest(md, event, order)
+	req := BuildRequest(oid, event, order)
 	result, err := scaler.Scale(ctx, req, &order)
 	require.NoError(t, err)
 	require.InDelta(t, 2.0, result.Size, 1e-6)
 	require.InDelta(t, 15.0, result.Price, 1e-6)
 	require.False(t, result.Audit.Skipped)
 
-	audits, err := store.ListScaledOrdersByMetadata(ctx, md)
+	audits, err := store.ListScaledOrdersByOrderId(ctx, oid)
 	require.NoError(t, err)
 	require.Len(t, audits, 1)
 	require.InDelta(t, 4.0, audits[0].OriginalSize, 1e-6)
@@ -85,11 +85,11 @@ func TestServiceScaleRejectsBelowMinimum(t *testing.T) {
 	_, err = store.UpsertOrderScaler(ctx, 0.2, "tester", nil)
 	require.NoError(t, err)
 
-	md := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 5}
+	oid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 5}
 	order := hyperliquid.CreateOrderRequest{Coin: "ETH", IsBuy: true, Price: 20.0, Size: 1.0}
 	event := tc.BotEvent{CreatedAt: time.Now(), Coin: "ETH", Price: 20.0, Size: 1.0}
 
-	req := BuildRequest(md, event, order)
+	req := BuildRequest(oid, event, order)
 	result, err := scaler.Scale(ctx, req, &order)
 	require.ErrorIs(t, err, ErrBelowMinimum)
 
@@ -97,7 +97,7 @@ func TestServiceScaleRejectsBelowMinimum(t *testing.T) {
 	require.NotNil(t, result.Audit.SkipReason)
 	require.Contains(t, *result.Audit.SkipReason, "below minimum notional")
 
-	audits, listErr := store.ListScaledOrdersByMetadata(ctx, md)
+	audits, listErr := store.ListScaledOrdersByOrderId(ctx, oid)
 	require.NoError(t, listErr)
 	require.Len(t, audits, 1)
 	require.True(t, audits[0].Skipped)
@@ -148,12 +148,12 @@ func TestServiceScalePreservesTakeProfitStackRatios(t *testing.T) {
 
 	var results []Result
 	for _, evt := range legEvents {
-		md := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: evt.FingerprintAsID()}
-		_, err := store.RecordThreeCommasBotEvent(ctx, md, evt)
+		oid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: evt.FingerprintAsID()}
+		_, err := store.RecordThreeCommasBotEvent(ctx, oid, evt)
 		require.NoError(t, err)
 
 		order := hyperliquid.CreateOrderRequest{Coin: evt.Coin, IsBuy: false, Price: evt.Price, Size: evt.Size}
-		req := BuildRequest(md, evt, order)
+		req := BuildRequest(oid, evt, order)
 		result, err := scaler.Scale(ctx, req, &order)
 		require.NoError(t, err)
 		results = append(results, result)

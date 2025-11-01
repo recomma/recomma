@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
 	"github.com/sonirico/go-hyperliquid"
@@ -62,8 +62,8 @@ func TestHyperLiquidEmitterIOCRetriesLogSuccess(t *testing.T) {
 		WithHyperLiquidEmitterConfig(HyperLiquidEmitterConfig{MaxIOCRetries: 3}),
 	)
 
-	md := metadata.Metadata{BotID: 1, DealID: 2, BotEventID: 3}
-	cloid := md.Hex()
+	oid := orderid.OrderId{BotID: 1, DealID: 2, BotEventID: 3}
+	cloid := oid.Hex()
 	order := hyperliquid.CreateOrderRequest{
 		Coin:          "BTC",
 		IsBuy:         true,
@@ -75,7 +75,7 @@ func TestHyperLiquidEmitterIOCRetriesLogSuccess(t *testing.T) {
 		},
 	}
 	work := recomma.OrderWork{
-		MD:       md,
+		OrderId:  oid,
 		Action:   recomma.Action{Type: recomma.ActionCreate, Create: &order},
 		BotEvent: recomma.BotEvent{RowID: 1},
 	}
@@ -134,8 +134,8 @@ func TestHyperLiquidEmitterIOCRetriesWarnOnFailure(t *testing.T) {
 		WithHyperLiquidEmitterConfig(HyperLiquidEmitterConfig{MaxIOCRetries: 3}),
 	)
 
-	md := metadata.Metadata{BotID: 4, DealID: 5, BotEventID: 6}
-	cloid := md.Hex()
+	oid := orderid.OrderId{BotID: 4, DealID: 5, BotEventID: 6}
+	cloid := oid.Hex()
 	order := hyperliquid.CreateOrderRequest{
 		Coin:          "ETH",
 		IsBuy:         true,
@@ -147,7 +147,7 @@ func TestHyperLiquidEmitterIOCRetriesWarnOnFailure(t *testing.T) {
 		},
 	}
 	work := recomma.OrderWork{
-		MD:       md,
+		OrderId:  oid,
 		Action:   recomma.Action{Type: recomma.ActionCreate, Create: &order},
 		BotEvent: recomma.BotEvent{RowID: 2},
 	}

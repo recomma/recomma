@@ -11,7 +11,7 @@ import (
 
 	"github.com/recomma/recomma/filltracker"
 	"github.com/recomma/recomma/hl"
-	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/orderid"
 	storage "github.com/recomma/recomma/storage"
 	"github.com/sonirico/go-hyperliquid"
 )
@@ -89,17 +89,17 @@ func New(ctx context.Context, store *storage.Storage, tracker *filltracker.Servi
 			c.logger.Debug("OrderUpdates", slog.Any("orders", orders))
 			for _, o := range orders {
 				if o.Order.Cloid != nil {
-					md, err := metadata.FromHexString(*o.Order.Cloid)
+					oid, err := orderid.FromHexString(*o.Order.Cloid)
 					if err != nil {
-						c.logger.Warn("could not get metadata from cloid", slog.String("cloid", *o.Order.Cloid), slog.String("error", err.Error()))
+						c.logger.Warn("could not get orderid from cloid", slog.String("cloid", *o.Order.Cloid), slog.String("error", err.Error()))
 						continue
 					}
 					if c.tracker != nil {
-						if err := c.tracker.UpdateStatus(context.Background(), *md, o); err != nil {
+						if err := c.tracker.UpdateStatus(context.Background(), *oid, o); err != nil {
 							c.logger.Warn("could not update fill tracker", slog.String("error", err.Error()))
 						}
 					}
-					if err := c.store.RecordHyperliquidStatus(context.Background(), *md, o); err != nil {
+					if err := c.store.RecordHyperliquidStatus(context.Background(), *oid, o); err != nil {
 						c.logger.Warn("could not store status", slog.String("error", err.Error()))
 						continue
 					}
@@ -235,8 +235,8 @@ func (c *Client) Close() error {
 }
 
 // Exists returns true if we've seen this CLOID via OrderUpdates.
-func (c *Client) Exists(ctx context.Context, md metadata.Metadata) bool {
-	_, ok, err := c.store.LoadHyperliquidStatus(ctx, md)
+func (c *Client) Exists(ctx context.Context, oid orderid.OrderId) bool {
+	_, ok, err := c.store.LoadHyperliquidStatus(ctx, oid)
 	if err != nil {
 		return false
 	}
@@ -245,8 +245,8 @@ func (c *Client) Exists(ctx context.Context, md metadata.Metadata) bool {
 }
 
 // Get returns the full WsOrder for a CLOID, if we have it.
-func (c *Client) Get(ctx context.Context, md metadata.Metadata) (*hyperliquid.WsOrder, bool) {
-	status, ok, err := c.store.LoadHyperliquidStatus(ctx, md)
+func (c *Client) Get(ctx context.Context, oid orderid.OrderId) (*hyperliquid.WsOrder, bool) {
+	status, ok, err := c.store.LoadHyperliquidStatus(ctx, oid)
 	if err != nil {
 		return nil, false
 	}

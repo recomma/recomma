@@ -127,7 +127,7 @@ func (c *StreamController) Publish(evt StreamEvent) {
 			if c.logger != nil {
 				c.logger.Warn("dropping stream event; subscriber buffer full",
 					slog.Int64("subscriber", sub.id),
-					slog.String("metadata_hex", evtCopy.Metadata.Hex()),
+					slog.String("orderid", evtCopy.OrderId.Hex()),
 					slog.String("type", string(evtCopy.Type)),
 				)
 			}
@@ -136,19 +136,19 @@ func (c *StreamController) Publish(evt StreamEvent) {
 }
 
 func matchesFilter(filter StreamFilter, evt StreamEvent) bool {
-	if filter.MetadataPrefix != nil {
-		prefix := strings.ToLower(strings.TrimSpace(*filter.MetadataPrefix))
-		if prefix != "" && !strings.HasPrefix(strings.ToLower(evt.Metadata.Hex()), prefix) {
+	if filter.OrderIdPrefix != nil {
+		prefix := strings.ToLower(strings.TrimSpace(*filter.OrderIdPrefix))
+		if prefix != "" && !strings.HasPrefix(strings.ToLower(evt.OrderId.Hex()), prefix) {
 			return false
 		}
 	}
-	if filter.BotID != nil && evt.Metadata.BotID != uint32(*filter.BotID) {
+	if filter.BotID != nil && evt.OrderId.BotID != uint32(*filter.BotID) {
 		return false
 	}
-	if filter.DealID != nil && evt.Metadata.DealID != uint32(*filter.DealID) {
+	if filter.DealID != nil && evt.OrderId.DealID != uint32(*filter.DealID) {
 		return false
 	}
-	if filter.BotEventID != nil && evt.Metadata.BotEventID != uint32(*filter.BotEventID) {
+	if filter.BotEventID != nil && evt.OrderId.BotEventID != uint32(*filter.BotEventID) {
 		return false
 	}
 	if filter.ObservedFrom != nil && evt.ObservedAt.Before(filter.ObservedFrom.UTC()) {

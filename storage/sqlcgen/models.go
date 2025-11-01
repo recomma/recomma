@@ -19,13 +19,13 @@ type BotOrderScaler struct {
 
 type HyperliquidStatusHistory struct {
 	ID            int64  `json:"id"`
-	Md            string `json:"md"`
+	OrderID       string `json:"order_id"`
 	Status        []byte `json:"status"`
 	RecordedAtUtc int64  `json:"recorded_at_utc"`
 }
 
 type HyperliquidSubmission struct {
-	Md             string          `json:"md"`
+	OrderID        string          `json:"order_id"`
 	ActionKind     string          `json:"action_kind"`
 	CreatePayload  json.RawMessage `json:"create_payload"`
 	ModifyPayloads json.RawMessage `json:"modify_payloads"`
@@ -44,7 +44,7 @@ type OrderScaler struct {
 
 type ScaledOrder struct {
 	ID                  int64   `json:"id"`
-	Md                  string  `json:"md"`
+	OrderID             string  `json:"order_id"`
 	DealID              int64   `json:"deal_id"`
 	BotID               int64   `json:"bot_id"`
 	OriginalSize        float64 `json:"original_size"`
@@ -68,7 +68,7 @@ type ThreecommasBot struct {
 
 type ThreecommasBotevent struct {
 	ID            int64  `json:"id"`
-	Md            string `json:"md"`
+	OrderID       string `json:"order_id"`
 	BotID         int64  `json:"bot_id"`
 	DealID        int64  `json:"deal_id"`
 	BoteventID    int64  `json:"botevent_id"`
@@ -79,7 +79,7 @@ type ThreecommasBotevent struct {
 
 type ThreecommasBoteventsLog struct {
 	ID            int64  `json:"id"`
-	Md            string `json:"md"`
+	OrderID       string `json:"order_id"`
 	BotID         int64  `json:"bot_id"`
 	DealID        int64  `json:"deal_id"`
 	BoteventID    int64  `json:"botevent_id"`

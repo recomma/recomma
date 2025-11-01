@@ -6,7 +6,7 @@ import (
 	"time"
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
-	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/orderid"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
 	"github.com/stretchr/testify/require"
 )
@@ -16,9 +16,9 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 	coin := "ETH"
 	quote := "USDT"
 
-	normalizeMetadata := func(t *testing.T, md metadata.Metadata) metadata.Metadata {
+	normalizeOrderId := func(t *testing.T, oid orderid.OrderId) orderid.OrderId {
 		t.Helper()
-		normalized, err := metadata.FromHexString(md.Hex())
+		normalized, err := orderid.FromHexString(oid.Hex())
 		require.NoError(t, err)
 		return *normalized
 	}
@@ -30,7 +30,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 		volume    int
 	}
 
-	insertSafetyEvent := func(t *testing.T, store *Storage, md metadata.Metadata, created time.Time, o order) metadata.Metadata {
+	insertSafetyEvent := func(t *testing.T, store *Storage, oid orderid.OrderId, created time.Time, o order) orderid.OrderId {
 		t.Helper()
 
 		botevent := tc.BotEvent{
@@ -50,16 +50,16 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 			Text:          "test safety order",
 		}
 
-		if _, err := store.RecordThreeCommasBotEvent(context.Background(), md, botevent); err != nil {
+		if _, err := store.RecordThreeCommasBotEvent(context.Background(), oid, botevent); err != nil {
 			t.Fatalf("RecordThreeCommasBotEvent: %v", err)
 		}
 
-		return normalizeMetadata(t, md)
+		return normalizeOrderId(t, oid)
 	}
 
-	recordStatus := func(t *testing.T, store *Storage, md metadata.Metadata, status hyperliquid.WsOrder) {
+	recordStatus := func(t *testing.T, store *Storage, oid orderid.OrderId, status hyperliquid.WsOrder) {
 		t.Helper()
-		if err := store.RecordHyperliquidStatus(context.Background(), md, status); err != nil {
+		if err := store.RecordHyperliquidStatus(context.Background(), oid, status); err != nil {
 			t.Fatalf("RecordHyperliquidStatus: %v", err)
 		}
 	}
@@ -78,23 +78,23 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 				base := time.Date(2024, time.March, 10, 15, 0, 0, 0, time.UTC)
 				botID := uint32(42)
 
-				md1 := metadata.Metadata{
+				oid1 := orderid.OrderId{
 					BotID:      botID,
 					DealID:     9001,
 					BotEventID: 1,
 				}
-				md2 := metadata.Metadata{
+				oid2 := orderid.OrderId{
 					BotID:      botID,
 					DealID:     9001,
 					BotEventID: 2,
 				}
 
-				normalized1 := insertSafetyEvent(t, store, md1, base, order{
+				normalized1 := insertSafetyEvent(t, store, oid1, base, order{
 					position:  1,
 					ordersize: 2,
 					volume:    2,
 				})
-				normalized2 := insertSafetyEvent(t, store, md2, base.Add(24*time.Hour), order{
+				normalized2 := insertSafetyEvent(t, store, oid2, base.Add(24*time.Hour), order{
 					position:  2,
 					ordersize: 2,
 					volume:    1,
@@ -109,7 +109,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 						Oid:       111,
 						Timestamp: base.Add(10 * time.Second).UnixMilli(),
 						OrigSz:    "2",
-						Cloid:     md1.HexAsPointer(),
+						Cloid:     oid1.HexAsPointer(),
 					},
 					Status:          hyperliquid.OrderStatusValueOpen,
 					StatusTimestamp: base.Add(10 * time.Second).UnixMilli(),
@@ -118,8 +118,8 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 				status1Filled.Status = hyperliquid.OrderStatusValueFilled
 				status1Filled.StatusTimestamp = base.Add(20 * time.Second).UnixMilli()
 
-				recordStatus(t, store, md1, status1Live)
-				recordStatus(t, store, md1, status1Filled)
+				recordStatus(t, store, oid1, status1Live)
+				recordStatus(t, store, oid1, status1Filled)
 
 				status2Live := hyperliquid.WsOrder{
 					Order: hyperliquid.WsBasicOrder{
@@ -130,7 +130,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 						Oid:       222,
 						Timestamp: base.Add(12 * time.Second).UnixMilli(),
 						OrigSz:    "1",
-						Cloid:     md2.HexAsPointer(),
+						Cloid:     oid2.HexAsPointer(),
 					},
 					Status:          hyperliquid.OrderStatusValueOpen,
 					StatusTimestamp: base.Add(12 * time.Second).UnixMilli(),
@@ -139,12 +139,12 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 				status2Filled.Status = hyperliquid.OrderStatusValueFilled
 				status2Filled.StatusTimestamp = base.Add(22 * time.Second).UnixMilli()
 
-				recordStatus(t, store, md2, status2Live)
-				recordStatus(t, store, md2, status2Filled)
+				recordStatus(t, store, oid2, status2Live)
+				recordStatus(t, store, oid2, status2Filled)
 
 				return []HyperliquidSafetyStatus{
 					{
-						Metadata:      normalized1,
+						OrderId:       normalized1,
 						BotID:         normalized1.BotID,
 						DealID:        normalized1.DealID,
 						OrderType:     safetyType,
@@ -154,7 +154,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 						HLEventTime:   time.UnixMilli(status1Filled.StatusTimestamp).UTC(),
 					},
 					{
-						Metadata:      normalized2,
+						OrderId:       normalized2,
 						BotID:         normalized2.BotID,
 						DealID:        normalized2.DealID,
 						OrderType:     safetyType,
@@ -175,23 +175,23 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 				base := time.Date(2024, time.March, 10, 16, 0, 0, 0, time.UTC)
 				botID := uint32(43)
 
-				md1 := metadata.Metadata{
+				oid1 := orderid.OrderId{
 					BotID:      botID,
 					DealID:     9002,
 					BotEventID: 3,
 				}
-				md2 := metadata.Metadata{
+				oid2 := orderid.OrderId{
 					BotID:      botID,
 					DealID:     9002,
 					BotEventID: 4,
 				}
 
-				normalized1 := insertSafetyEvent(t, store, md1, base, order{
+				normalized1 := insertSafetyEvent(t, store, oid1, base, order{
 					position:  1,
 					ordersize: 2,
 					volume:    3,
 				})
-				normalized2 := insertSafetyEvent(t, store, md2, base.Add(24*time.Hour), order{
+				normalized2 := insertSafetyEvent(t, store, oid2, base.Add(24*time.Hour), order{
 					position:  2,
 					ordersize: 2,
 					volume:    4,
@@ -206,7 +206,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 						Oid:       333,
 						Timestamp: base.Add(8 * time.Second).UnixMilli(),
 						OrigSz:    "3",
-						Cloid:     md1.HexAsPointer(),
+						Cloid:     oid1.HexAsPointer(),
 					},
 					Status:          hyperliquid.OrderStatusValueOpen,
 					StatusTimestamp: base.Add(8 * time.Second).UnixMilli(),
@@ -215,8 +215,8 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 				status1Filled.Status = hyperliquid.OrderStatusValueFilled
 				status1Filled.StatusTimestamp = base.Add(18 * time.Second).UnixMilli()
 
-				recordStatus(t, store, md1, status1Live)
-				recordStatus(t, store, md1, status1Filled)
+				recordStatus(t, store, oid1, status1Live)
+				recordStatus(t, store, oid1, status1Filled)
 
 				status2Live := hyperliquid.WsOrder{
 					Order: hyperliquid.WsBasicOrder{
@@ -227,17 +227,17 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 						Oid:       444,
 						Timestamp: base.Add(9 * time.Second).UnixMilli(),
 						OrigSz:    "4",
-						Cloid:     md2.HexAsPointer(),
+						Cloid:     oid2.HexAsPointer(),
 					},
 					Status:          hyperliquid.OrderStatusValueOpen,
 					StatusTimestamp: base.Add(9 * time.Second).UnixMilli(),
 				}
 
-				recordStatus(t, store, md2, status2Live)
+				recordStatus(t, store, oid2, status2Live)
 
 				return []HyperliquidSafetyStatus{
 					{
-						Metadata:      normalized1,
+						OrderId:       normalized1,
 						BotID:         normalized1.BotID,
 						DealID:        normalized1.DealID,
 						OrderType:     safetyType,
@@ -247,7 +247,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 						HLEventTime:   time.UnixMilli(status1Filled.StatusTimestamp).UTC(),
 					},
 					{
-						Metadata:      normalized2,
+						OrderId:       normalized2,
 						BotID:         normalized2.BotID,
 						DealID:        normalized2.DealID,
 						OrderType:     safetyType,
@@ -268,7 +268,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 				base := time.Date(2024, time.March, 10, 17, 0, 0, 0, time.UTC)
 
 				otherDeal := uint32(9100)
-				otherMD := metadata.Metadata{
+				otherMD := orderid.OrderId{
 					BotID:      50,
 					DealID:     otherDeal,
 					BotEventID: 1,
@@ -293,7 +293,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 					StatusTimestamp: base.Add(5 * time.Second).UnixMilli(),
 				})
 
-				mdTakeProfit := metadata.Metadata{
+				oidTakeProfit := orderid.OrderId{
 					BotID:      51,
 					DealID:     9003,
 					BotEventID: 2,
@@ -315,11 +315,11 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 					IsMarket:      true,
 					Text:          "test take profit",
 				}
-				if _, err := store.RecordThreeCommasBotEvent(context.Background(), mdTakeProfit, takeProfit); err != nil {
+				if _, err := store.RecordThreeCommasBotEvent(context.Background(), oidTakeProfit, takeProfit); err != nil {
 					t.Fatalf("RecordThreeCommasBotEvent take profit: %v", err)
 				}
 
-				recordStatus(t, store, mdTakeProfit, hyperliquid.WsOrder{
+				recordStatus(t, store, oidTakeProfit, hyperliquid.WsOrder{
 					Order: hyperliquid.WsBasicOrder{
 						Coin:      coin,
 						Side:      "B",
@@ -328,7 +328,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 						Oid:       501,
 						Timestamp: base.Add(6 * time.Second).UnixMilli(),
 						OrigSz:    "1",
-						Cloid:     mdTakeProfit.HexAsPointer(),
+						Cloid:     oidTakeProfit.HexAsPointer(),
 					},
 					Status:          hyperliquid.OrderStatusValueFilled,
 					StatusTimestamp: base.Add(6 * time.Second).UnixMilli(),
@@ -350,7 +350,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 			require.Equal(t, len(want), len(got), "unexpected number of safety statuses")
 
 			for i := range want {
-				require.Equal(t, want[i].Metadata, got[i].Metadata, "metadata mismatch at index %d", i)
+				require.Equal(t, want[i].OrderId, got[i].OrderId, "order id mismatch at index %d", i)
 				require.Equal(t, want[i].BotID, got[i].BotID, "bot id mismatch at index %d", i)
 				require.Equal(t, want[i].DealID, got[i].DealID, "deal id mismatch at index %d", i)
 				require.Equal(t, want[i].OrderType, got[i].OrderType, "order type mismatch at index %d", i)

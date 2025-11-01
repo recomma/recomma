@@ -155,8 +155,8 @@ type BotRecord struct {
 	Payload      externalRef0.Bot `json:"payload"`
 }
 
-// CancelOrderByMetadataRequest defines model for CancelOrderByMetadataRequest.
-type CancelOrderByMetadataRequest struct {
+// CancelOrderByOrderIdRequest defines model for CancelOrderByOrderIdRequest.
+type CancelOrderByOrderIdRequest struct {
 	// DryRun When true, validate the cancel preconditions without dispatching the Hyperliquid request.
 	DryRun *bool `json:"dry_run,omitempty"`
 
@@ -164,15 +164,15 @@ type CancelOrderByMetadataRequest struct {
 	Reason *string `json:"reason"`
 }
 
-// CancelOrderByMetadataResponse defines model for CancelOrderByMetadataResponse.
-type CancelOrderByMetadataResponse struct {
+// CancelOrderByOrderIdResponse defines model for CancelOrderByOrderIdResponse.
+type CancelOrderByOrderIdResponse struct {
 	Cancel *HyperliquidCancelOrder `json:"cancel,omitempty"`
 
 	// Message Additional context explaining the status when relevant.
 	Message *string `json:"message"`
 
-	// Metadata Metadata hex identifying the targeted order.
-	Metadata string `json:"metadata"`
+	// OrderId OrderID hex identifying the targeted order.
+	OrderId string `json:"order_id"`
 
 	// Status Outcome of the cancel attempt (for example `queued`, `skipped`, or `noop`).
 	Status string `json:"status"`
@@ -192,8 +192,8 @@ type DealRecord struct {
 // EffectiveOrderScaler defines model for EffectiveOrderScaler.
 type EffectiveOrderScaler struct {
 	Default    OrderScalerState     `json:"default"`
-	Metadata   string               `json:"metadata"`
 	Multiplier float64              `json:"multiplier"`
+	OrderId    string               `json:"order_id"`
 	Override   *OrderScalerOverride `json:"override,omitempty"`
 	Source     OrderScalerSource    `json:"source"`
 }
@@ -219,8 +219,8 @@ type HyperliquidCancelActionKind string
 
 // HyperliquidCancelOrder defines model for HyperliquidCancelOrder.
 type HyperliquidCancelOrder struct {
-	ClientOrderId string `json:"client_order_id"`
-	Coin          string `json:"coin"`
+	Cloid string `json:"cloid"`
+	Coin  string `json:"coin"`
 }
 
 // HyperliquidCreateAction defines model for HyperliquidCreateAction.
@@ -234,13 +234,13 @@ type HyperliquidCreateActionKind string
 
 // HyperliquidCreateOrder defines model for HyperliquidCreateOrder.
 type HyperliquidCreateOrder struct {
-	ClientOrderId *string              `json:"client_order_id"`
-	Coin          string               `json:"coin"`
-	IsBuy         bool                 `json:"is_buy"`
-	OrderType     HyperliquidOrderType `json:"order_type"`
-	Price         float64              `json:"price"`
-	ReduceOnly    bool                 `json:"reduce_only"`
-	Size          float64              `json:"size"`
+	Cloid      *string              `json:"cloid"`
+	Coin       string               `json:"coin"`
+	IsBuy      bool                 `json:"is_buy"`
+	OrderType  HyperliquidOrderType `json:"order_type"`
+	Price      float64              `json:"price"`
+	ReduceOnly bool                 `json:"reduce_only"`
+	Size       float64              `json:"size"`
 }
 
 // HyperliquidLimitOrder defines model for HyperliquidLimitOrder.
@@ -251,9 +251,9 @@ type HyperliquidLimitOrder struct {
 
 // HyperliquidModifyAction defines model for HyperliquidModifyAction.
 type HyperliquidModifyAction struct {
-	// ClientOrderId Client order identifier (CLOID) to target when `oid` is not available.
-	ClientOrderId *string                     `json:"client_order_id"`
-	Kind          HyperliquidModifyActionKind `json:"kind"`
+	// Cloid Client order identifier (CLOID) to target when `oid` is not available.
+	Cloid *string                     `json:"cloid"`
+	Kind  HyperliquidModifyActionKind `json:"kind"`
 
 	// Oid Target order identifier when available.
 	Oid   *int64                 `json:"oid"`
@@ -293,10 +293,10 @@ type HyperliquidOrderType struct {
 type HyperliquidStatusLogEntry struct {
 	BotEventId  *int64            `json:"bot_event_id"`
 	Identifiers *OrderIdentifiers `json:"identifiers,omitempty"`
+	ObservedAt  time.Time         `json:"observed_at"`
 
-	// Metadata Metadata hash (hex) identifying the order context.
-	Metadata   string    `json:"metadata"`
-	ObservedAt time.Time `json:"observed_at"`
+	// OrderId OrderId hash (hex) identifying the order context.
+	OrderId string `json:"order_id"`
 
 	// Sequence Monotonic sequence counter assigned at publish time, useful for de-duplicating streamed events.
 	Sequence *int64                        `json:"sequence"`
@@ -312,10 +312,10 @@ type HyperliquidSubmissionLogEntry struct {
 	Action      HyperliquidAction `json:"action"`
 	BotEventId  *int64            `json:"bot_event_id"`
 	Identifiers *OrderIdentifiers `json:"identifiers,omitempty"`
+	ObservedAt  time.Time         `json:"observed_at"`
 
-	// Metadata Metadata hash (hex) identifying the order context.
-	Metadata   string    `json:"metadata"`
-	ObservedAt time.Time `json:"observed_at"`
+	// OrderId OrderId hash (hex) identifying the order context.
+	OrderId string `json:"order_id"`
 
 	// Sequence Monotonic sequence counter assigned at publish time, useful for de-duplicating streamed events.
 	Sequence *int64                            `json:"sequence"`
@@ -336,11 +336,11 @@ type HyperliquidTriggerOrder struct {
 
 // HyperliquidWsBasicOrder defines model for HyperliquidWsBasicOrder.
 type HyperliquidWsBasicOrder struct {
-	ClientOrderId *string `json:"client_order_id"`
-	Coin          string  `json:"coin"`
-	LimitPx       string  `json:"limit_px"`
-	Oid           int64   `json:"oid"`
-	OrigSize      string  `json:"orig_size"`
+	Cloid    *string `json:"cloid"`
+	Coin     string  `json:"coin"`
+	LimitPx  string  `json:"limit_px"`
+	Oid      int64   `json:"oid"`
+	OrigSize string  `json:"orig_size"`
 
 	// Side Either `A` (ask) or `B` (bid) in Hyperliquid terminology.
 	Side      string `json:"side"`
@@ -364,7 +364,7 @@ type OrderIdentifiers struct {
 	CreatedAt time.Time `json:"created_at"`
 	DealId    int64     `json:"deal_id"`
 
-	// Hex Case-insensitive hash deriving from the 3Commas metadata payload.
+	// Hex Case-insensitive hash deriving from the 3Commas OrderId payload.
 	Hex string `json:"hex"`
 }
 
@@ -377,10 +377,10 @@ type OrderLogEntry struct {
 type OrderLogEntryBase struct {
 	BotEventId  *int64            `json:"bot_event_id"`
 	Identifiers *OrderIdentifiers `json:"identifiers,omitempty"`
+	ObservedAt  time.Time         `json:"observed_at"`
 
-	// Metadata Metadata hash (hex) identifying the order context.
-	Metadata   string    `json:"metadata"`
-	ObservedAt time.Time `json:"observed_at"`
+	// OrderId OrderId hash (hex) identifying the order context.
+	OrderId string `json:"order_id"`
 
 	// Sequence Monotonic sequence counter assigned at publish time, useful for de-duplicating streamed events.
 	Sequence *int64                `json:"sequence"`
@@ -398,11 +398,11 @@ type OrderRecord struct {
 	// LogEntries Present only when `include_log=true`. Entries follow the same structured shape as the SSE stream.
 	LogEntries *[]OrderLogEntry `json:"log_entries"`
 
-	// Metadata Metadata hash (hex) as stored in `threecommas_botevents`.
-	Metadata string `json:"metadata"`
-
 	// ObservedAt Timestamp when Recomma observed the order update.
-	ObservedAt  time.Time             `json:"observed_at"`
+	ObservedAt time.Time `json:"observed_at"`
+
+	// OrderId OrderId hash (hex) as stored in `threecommas_botevents`.
+	OrderId     string                `json:"order_id"`
 	ThreeCommas ThreeCommasOrderState `json:"three_commas"`
 }
 
@@ -412,10 +412,10 @@ type OrderScalerConfigLogEntry struct {
 	BotEventId  *int64               `json:"bot_event_id"`
 	Config      EffectiveOrderScaler `json:"config"`
 	Identifiers *OrderIdentifiers    `json:"identifiers,omitempty"`
+	ObservedAt  time.Time            `json:"observed_at"`
 
-	// Metadata Metadata hash (hex) identifying the order context.
-	Metadata   string    `json:"metadata"`
-	ObservedAt time.Time `json:"observed_at"`
+	// OrderId OrderId hash (hex) identifying the order context.
+	OrderId string `json:"order_id"`
 
 	// Sequence Monotonic sequence counter assigned at publish time, useful for de-duplicating streamed events.
 	Sequence *int64                        `json:"sequence"`
@@ -429,8 +429,8 @@ type OrderScalerConfigLogEntryType string
 type OrderScalerConfigRecord struct {
 	Actor      string               `json:"actor"`
 	Config     EffectiveOrderScaler `json:"config"`
-	Metadata   string               `json:"metadata"`
 	ObservedAt time.Time            `json:"observed_at"`
+	OrderId    string               `json:"order_id"`
 }
 
 // OrderScalerConfigResponse defines model for OrderScalerConfigResponse.
@@ -499,10 +499,10 @@ type ScaledOrderAuditLogEntry struct {
 	BotEventId  *int64                `json:"bot_event_id"`
 	Effective   *EffectiveOrderScaler `json:"effective,omitempty"`
 	Identifiers *OrderIdentifiers     `json:"identifiers,omitempty"`
+	ObservedAt  time.Time             `json:"observed_at"`
 
-	// Metadata Metadata hash (hex) identifying the order context.
-	Metadata   string    `json:"metadata"`
-	ObservedAt time.Time `json:"observed_at"`
+	// OrderId OrderId hash (hex) identifying the order context.
+	OrderId string `json:"order_id"`
 
 	// Sequence Monotonic sequence counter assigned at publish time, useful for de-duplicating streamed events.
 	Sequence *int64                       `json:"sequence"`
@@ -550,10 +550,10 @@ type ThreeCommasLogEntry struct {
 	BotEventId  *int64              `json:"bot_event_id"`
 	Event       ThreeCommasBotEvent `json:"event"`
 	Identifiers *OrderIdentifiers   `json:"identifiers,omitempty"`
+	ObservedAt  time.Time           `json:"observed_at"`
 
-	// Metadata Metadata hash (hex) identifying the order context.
-	Metadata   string    `json:"metadata"`
-	ObservedAt time.Time `json:"observed_at"`
+	// OrderId OrderId hash (hex) identifying the order context.
+	OrderId string `json:"order_id"`
 
 	// Sequence Monotonic sequence counter assigned at publish time, useful for de-duplicating streamed events.
 	Sequence *int64                  `json:"sequence"`
@@ -752,8 +752,8 @@ type ListDealsParams struct {
 
 // ListOrdersParams defines parameters for ListOrders.
 type ListOrdersParams struct {
-	// Metadata Case-insensitive prefix match on metadata hex; exact match recommended for drill-down.
-	Metadata *string `form:"metadata,omitempty" json:"metadata,omitempty"`
+	// OrderId Case-insensitive prefix match on OrderId hex; exact match recommended for drill-down.
+	OrderId *string `form:"order_id,omitempty" json:"order_id,omitempty"`
 
 	// BotId Restrict to events emitted by this bot ID.
 	BotId *int64 `form:"bot_id,omitempty" json:"bot_id,omitempty"`
@@ -770,7 +770,7 @@ type ListOrdersParams struct {
 	// ObservedTo ISO-8601 timestamp; include events observed at or before this time.
 	ObservedTo *time.Time `form:"observed_to,omitempty" json:"observed_to,omitempty"`
 
-	// IncludeLog When true, embed `log_entries` for each order, limited to the same metadata and time range (default false).
+	// IncludeLog When true, embed `log_entries` for each order, limited to the same OrderId and time range (default false).
 	IncludeLog *bool `form:"include_log,omitempty" json:"include_log,omitempty"`
 
 	// Limit Maximum number of rows (default 100, max 500).
@@ -782,13 +782,13 @@ type ListOrdersParams struct {
 
 // ListOrderScalersParams defines parameters for ListOrderScalers.
 type ListOrderScalersParams struct {
-	// Metadata Case-insensitive prefix match on metadata hex; exact match recommended for drill-down.
-	Metadata *string `form:"metadata,omitempty" json:"metadata,omitempty"`
+	// OrderId Case-insensitive prefix match on OrderId hex; exact match recommended for drill-down.
+	OrderId *string `form:"order_id,omitempty" json:"order_id,omitempty"`
 
-	// BotId Restrict to metadata emitted by this bot ID.
+	// BotId Restrict to OrderId emitted by this bot ID.
 	BotId *int64 `form:"bot_id,omitempty" json:"bot_id,omitempty"`
 
-	// DealId Restrict to metadata emitted by this deal ID.
+	// DealId Restrict to OrderId emitted by this deal ID.
 	DealId *int64 `form:"deal_id,omitempty" json:"deal_id,omitempty"`
 
 	// BotEventId Restrict to a specific 3Commas bot-event ID (exact match).
@@ -809,8 +809,8 @@ type StreamHyperliquidPricesParams struct {
 
 // StreamOrdersParams defines parameters for StreamOrders.
 type StreamOrdersParams struct {
-	// Metadata Case-insensitive prefix match; only events for matching metadata are emitted.
-	Metadata *string `form:"metadata,omitempty" json:"metadata,omitempty"`
+	// OrderId Case-insensitive prefix match; only events for matching OrderId are emitted.
+	OrderId *string `form:"order_id,omitempty" json:"order_id,omitempty"`
 
 	// BotId Restrict to this bot ID.
 	BotId *int64 `form:"bot_id,omitempty" json:"bot_id,omitempty"`
@@ -825,8 +825,8 @@ type StreamOrdersParams struct {
 	ObservedFrom *time.Time `form:"observed_from,omitempty" json:"observed_from,omitempty"`
 }
 
-// CancelOrderByMetadataJSONRequestBody defines body for CancelOrderByMetadata for application/json ContentType.
-type CancelOrderByMetadataJSONRequestBody = CancelOrderByMetadataRequest
+// CancelOrderByOrderIdJSONRequestBody defines body for CancelOrderByOrderId for application/json ContentType.
+type CancelOrderByOrderIdJSONRequestBody = CancelOrderByOrderIdRequest
 
 // UpsertBotOrderScalerConfigJSONRequestBody defines body for UpsertBotOrderScalerConfig for application/json ContentType.
 type UpsertBotOrderScalerConfigJSONRequestBody = OrderScalerUpdateRequest
@@ -1191,12 +1191,12 @@ type ServerInterface interface {
 	// List acted-on bot events with Hyperliquid context
 	// (GET /api/orders)
 	ListOrders(w http.ResponseWriter, r *http.Request, params ListOrdersParams)
-	// List effective order scaler configurations for observed metadata
+	// List effective order scaler configurations for observed OrderId
 	// (GET /api/orders/scalers)
 	ListOrderScalers(w http.ResponseWriter, r *http.Request, params ListOrderScalersParams)
-	// Cancel Hyperliquid order by metadata
-	// (POST /api/orders/{metadata}/cancel)
-	CancelOrderByMetadata(w http.ResponseWriter, r *http.Request, metadata string)
+	// Cancel Hyperliquid order by OrderId
+	// (POST /api/orders/{order_id}/cancel)
+	CancelOrderByOrderId(w http.ResponseWriter, r *http.Request, orderId string)
 	// Delete a bot-specific order scaler override
 	// (DELETE /api/v1/bots/{botId}/order-scaler)
 	DeleteBotOrderScalerConfig(w http.ResponseWriter, r *http.Request, botId int64)
@@ -1408,11 +1408,11 @@ func (siw *ServerInterfaceWrapper) ListOrders(w http.ResponseWriter, r *http.Req
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListOrdersParams
 
-	// ------------- Optional query parameter "metadata" -------------
+	// ------------- Optional query parameter "order_id" -------------
 
-	err = runtime.BindQueryParameter("form", true, false, "metadata", r.URL.Query(), &params.Metadata)
+	err = runtime.BindQueryParameter("form", true, false, "order_id", r.URL.Query(), &params.OrderId)
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "metadata", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "order_id", Err: err})
 		return
 	}
 
@@ -1505,11 +1505,11 @@ func (siw *ServerInterfaceWrapper) ListOrderScalers(w http.ResponseWriter, r *ht
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListOrderScalersParams
 
-	// ------------- Optional query parameter "metadata" -------------
+	// ------------- Optional query parameter "order_id" -------------
 
-	err = runtime.BindQueryParameter("form", true, false, "metadata", r.URL.Query(), &params.Metadata)
+	err = runtime.BindQueryParameter("form", true, false, "order_id", r.URL.Query(), &params.OrderId)
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "metadata", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "order_id", Err: err})
 		return
 	}
 
@@ -1564,17 +1564,17 @@ func (siw *ServerInterfaceWrapper) ListOrderScalers(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
-// CancelOrderByMetadata operation middleware
-func (siw *ServerInterfaceWrapper) CancelOrderByMetadata(w http.ResponseWriter, r *http.Request) {
+// CancelOrderByOrderId operation middleware
+func (siw *ServerInterfaceWrapper) CancelOrderByOrderId(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
-	// ------------- Path parameter "metadata" -------------
-	var metadata string
+	// ------------- Path parameter "order_id" -------------
+	var orderId string
 
-	err = runtime.BindStyledParameterWithOptions("simple", "metadata", r.PathValue("metadata"), &metadata, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "order_id", r.PathValue("order_id"), &orderId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "metadata", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "order_id", Err: err})
 		return
 	}
 
@@ -1585,7 +1585,7 @@ func (siw *ServerInterfaceWrapper) CancelOrderByMetadata(w http.ResponseWriter, 
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CancelOrderByMetadata(w, r, metadata)
+		siw.Handler.CancelOrderByOrderId(w, r, orderId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1782,11 +1782,11 @@ func (siw *ServerInterfaceWrapper) StreamOrders(w http.ResponseWriter, r *http.R
 	// Parameter object where we will unmarshal all parameters from the context
 	var params StreamOrdersParams
 
-	// ------------- Optional query parameter "metadata" -------------
+	// ------------- Optional query parameter "order_id" -------------
 
-	err = runtime.BindQueryParameter("form", true, false, "metadata", r.URL.Query(), &params.Metadata)
+	err = runtime.BindQueryParameter("form", true, false, "order_id", r.URL.Query(), &params.OrderId)
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "metadata", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "order_id", Err: err})
 		return
 	}
 
@@ -2095,7 +2095,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/api/deals", wrapper.ListDeals)
 	m.HandleFunc("GET "+options.BaseURL+"/api/orders", wrapper.ListOrders)
 	m.HandleFunc("GET "+options.BaseURL+"/api/orders/scalers", wrapper.ListOrderScalers)
-	m.HandleFunc("POST "+options.BaseURL+"/api/orders/{metadata}/cancel", wrapper.CancelOrderByMetadata)
+	m.HandleFunc("POST "+options.BaseURL+"/api/orders/{order_id}/cancel", wrapper.CancelOrderByOrderId)
 	m.HandleFunc("DELETE "+options.BaseURL+"/api/v1/bots/{botId}/order-scaler", wrapper.DeleteBotOrderScalerConfig)
 	m.HandleFunc("GET "+options.BaseURL+"/api/v1/bots/{botId}/order-scaler", wrapper.GetBotOrderScalerConfig)
 	m.HandleFunc("PUT "+options.BaseURL+"/api/v1/bots/{botId}/order-scaler", wrapper.UpsertBotOrderScalerConfig)
@@ -2260,52 +2260,52 @@ func (response ListOrderScalers500Response) VisitListOrderScalersResponse(w http
 	return nil
 }
 
-type CancelOrderByMetadataRequestObject struct {
-	Metadata string `json:"metadata"`
-	Body     *CancelOrderByMetadataJSONRequestBody
+type CancelOrderByOrderIdRequestObject struct {
+	OrderId string `json:"order_id"`
+	Body    *CancelOrderByOrderIdJSONRequestBody
 }
 
-type CancelOrderByMetadataResponseObject interface {
-	VisitCancelOrderByMetadataResponse(w http.ResponseWriter) error
+type CancelOrderByOrderIdResponseObject interface {
+	VisitCancelOrderByOrderIdResponse(w http.ResponseWriter) error
 }
 
-type CancelOrderByMetadata202JSONResponse CancelOrderByMetadataResponse
+type CancelOrderByOrderId202JSONResponse CancelOrderByOrderIdResponse
 
-func (response CancelOrderByMetadata202JSONResponse) VisitCancelOrderByMetadataResponse(w http.ResponseWriter) error {
+func (response CancelOrderByOrderId202JSONResponse) VisitCancelOrderByOrderIdResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(202)
 
 	return json.NewEncoder(w).Encode(response)
 }
 
-type CancelOrderByMetadata400Response struct {
+type CancelOrderByOrderId400Response struct {
 }
 
-func (response CancelOrderByMetadata400Response) VisitCancelOrderByMetadataResponse(w http.ResponseWriter) error {
+func (response CancelOrderByOrderId400Response) VisitCancelOrderByOrderIdResponse(w http.ResponseWriter) error {
 	w.WriteHeader(400)
 	return nil
 }
 
-type CancelOrderByMetadata404Response struct {
+type CancelOrderByOrderId404Response struct {
 }
 
-func (response CancelOrderByMetadata404Response) VisitCancelOrderByMetadataResponse(w http.ResponseWriter) error {
+func (response CancelOrderByOrderId404Response) VisitCancelOrderByOrderIdResponse(w http.ResponseWriter) error {
 	w.WriteHeader(404)
 	return nil
 }
 
-type CancelOrderByMetadata409Response struct {
+type CancelOrderByOrderId409Response struct {
 }
 
-func (response CancelOrderByMetadata409Response) VisitCancelOrderByMetadataResponse(w http.ResponseWriter) error {
+func (response CancelOrderByOrderId409Response) VisitCancelOrderByOrderIdResponse(w http.ResponseWriter) error {
 	w.WriteHeader(409)
 	return nil
 }
 
-type CancelOrderByMetadata500Response struct {
+type CancelOrderByOrderId500Response struct {
 }
 
-func (response CancelOrderByMetadata500Response) VisitCancelOrderByMetadataResponse(w http.ResponseWriter) error {
+func (response CancelOrderByOrderId500Response) VisitCancelOrderByOrderIdResponse(w http.ResponseWriter) error {
 	w.WriteHeader(500)
 	return nil
 }
@@ -3002,12 +3002,12 @@ type StrictServerInterface interface {
 	// List acted-on bot events with Hyperliquid context
 	// (GET /api/orders)
 	ListOrders(ctx context.Context, request ListOrdersRequestObject) (ListOrdersResponseObject, error)
-	// List effective order scaler configurations for observed metadata
+	// List effective order scaler configurations for observed OrderId
 	// (GET /api/orders/scalers)
 	ListOrderScalers(ctx context.Context, request ListOrderScalersRequestObject) (ListOrderScalersResponseObject, error)
-	// Cancel Hyperliquid order by metadata
-	// (POST /api/orders/{metadata}/cancel)
-	CancelOrderByMetadata(ctx context.Context, request CancelOrderByMetadataRequestObject) (CancelOrderByMetadataResponseObject, error)
+	// Cancel Hyperliquid order by OrderId
+	// (POST /api/orders/{order_id}/cancel)
+	CancelOrderByOrderId(ctx context.Context, request CancelOrderByOrderIdRequestObject) (CancelOrderByOrderIdResponseObject, error)
 	// Delete a bot-specific order scaler override
 	// (DELETE /api/v1/bots/{botId}/order-scaler)
 	DeleteBotOrderScalerConfig(ctx context.Context, request DeleteBotOrderScalerConfigRequestObject) (DeleteBotOrderScalerConfigResponseObject, error)
@@ -3191,13 +3191,13 @@ func (sh *strictHandler) ListOrderScalers(w http.ResponseWriter, r *http.Request
 	}
 }
 
-// CancelOrderByMetadata operation middleware
-func (sh *strictHandler) CancelOrderByMetadata(w http.ResponseWriter, r *http.Request, metadata string) {
-	var request CancelOrderByMetadataRequestObject
+// CancelOrderByOrderId operation middleware
+func (sh *strictHandler) CancelOrderByOrderId(w http.ResponseWriter, r *http.Request, orderId string) {
+	var request CancelOrderByOrderIdRequestObject
 
-	request.Metadata = metadata
+	request.OrderId = orderId
 
-	var body CancelOrderByMetadataJSONRequestBody
+	var body CancelOrderByOrderIdJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
 		return
@@ -3205,18 +3205,18 @@ func (sh *strictHandler) CancelOrderByMetadata(w http.ResponseWriter, r *http.Re
 	request.Body = &body
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.CancelOrderByMetadata(ctx, request.(CancelOrderByMetadataRequestObject))
+		return sh.ssi.CancelOrderByOrderId(ctx, request.(CancelOrderByOrderIdRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "CancelOrderByMetadata")
+		handler = middleware(handler, "CancelOrderByOrderId")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(CancelOrderByMetadataResponseObject); ok {
-		if err := validResponse.VisitCancelOrderByMetadataResponse(w); err != nil {
+	} else if validResponse, ok := response.(CancelOrderByOrderIdResponseObject); ok {
+		if err := validResponse.VisitCancelOrderByOrderIdResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

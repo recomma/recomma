@@ -11,7 +11,7 @@ import (
 
 const appendHyperliquidModify = `-- name: AppendHyperliquidModify :exec
 INSERT INTO hyperliquid_submissions (
-    md,
+    order_id,
     action_kind,
     create_payload,
     modify_payloads,
@@ -27,7 +27,7 @@ INSERT INTO hyperliquid_submissions (
     CAST(unixepoch('now','subsec') * 1000 AS INTEGER),
     ?3
 )
-ON CONFLICT(md) DO UPDATE SET
+ON CONFLICT(order_id) DO UPDATE SET
     modify_payloads = json_insert(
         COALESCE(hyperliquid_submissions.modify_payloads, CAST('[]' AS BLOB)),
         '$[#]',
@@ -38,13 +38,13 @@ ON CONFLICT(md) DO UPDATE SET
 `
 
 type AppendHyperliquidModifyParams struct {
-	Md            string      `json:"md"`
+	OrderID       string      `json:"order_id"`
 	ModifyPayload interface{} `json:"modify_payload"`
 	BoteventRowID int64       `json:"botevent_row_id"`
 }
 
 func (q *Queries) AppendHyperliquidModify(ctx context.Context, arg AppendHyperliquidModifyParams) error {
-	_, err := q.db.ExecContext(ctx, appendHyperliquidModify, arg.Md, arg.ModifyPayload, arg.BoteventRowID)
+	_, err := q.db.ExecContext(ctx, appendHyperliquidModify, arg.OrderID, arg.ModifyPayload, arg.BoteventRowID)
 	return err
 }
 
@@ -146,7 +146,7 @@ SELECT
     CAST(modify_payloads AS BLOB) AS modify_payloads,
     CAST(cancel_payload AS BLOB)  AS cancel_payload
 FROM hyperliquid_submissions
-WHERE md = ?1
+WHERE order_id = ?1
 `
 
 type FetchHyperliquidSubmissionRow struct {
@@ -156,8 +156,8 @@ type FetchHyperliquidSubmissionRow struct {
 	CancelPayload  []byte `json:"cancel_payload"`
 }
 
-func (q *Queries) FetchHyperliquidSubmission(ctx context.Context, md string) (FetchHyperliquidSubmissionRow, error) {
-	row := q.db.QueryRowContext(ctx, fetchHyperliquidSubmission, md)
+func (q *Queries) FetchHyperliquidSubmission(ctx context.Context, orderID string) (FetchHyperliquidSubmissionRow, error) {
+	row := q.db.QueryRowContext(ctx, fetchHyperliquidSubmission, orderID)
 	var i FetchHyperliquidSubmissionRow
 	err := row.Scan(
 		&i.ActionKind,
@@ -171,13 +171,13 @@ func (q *Queries) FetchHyperliquidSubmission(ctx context.Context, md string) (Fe
 const fetchLatestHyperliquidStatus = `-- name: FetchLatestHyperliquidStatus :one
 SELECT status
 FROM hyperliquid_status_history
-WHERE md = ?1
+WHERE order_id = ?1
 ORDER BY recorded_at_utc DESC, id DESC
 LIMIT 1
 `
 
-func (q *Queries) FetchLatestHyperliquidStatus(ctx context.Context, md string) ([]byte, error) {
-	row := q.db.QueryRowContext(ctx, fetchLatestHyperliquidStatus, md)
+func (q *Queries) FetchLatestHyperliquidStatus(ctx context.Context, orderID string) ([]byte, error) {
+	row := q.db.QueryRowContext(ctx, fetchLatestHyperliquidStatus, orderID)
 	var status []byte
 	err := row.Scan(&status)
 	return status, err
@@ -186,13 +186,13 @@ func (q *Queries) FetchLatestHyperliquidStatus(ctx context.Context, md string) (
 const fetchThreeCommasBotEvent = `-- name: FetchThreeCommasBotEvent :one
 SELECT payload
 FROM threecommas_botevents
-WHERE md = ?1
+WHERE order_id = ?1
 ORDER BY observed_at_utc DESC, id DESC
 LIMIT 1
 `
 
-func (q *Queries) FetchThreeCommasBotEvent(ctx context.Context, md string) ([]byte, error) {
-	row := q.db.QueryRowContext(ctx, fetchThreeCommasBotEvent, md)
+func (q *Queries) FetchThreeCommasBotEvent(ctx context.Context, orderID string) ([]byte, error) {
+	row := q.db.QueryRowContext(ctx, fetchThreeCommasBotEvent, orderID)
 	var payload []byte
 	err := row.Scan(&payload)
 	return payload, err
@@ -218,25 +218,25 @@ func (q *Queries) GetBotOrderScaler(ctx context.Context, botID int64) (BotOrderS
 	return i, err
 }
 
-const getMetadataForDeal = `-- name: GetMetadataForDeal :many
-SELECT DISTINCT md
+const getOrderIdForDeal = `-- name: GetOrderIdForDeal :many
+SELECT DISTINCT order_id
     FROM threecommas_botevents
     WHERE deal_id = ?
 `
 
-func (q *Queries) GetMetadataForDeal(ctx context.Context, dealID int64) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, getMetadataForDeal, dealID)
+func (q *Queries) GetOrderIdForDeal(ctx context.Context, dealID int64) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, getOrderIdForDeal, dealID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var items []string
 	for rows.Next() {
-		var md string
-		if err := rows.Scan(&md); err != nil {
+		var order_id string
+		if err := rows.Scan(&order_id); err != nil {
 			return nil, err
 		}
-		items = append(items, md)
+		items = append(items, order_id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -267,7 +267,7 @@ func (q *Queries) GetOrderScaler(ctx context.Context) (OrderScaler, error) {
 }
 
 const getTPForDeal = `-- name: GetTPForDeal :one
-SELECT md,
+SELECT order_id,
        botevent_id,
        created_at_utc,
        payload
@@ -279,7 +279,7 @@ LIMIT 1
 `
 
 type GetTPForDealRow struct {
-	Md           string `json:"md"`
+	OrderID      string `json:"order_id"`
 	BoteventID   int64  `json:"botevent_id"`
 	CreatedAtUtc int64  `json:"created_at_utc"`
 	Payload      []byte `json:"payload"`
@@ -289,7 +289,7 @@ func (q *Queries) GetTPForDeal(ctx context.Context, dealID int64) (GetTPForDealR
 	row := q.db.QueryRowContext(ctx, getTPForDeal, dealID)
 	var i GetTPForDealRow
 	err := row.Scan(
-		&i.Md,
+		&i.OrderID,
 		&i.BoteventID,
 		&i.CreatedAtUtc,
 		&i.Payload,
@@ -415,14 +415,14 @@ func (q *Queries) GetWebauthnCredentialByID(ctx context.Context, credentialID []
 	return i, err
 }
 
-const hasThreeCommasMetadata = `-- name: HasThreeCommasMetadata :one
+const hasThreeCommasOrderId = `-- name: HasThreeCommasOrderId :one
 SELECT EXISTS(
-    SELECT 1 FROM threecommas_botevents WHERE md = ?1
+    SELECT 1 FROM threecommas_botevents WHERE order_id = ?1
 )
 `
 
-func (q *Queries) HasThreeCommasMetadata(ctx context.Context, md string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, hasThreeCommasMetadata, md)
+func (q *Queries) HasThreeCommasOrderId(ctx context.Context, orderID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, hasThreeCommasOrderId, orderID)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -430,7 +430,7 @@ func (q *Queries) HasThreeCommasMetadata(ctx context.Context, md string) (int64,
 
 const insertHyperliquidStatus = `-- name: InsertHyperliquidStatus :exec
 INSERT INTO hyperliquid_status_history (
-    md,
+    order_id,
     status,
     recorded_at_utc
 ) VALUES (
@@ -441,19 +441,19 @@ INSERT INTO hyperliquid_status_history (
 `
 
 type InsertHyperliquidStatusParams struct {
-	Md            string `json:"md"`
+	OrderID       string `json:"order_id"`
 	Status        []byte `json:"status"`
 	RecordedAtUtc int64  `json:"recorded_at_utc"`
 }
 
 func (q *Queries) InsertHyperliquidStatus(ctx context.Context, arg InsertHyperliquidStatusParams) error {
-	_, err := q.db.ExecContext(ctx, insertHyperliquidStatus, arg.Md, arg.Status, arg.RecordedAtUtc)
+	_, err := q.db.ExecContext(ctx, insertHyperliquidStatus, arg.OrderID, arg.Status, arg.RecordedAtUtc)
 	return err
 }
 
 const insertScaledOrder = `-- name: InsertScaledOrder :one
 INSERT INTO scaled_orders (
-    md,
+    order_id,
     deal_id,
     bot_id,
     original_size,
@@ -487,7 +487,7 @@ RETURNING id
 `
 
 type InsertScaledOrderParams struct {
-	Md                  string  `json:"md"`
+	OrderID             string  `json:"order_id"`
 	DealID              int64   `json:"deal_id"`
 	BotID               int64   `json:"bot_id"`
 	OriginalSize        float64 `json:"original_size"`
@@ -505,7 +505,7 @@ type InsertScaledOrderParams struct {
 
 func (q *Queries) InsertScaledOrder(ctx context.Context, arg InsertScaledOrderParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, insertScaledOrder,
-		arg.Md,
+		arg.OrderID,
 		arg.DealID,
 		arg.BotID,
 		arg.OriginalSize,
@@ -527,7 +527,7 @@ func (q *Queries) InsertScaledOrder(ctx context.Context, arg InsertScaledOrderPa
 
 const insertThreeCommasBotEvent = `-- name: InsertThreeCommasBotEvent :one
 INSERT INTO threecommas_botevents (
-    md,
+    order_id,
     bot_id,
     deal_id,
     botevent_id,
@@ -541,12 +541,12 @@ INSERT INTO threecommas_botevents (
     ?5,
     ?6
 )
-ON CONFLICT(md, botevent_id, created_at_utc) DO NOTHING
+ON CONFLICT(order_id, botevent_id, created_at_utc) DO NOTHING
 RETURNING id
 `
 
 type InsertThreeCommasBotEventParams struct {
-	Md           string `json:"md"`
+	OrderID      string `json:"order_id"`
 	BotID        int64  `json:"bot_id"`
 	DealID       int64  `json:"deal_id"`
 	BoteventID   int64  `json:"botevent_id"`
@@ -556,7 +556,7 @@ type InsertThreeCommasBotEventParams struct {
 
 func (q *Queries) InsertThreeCommasBotEvent(ctx context.Context, arg InsertThreeCommasBotEventParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, insertThreeCommasBotEvent,
-		arg.Md,
+		arg.OrderID,
 		arg.BotID,
 		arg.DealID,
 		arg.BoteventID,
@@ -570,7 +570,7 @@ func (q *Queries) InsertThreeCommasBotEvent(ctx context.Context, arg InsertThree
 
 const insertThreeCommasBotEventLog = `-- name: InsertThreeCommasBotEventLog :one
 INSERT INTO threecommas_botevents_log (
-    md,
+    order_id,
     bot_id,
     deal_id,
     botevent_id,
@@ -584,12 +584,12 @@ INSERT INTO threecommas_botevents_log (
     ?5,
     ?6
 )
-ON CONFLICT(md, botevent_id, created_at_utc) DO NOTHING
+ON CONFLICT(order_id, botevent_id, created_at_utc) DO NOTHING
 RETURNING id
 `
 
 type InsertThreeCommasBotEventLogParams struct {
-	Md           string `json:"md"`
+	OrderID      string `json:"order_id"`
 	BotID        int64  `json:"bot_id"`
 	DealID       int64  `json:"deal_id"`
 	BoteventID   int64  `json:"botevent_id"`
@@ -599,7 +599,7 @@ type InsertThreeCommasBotEventLogParams struct {
 
 func (q *Queries) InsertThreeCommasBotEventLog(ctx context.Context, arg InsertThreeCommasBotEventLogParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, insertThreeCommasBotEventLog,
-		arg.Md,
+		arg.OrderID,
 		arg.BotID,
 		arg.DealID,
 		arg.BoteventID,
@@ -674,25 +674,25 @@ func (q *Queries) ListDealIDs(ctx context.Context) ([]int64, error) {
 	return items, nil
 }
 
-const listHyperliquidMetadata = `-- name: ListHyperliquidMetadata :many
-SELECT md
+const listHyperliquidOrderIds = `-- name: ListHyperliquidOrderIds :many
+SELECT order_id
 FROM hyperliquid_submissions
-ORDER BY md ASC
+ORDER BY order_id ASC
 `
 
-func (q *Queries) ListHyperliquidMetadata(ctx context.Context) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, listHyperliquidMetadata)
+func (q *Queries) ListHyperliquidOrderIds(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listHyperliquidOrderIds)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var items []string
 	for rows.Next() {
-		var md string
-		if err := rows.Scan(&md); err != nil {
+		var order_id string
+		if err := rows.Scan(&order_id); err != nil {
 			return nil, err
 		}
-		items = append(items, md)
+		items = append(items, order_id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -706,7 +706,7 @@ func (q *Queries) ListHyperliquidMetadata(ctx context.Context) ([]string, error)
 const listHyperliquidStatuses = `-- name: ListHyperliquidStatuses :many
 SELECT status, recorded_at_utc
 FROM hyperliquid_status_history
-WHERE md = ?1
+WHERE order_id = ?1
 ORDER BY recorded_at_utc ASC, id ASC
 `
 
@@ -715,8 +715,8 @@ type ListHyperliquidStatusesRow struct {
 	RecordedAtUtc int64  `json:"recorded_at_utc"`
 }
 
-func (q *Queries) ListHyperliquidStatuses(ctx context.Context, md string) ([]ListHyperliquidStatusesRow, error) {
-	rows, err := q.db.QueryContext(ctx, listHyperliquidStatuses, md)
+func (q *Queries) ListHyperliquidStatuses(ctx context.Context, orderID string) ([]ListHyperliquidStatusesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listHyperliquidStatuses, orderID)
 	if err != nil {
 		return nil, err
 	}
@@ -738,39 +738,39 @@ func (q *Queries) ListHyperliquidStatuses(ctx context.Context, md string) ([]Lis
 	return items, nil
 }
 
-const listHyperliquidStatusesForMetadata = `-- name: ListHyperliquidStatusesForMetadata :many
+const listHyperliquidStatusesForOrderId = `-- name: ListHyperliquidStatusesForOrderId :many
 SELECT
     id,
     status,
     recorded_at_utc
 FROM hyperliquid_status_history
-WHERE md = ?1
+WHERE order_id = ?1
   AND recorded_at_utc >= COALESCE(?2, recorded_at_utc)
   AND recorded_at_utc <= COALESCE(?3, recorded_at_utc)
 ORDER BY recorded_at_utc ASC, id ASC
 `
 
-type ListHyperliquidStatusesForMetadataParams struct {
-	Metadata     string `json:"metadata"`
+type ListHyperliquidStatusesForOrderIdParams struct {
+	OrderID      string `json:"order_id"`
 	ObservedFrom int64  `json:"observed_from"`
 	ObservedTo   int64  `json:"observed_to"`
 }
 
-type ListHyperliquidStatusesForMetadataRow struct {
+type ListHyperliquidStatusesForOrderIdRow struct {
 	ID            int64  `json:"id"`
 	Status        []byte `json:"status"`
 	RecordedAtUtc int64  `json:"recorded_at_utc"`
 }
 
-func (q *Queries) ListHyperliquidStatusesForMetadata(ctx context.Context, arg ListHyperliquidStatusesForMetadataParams) ([]ListHyperliquidStatusesForMetadataRow, error) {
-	rows, err := q.db.QueryContext(ctx, listHyperliquidStatusesForMetadata, arg.Metadata, arg.ObservedFrom, arg.ObservedTo)
+func (q *Queries) ListHyperliquidStatusesForOrderId(ctx context.Context, arg ListHyperliquidStatusesForOrderIdParams) ([]ListHyperliquidStatusesForOrderIdRow, error) {
+	rows, err := q.db.QueryContext(ctx, listHyperliquidStatusesForOrderId, arg.OrderID, arg.ObservedFrom, arg.ObservedTo)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListHyperliquidStatusesForMetadataRow
+	var items []ListHyperliquidStatusesForOrderIdRow
 	for rows.Next() {
-		var i ListHyperliquidStatusesForMetadataRow
+		var i ListHyperliquidStatusesForOrderIdRow
 		if err := rows.Scan(&i.ID, &i.Status, &i.RecordedAtUtc); err != nil {
 			return nil, err
 		}
@@ -785,9 +785,9 @@ func (q *Queries) ListHyperliquidStatusesForMetadata(ctx context.Context, arg Li
 	return items, nil
 }
 
-const listHyperliquidSubmissionsByMetadata = `-- name: ListHyperliquidSubmissionsByMetadata :many
+const listHyperliquidSubmissionsByOrderId = `-- name: ListHyperliquidSubmissionsByOrderId :many
 SELECT
-    md,
+    order_id,
     action_kind,
     CAST(create_payload AS BLOB)  AS create_payload,
     CAST(modify_payloads AS BLOB) AS modify_payloads,
@@ -795,13 +795,13 @@ SELECT
     updated_at_utc,
     botevent_row_id
 FROM hyperliquid_submissions
-WHERE md IN (
-    SELECT value FROM json_each(sqlc.arg(metadata_list))
+WHERE order_id IN (
+    SELECT value FROM json_each(sqlc.arg(order_id_list))
 )
 `
 
-type ListHyperliquidSubmissionsByMetadataRow struct {
-	Md             string `json:"md"`
+type ListHyperliquidSubmissionsByOrderIdRow struct {
+	OrderID        string `json:"order_id"`
 	ActionKind     string `json:"action_kind"`
 	CreatePayload  []byte `json:"create_payload"`
 	ModifyPayloads []byte `json:"modify_payloads"`
@@ -810,17 +810,17 @@ type ListHyperliquidSubmissionsByMetadataRow struct {
 	BoteventRowID  int64  `json:"botevent_row_id"`
 }
 
-func (q *Queries) ListHyperliquidSubmissionsByMetadata(ctx context.Context) ([]ListHyperliquidSubmissionsByMetadataRow, error) {
-	rows, err := q.db.QueryContext(ctx, listHyperliquidSubmissionsByMetadata)
+func (q *Queries) ListHyperliquidSubmissionsByOrderId(ctx context.Context) ([]ListHyperliquidSubmissionsByOrderIdRow, error) {
+	rows, err := q.db.QueryContext(ctx, listHyperliquidSubmissionsByOrderId)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListHyperliquidSubmissionsByMetadataRow
+	var items []ListHyperliquidSubmissionsByOrderIdRow
 	for rows.Next() {
-		var i ListHyperliquidSubmissionsByMetadataRow
+		var i ListHyperliquidSubmissionsByOrderIdRow
 		if err := rows.Scan(
-			&i.Md,
+			&i.OrderID,
 			&i.ActionKind,
 			&i.CreatePayload,
 			&i.ModifyPayloads,
@@ -843,13 +843,13 @@ func (q *Queries) ListHyperliquidSubmissionsByMetadata(ctx context.Context) ([]L
 
 const listLatestHyperliquidSafetyStatuses = `-- name: ListLatestHyperliquidSafetyStatuses :many
 WITH latest_status AS (
-    SELECT md, id
+    SELECT order_id, id
     FROM (
         SELECT
-            md,
+            order_id,
             id,
             ROW_NUMBER() OVER (
-                PARTITION BY md
+                PARTITION BY order_id
                 ORDER BY recorded_at_utc DESC, id DESC
             ) AS rn
         FROM hyperliquid_status_history
@@ -857,7 +857,7 @@ WITH latest_status AS (
     WHERE rn = 1
 )
 SELECT
-    b.md AS md,
+    b.order_id AS order_id,
     b.bot_id AS bot_id,
     b.deal_id AS deal_id,
     CAST(json_extract(b.payload, '$.OrderType') AS TEXT)        AS order_type,
@@ -870,14 +870,14 @@ FROM latest_status AS latest
 JOIN hyperliquid_status_history AS h
   ON h.id = latest.id
 JOIN threecommas_botevents AS b
-  ON b.md = latest.md
+  ON b.order_id = latest.order_id
 WHERE b.deal_id = ?1
   AND CAST(json_extract(b.payload, '$.OrderType') AS TEXT) = 'Safety'
 ORDER BY order_position ASC
 `
 
 type ListLatestHyperliquidSafetyStatusesRow struct {
-	Md                string `json:"md"`
+	OrderID           string `json:"order_id"`
 	BotID             int64  `json:"bot_id"`
 	DealID            int64  `json:"deal_id"`
 	OrderType         string `json:"order_type"`
@@ -898,7 +898,7 @@ func (q *Queries) ListLatestHyperliquidSafetyStatuses(ctx context.Context, dealI
 	for rows.Next() {
 		var i ListLatestHyperliquidSafetyStatusesRow
 		if err := rows.Scan(
-			&i.Md,
+			&i.OrderID,
 			&i.BotID,
 			&i.DealID,
 			&i.OrderType,
@@ -979,10 +979,10 @@ func (q *Queries) ListLatestTakeProfitStackSizes(ctx context.Context, arg ListLa
 	return items, nil
 }
 
-const listScaledOrderAuditsForMetadata = `-- name: ListScaledOrderAuditsForMetadata :many
+const listScaledOrderAuditsForOrderId = `-- name: ListScaledOrderAuditsForOrderId :many
 SELECT
     id,
-    md,
+    order_id,
     deal_id,
     bot_id,
     original_size,
@@ -997,20 +997,20 @@ SELECT
     skipped,
     skip_reason
 FROM scaled_orders
-WHERE md = ?1
+WHERE order_id = ?1
   AND created_at_utc >= ?2
   AND created_at_utc <= ?3
 ORDER BY created_at_utc ASC, id ASC
 `
 
-type ListScaledOrderAuditsForMetadataParams struct {
-	Metadata     string `json:"metadata"`
+type ListScaledOrderAuditsForOrderIdParams struct {
+	OrderID      string `json:"order_id"`
 	ObservedFrom int64  `json:"observed_from"`
 	ObservedTo   int64  `json:"observed_to"`
 }
 
-func (q *Queries) ListScaledOrderAuditsForMetadata(ctx context.Context, arg ListScaledOrderAuditsForMetadataParams) ([]ScaledOrder, error) {
-	rows, err := q.db.QueryContext(ctx, listScaledOrderAuditsForMetadata, arg.Metadata, arg.ObservedFrom, arg.ObservedTo)
+func (q *Queries) ListScaledOrderAuditsForOrderId(ctx context.Context, arg ListScaledOrderAuditsForOrderIdParams) ([]ScaledOrder, error) {
+	rows, err := q.db.QueryContext(ctx, listScaledOrderAuditsForOrderId, arg.OrderID, arg.ObservedFrom, arg.ObservedTo)
 	if err != nil {
 		return nil, err
 	}
@@ -1020,7 +1020,7 @@ func (q *Queries) ListScaledOrderAuditsForMetadata(ctx context.Context, arg List
 		var i ScaledOrder
 		if err := rows.Scan(
 			&i.ID,
-			&i.Md,
+			&i.OrderID,
 			&i.DealID,
 			&i.BotID,
 			&i.OriginalSize,
@@ -1051,7 +1051,7 @@ func (q *Queries) ListScaledOrderAuditsForMetadata(ctx context.Context, arg List
 const listScaledOrdersByDeal = `-- name: ListScaledOrdersByDeal :many
 SELECT
     id,
-    md,
+    order_id,
     deal_id,
     bot_id,
     original_size,
@@ -1081,7 +1081,7 @@ func (q *Queries) ListScaledOrdersByDeal(ctx context.Context, dealID int64) ([]S
 		var i ScaledOrder
 		if err := rows.Scan(
 			&i.ID,
-			&i.Md,
+			&i.OrderID,
 			&i.DealID,
 			&i.BotID,
 			&i.OriginalSize,
@@ -1109,10 +1109,10 @@ func (q *Queries) ListScaledOrdersByDeal(ctx context.Context, dealID int64) ([]S
 	return items, nil
 }
 
-const listScaledOrdersByMetadata = `-- name: ListScaledOrdersByMetadata :many
+const listScaledOrdersByOrderId = `-- name: ListScaledOrdersByOrderId :many
 SELECT
     id,
-    md,
+    order_id,
     deal_id,
     bot_id,
     original_size,
@@ -1127,12 +1127,12 @@ SELECT
     skipped,
     skip_reason
 FROM scaled_orders
-WHERE md = ?1
+WHERE order_id = ?1
 ORDER BY created_at_utc ASC, id ASC
 `
 
-func (q *Queries) ListScaledOrdersByMetadata(ctx context.Context, md string) ([]ScaledOrder, error) {
-	rows, err := q.db.QueryContext(ctx, listScaledOrdersByMetadata, md)
+func (q *Queries) ListScaledOrdersByOrderId(ctx context.Context, orderID string) ([]ScaledOrder, error) {
+	rows, err := q.db.QueryContext(ctx, listScaledOrdersByOrderId, orderID)
 	if err != nil {
 		return nil, err
 	}
@@ -1142,7 +1142,7 @@ func (q *Queries) ListScaledOrdersByMetadata(ctx context.Context, md string) ([]
 		var i ScaledOrder
 		if err := rows.Scan(
 			&i.ID,
-			&i.Md,
+			&i.OrderID,
 			&i.DealID,
 			&i.BotID,
 			&i.OriginalSize,
@@ -1173,7 +1173,7 @@ func (q *Queries) ListScaledOrdersByMetadata(ctx context.Context, md string) ([]
 const listThreeCommasBotEventLogs = `-- name: ListThreeCommasBotEventLogs :many
 SELECT
     id,
-    md,
+    order_id,
     bot_id,
     deal_id,
     botevent_id,
@@ -1195,7 +1195,7 @@ func (q *Queries) ListThreeCommasBotEventLogs(ctx context.Context) ([]Threecomma
 		var i ThreecommasBoteventsLog
 		if err := rows.Scan(
 			&i.ID,
-			&i.Md,
+			&i.OrderID,
 			&i.BotID,
 			&i.DealID,
 			&i.BoteventID,
@@ -1216,10 +1216,10 @@ func (q *Queries) ListThreeCommasBotEventLogs(ctx context.Context) ([]Threecomma
 	return items, nil
 }
 
-const listThreeCommasBotEventLogsForMetadata = `-- name: ListThreeCommasBotEventLogsForMetadata :many
+const listThreeCommasBotEventLogsForOrderId = `-- name: ListThreeCommasBotEventLogsForOrderId :many
 SELECT
     id,
-    md,
+    order_id,
     bot_id,
     deal_id,
     botevent_id,
@@ -1227,20 +1227,20 @@ SELECT
     observed_at_utc,
     payload
 FROM threecommas_botevents_log
-WHERE md = ?1
+WHERE order_id = ?1
   AND observed_at_utc >= COALESCE(?2, observed_at_utc)
   AND observed_at_utc <= COALESCE(?3, observed_at_utc)
 ORDER BY observed_at_utc ASC, id ASC
 `
 
-type ListThreeCommasBotEventLogsForMetadataParams struct {
-	Metadata     string `json:"metadata"`
+type ListThreeCommasBotEventLogsForOrderIdParams struct {
+	OrderID      string `json:"order_id"`
 	ObservedFrom int64  `json:"observed_from"`
 	ObservedTo   int64  `json:"observed_to"`
 }
 
-func (q *Queries) ListThreeCommasBotEventLogsForMetadata(ctx context.Context, arg ListThreeCommasBotEventLogsForMetadataParams) ([]ThreecommasBoteventsLog, error) {
-	rows, err := q.db.QueryContext(ctx, listThreeCommasBotEventLogsForMetadata, arg.Metadata, arg.ObservedFrom, arg.ObservedTo)
+func (q *Queries) ListThreeCommasBotEventLogsForOrderId(ctx context.Context, arg ListThreeCommasBotEventLogsForOrderIdParams) ([]ThreecommasBoteventsLog, error) {
+	rows, err := q.db.QueryContext(ctx, listThreeCommasBotEventLogsForOrderId, arg.OrderID, arg.ObservedFrom, arg.ObservedTo)
 	if err != nil {
 		return nil, err
 	}
@@ -1250,7 +1250,7 @@ func (q *Queries) ListThreeCommasBotEventLogsForMetadata(ctx context.Context, ar
 		var i ThreecommasBoteventsLog
 		if err := rows.Scan(
 			&i.ID,
-			&i.Md,
+			&i.OrderID,
 			&i.BotID,
 			&i.DealID,
 			&i.BoteventID,
@@ -1274,7 +1274,7 @@ func (q *Queries) ListThreeCommasBotEventLogsForMetadata(ctx context.Context, ar
 const listThreeCommasBotEvents = `-- name: ListThreeCommasBotEvents :many
 SELECT
     id,
-    md,
+    order_id,
     bot_id,
     deal_id,
     botevent_id,
@@ -1289,7 +1289,7 @@ WHERE bot_id = COALESCE(?1, bot_id)
   AND observed_at_utc <= COALESCE(?5, observed_at_utc)
   AND (
         ?6 IS NULL
-        OR LOWER(md) LIKE LOWER(?6) || '%'
+        OR LOWER(order_id) LIKE LOWER(?6) || '%'
       )
   AND (
         ?7 IS NULL
@@ -1309,7 +1309,7 @@ type ListThreeCommasBotEventsParams struct {
 	BotEventID       int64       `json:"bot_event_id"`
 	ObservedFrom     int64       `json:"observed_from"`
 	ObservedTo       int64       `json:"observed_to"`
-	MetadataPrefix   interface{} `json:"metadata_prefix"`
+	OrderIDPrefix    interface{} `json:"order_id_prefix"`
 	CursorObservedAt interface{} `json:"cursor_observed_at"`
 	CursorID         int64       `json:"cursor_id"`
 	Limit            int64       `json:"limit"`
@@ -1322,7 +1322,7 @@ func (q *Queries) ListThreeCommasBotEvents(ctx context.Context, arg ListThreeCom
 		arg.BotEventID,
 		arg.ObservedFrom,
 		arg.ObservedTo,
-		arg.MetadataPrefix,
+		arg.OrderIDPrefix,
 		arg.CursorObservedAt,
 		arg.CursorID,
 		arg.Limit,
@@ -1336,7 +1336,7 @@ func (q *Queries) ListThreeCommasBotEvents(ctx context.Context, arg ListThreeCom
 		var i ThreecommasBotevent
 		if err := rows.Scan(
 			&i.ID,
-			&i.Md,
+			&i.OrderID,
 			&i.BotID,
 			&i.DealID,
 			&i.BoteventID,
@@ -1713,7 +1713,7 @@ func (q *Queries) UpsertDeal(ctx context.Context, arg UpsertDealParams) error {
 
 const upsertHyperliquidCancel = `-- name: UpsertHyperliquidCancel :exec
 INSERT INTO hyperliquid_submissions (
-    md,
+    order_id,
     action_kind,
     create_payload,
     modify_payloads,
@@ -1729,26 +1729,26 @@ INSERT INTO hyperliquid_submissions (
     CAST(unixepoch('now','subsec') * 1000 AS INTEGER),
     ?3
 )
-ON CONFLICT(md) DO UPDATE SET
+ON CONFLICT(order_id) DO UPDATE SET
     cancel_payload = excluded.cancel_payload,
     action_kind    = 'cancel',
     updated_at_utc = CAST(unixepoch('now','subsec') * 1000 AS INTEGER)
 `
 
 type UpsertHyperliquidCancelParams struct {
-	Md            string      `json:"md"`
+	OrderID       string      `json:"order_id"`
 	CancelPayload interface{} `json:"cancel_payload"`
 	BoteventRowID int64       `json:"botevent_row_id"`
 }
 
 func (q *Queries) UpsertHyperliquidCancel(ctx context.Context, arg UpsertHyperliquidCancelParams) error {
-	_, err := q.db.ExecContext(ctx, upsertHyperliquidCancel, arg.Md, arg.CancelPayload, arg.BoteventRowID)
+	_, err := q.db.ExecContext(ctx, upsertHyperliquidCancel, arg.OrderID, arg.CancelPayload, arg.BoteventRowID)
 	return err
 }
 
 const upsertHyperliquidCreate = `-- name: UpsertHyperliquidCreate :exec
 INSERT INTO hyperliquid_submissions (
-    md,
+    order_id,
     action_kind,
     create_payload,
     modify_payloads,
@@ -1764,20 +1764,20 @@ INSERT INTO hyperliquid_submissions (
     CAST(unixepoch('now','subsec') * 1000 AS INTEGER),
     ?3
 )
-ON CONFLICT(md) DO UPDATE SET
+ON CONFLICT(order_id) DO UPDATE SET
     create_payload = excluded.create_payload,
     action_kind    = 'create',
     updated_at_utc = CAST(unixepoch('now','subsec') * 1000 AS INTEGER)
 `
 
 type UpsertHyperliquidCreateParams struct {
-	Md            string      `json:"md"`
+	OrderID       string      `json:"order_id"`
 	CreatePayload interface{} `json:"create_payload"`
 	BoteventRowID int64       `json:"botevent_row_id"`
 }
 
 func (q *Queries) UpsertHyperliquidCreate(ctx context.Context, arg UpsertHyperliquidCreateParams) error {
-	_, err := q.db.ExecContext(ctx, upsertHyperliquidCreate, arg.Md, arg.CreatePayload, arg.BoteventRowID)
+	_, err := q.db.ExecContext(ctx, upsertHyperliquidCreate, arg.OrderID, arg.CreatePayload, arg.BoteventRowID)
 	return err
 }
 

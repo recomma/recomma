@@ -57,7 +57,7 @@ var defaultHyperLiquidEmitterConfig = HyperLiquidEmitterConfig{
 
 const iocRetryBumpRatio = 0.0005
 
-type iocRetryMetadata struct {
+type iocRetryOrderId struct {
 	count     int
 	lastError string
 }
@@ -208,7 +208,7 @@ func (e *HyperLiquidEmitter) applyIOCOffset(order hyperliquid.CreateOrderRequest
 }
 
 func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) error {
-	logger := e.logger.With("md", w.MD.Hex()).With("bot-event", w.BotEvent)
+	logger := e.logger.With("orderid", w.OrderId.Hex()).With("bot-event", w.BotEvent)
 	logger.Debug("emit", slog.Any("orderwork", w))
 
 	if w.Action.Type == recomma.ActionNone {
@@ -222,7 +222,7 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 
 	didSubmit := false
 	var executedAction recomma.Action
-	var retryMeta *iocRetryMetadata
+	var retryMeta *iocRetryOrderId
 	var lastStatus *hyperliquid.OrderStatus
 
 	// TODO: decide if we want to persist the result we get back here, it's not interesting ususally as it just states `resting`
@@ -232,9 +232,9 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 		w.Action.Create = &order
 
 		if e.ws != nil {
-			if status, ok := e.ws.Get(ctx, w.MD); ok && isLiveStatus(status) {
+			if status, ok := e.ws.Get(ctx, w.OrderId); ok && isLiveStatus(status) {
 				var latestSubmission *hyperliquid.CreateOrderRequest
-				if submission, found, err := e.store.LoadHyperliquidSubmission(ctx, w.MD); err != nil {
+				if submission, found, err := e.store.LoadHyperliquidSubmission(ctx, w.OrderId); err != nil {
 					logger.Warn("could not load latest submission", slog.String("error", err.Error()))
 				} else if found {
 					switch {
@@ -251,7 +251,7 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 					return recomma.ErrOrderAlreadySatisfied
 				}
 
-				modifyReq := hyperliquid.ModifyOrderRequest{Oid: w.MD.Hex(), Order: order}
+				modifyReq := hyperliquid.ModifyOrderRequest{Oid: w.OrderId.Hex(), Order: order}
 				status, err := e.submitModify(ctx, logger, w, modifyReq)
 				if err != nil {
 					return err
@@ -292,7 +292,7 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 			status, err := e.exchange.Order(ctx, *w.Action.Create, nil)
 			if err != nil {
 				if strings.Contains(err.Error(), "Order must have minimum value") {
-					if err := e.store.RecordHyperliquidOrderRequest(ctx, w.MD, *w.Action.Create, w.BotEvent.RowID); err != nil {
+					if err := e.store.RecordHyperliquidOrderRequest(ctx, w.OrderId, *w.Action.Create, w.BotEvent.RowID); err != nil {
 						logger.Warn("could not add to store", slog.String("error", err.Error()))
 					}
 					logger.Warn("could not submit (order value), ignoring", slog.String("error", err.Error()))
@@ -300,7 +300,7 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 				}
 
 				if strings.Contains(err.Error(), "Reduce only order would increase position") {
-					if err := e.store.RecordHyperliquidOrderRequest(ctx, w.MD, *w.Action.Create, w.BotEvent.RowID); err != nil {
+					if err := e.store.RecordHyperliquidOrderRequest(ctx, w.OrderId, *w.Action.Create, w.BotEvent.RowID); err != nil {
 						logger.Warn("could not add to store", slog.String("error", err.Error()))
 					}
 					logger.Warn("could not submit (reduce only order, increase position), ignoring", slog.String("error", err.Error()))
@@ -337,13 +337,13 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 			return err
 		}
 
-		if err := e.store.RecordHyperliquidOrderRequest(ctx, w.MD, *w.Action.Create, w.BotEvent.RowID); err != nil {
+		if err := e.store.RecordHyperliquidOrderRequest(ctx, w.OrderId, *w.Action.Create, w.BotEvent.RowID); err != nil {
 			logger.Warn("could not add to store", slog.String("error", err.Error()))
 		}
 		executedAction = w.Action
 		didSubmit = true
 		if retryInfo.count > 0 {
-			retryMeta = &iocRetryMetadata{count: retryInfo.count, lastError: retryInfo.lastErr}
+			retryMeta = &iocRetryOrderId{count: retryInfo.count, lastError: retryInfo.lastErr}
 		}
 
 	case recomma.ActionCancel:
@@ -359,7 +359,7 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 			logger.Warn("could not cancel order", slog.String("error", err.Error()), slog.Any("action", w.Action.Cancel))
 			return fmt.Errorf("could not cancel order: %w", err)
 		}
-		if err := e.store.RecordHyperliquidCancel(ctx, w.MD, *w.Action.Cancel, w.BotEvent.RowID); err != nil {
+		if err := e.store.RecordHyperliquidCancel(ctx, w.OrderId, *w.Action.Cancel, w.BotEvent.RowID); err != nil {
 			logger.Warn("could not add to store", slog.String("error", err.Error()))
 		}
 		executedAction = w.Action
@@ -420,7 +420,7 @@ func (e *HyperLiquidEmitter) submitModify(
 		logger.Warn("could not modify order", slog.String("error", err.Error()), slog.Any("action", req))
 		return nil, fmt.Errorf("could not modify order: %w", err)
 	}
-	if err := e.store.AppendHyperliquidModify(ctx, w.MD, req, w.BotEvent.RowID); err != nil {
+	if err := e.store.AppendHyperliquidModify(ctx, w.OrderId, req, w.BotEvent.RowID); err != nil {
 		logger.Warn("could not add to store", slog.String("error", err.Error()))
 	}
 	return &status, nil

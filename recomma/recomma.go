@@ -6,12 +6,12 @@ import (
 	"time"
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
-	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/orderid"
 	"github.com/sonirico/go-hyperliquid"
 )
 
 type OrderWork struct {
-	MD       metadata.Metadata
+	OrderId  orderid.OrderId
 	Action   Action
 	BotEvent BotEvent
 }
@@ -47,7 +47,7 @@ type BotEvent struct {
 type BotEventLog struct {
 	RowID      int64
 	BotEvent   tc.BotEvent
-	Md         metadata.Metadata
+	OrderId    orderid.OrderId
 	BotID      int64
 	DealID     int64
 	BoteventID int64

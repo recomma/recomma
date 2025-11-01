@@ -4,7 +4,7 @@ PRAGMA synchronous = NORMAL;
 -- threecommas_botevents are all the botevents we acted upon
 CREATE TABLE IF NOT EXISTS threecommas_botevents (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    md              TEXT    NOT NULL,
+    order_id              TEXT    NOT NULL,
     bot_id          INTEGER NOT NULL,
     deal_id         INTEGER NOT NULL,
     botevent_id        INTEGER NOT NULL,
@@ -13,13 +13,13 @@ CREATE TABLE IF NOT EXISTS threecommas_botevents (
     payload         BLOB    NOT NULL
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_threecommas_botevents_md_evt_created
-    ON threecommas_botevents(md, botevent_id, created_at_utc);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_threecommas_botevents_order_id_evt_created
+    ON threecommas_botevents(order_id, botevent_id, created_at_utc);
 
 -- threecommas_botevents_log is a full log of ALL botevents
 CREATE TABLE IF NOT EXISTS threecommas_botevents_log (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    md              TEXT    NOT NULL,
+    order_id              TEXT    NOT NULL,
     bot_id          INTEGER NOT NULL,
     deal_id         INTEGER NOT NULL,
     botevent_id        INTEGER NOT NULL,
@@ -28,8 +28,8 @@ CREATE TABLE IF NOT EXISTS threecommas_botevents_log (
     payload         BLOB    NOT NULL
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_threecommas_botevents_log_md_evt_created
-    ON threecommas_botevents_log(md, botevent_id, created_at_utc);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_threecommas_botevents_log_order_id_evt_created
+    ON threecommas_botevents_log(order_id, botevent_id, created_at_utc);
 
 CREATE TABLE IF NOT EXISTS threecommas_bots (
     bot_id          INTEGER PRIMARY KEY,
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS threecommas_deals (
 );
 
 CREATE TABLE IF NOT EXISTS hyperliquid_submissions (
-  md              TEXT PRIMARY KEY,
+  order_id              TEXT PRIMARY KEY,
   action_kind     TEXT NOT NULL CHECK(action_kind IN ('create','modify','cancel')),
   create_payload  JSON,
   modify_payloads JSON NOT NULL DEFAULT (CAST('[]' AS BLOB)),
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS hyperliquid_submissions (
 
 CREATE TABLE IF NOT EXISTS hyperliquid_status_history (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    md              TEXT    NOT NULL,
+    order_id              TEXT    NOT NULL,
     status          BLOB    NOT NULL,
     recorded_at_utc INTEGER NOT NULL DEFAULT(unixepoch('now','subsec') * 1000)
 );
@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS bot_order_scalers (
 
 CREATE TABLE IF NOT EXISTS scaled_orders (
     id                     INTEGER PRIMARY KEY AUTOINCREMENT,
-    md                     TEXT    NOT NULL,
+    order_id                     TEXT    NOT NULL,
     deal_id                INTEGER NOT NULL,
     bot_id                 INTEGER NOT NULL,
     original_size          REAL    NOT NULL,
@@ -146,8 +146,8 @@ CREATE TABLE IF NOT EXISTS scaled_orders (
     FOREIGN KEY(bot_id) REFERENCES threecommas_bots(bot_id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_scaled_orders_md_created
-    ON scaled_orders(md, created_at_utc);
+CREATE INDEX IF NOT EXISTS idx_scaled_orders_order_id_created
+    ON scaled_orders(order_id, created_at_utc);
 
 CREATE INDEX IF NOT EXISTS idx_scaled_orders_deal_stack
     ON scaled_orders(deal_id, stack_index);

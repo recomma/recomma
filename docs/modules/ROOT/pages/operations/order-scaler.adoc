@@ -127,7 +127,7 @@ confirm the bot now inherits the default multiplier.
 
 * Every `PUT` or `DELETE` produces an `order_scaler_config` event on the `/sse/orders`
   stream. The event body carries the actor, default configuration, any override, and the
-  metadata hex that downstream services can use to correlate changes.
+  OrderId hex that downstream services can use to correlate changes.
 * Whenever the engine scales a mirrored order it writes a `scaled_order_audit` record.
   The audit entry captures the original and scaled sizes, the multiplier that was used,
   any rounding delta, and the operator who configured the multiplier at the time. These

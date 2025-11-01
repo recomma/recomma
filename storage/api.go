@@ -490,6 +490,8 @@ FROM threecommas_botevents`)
 			updatedAtUTC   sql.NullInt64
 		)
 
+		// TODO: remove hardcoded query!
+
 		err := s.db.QueryRowContext(ctx, `
 SELECT action_kind,
        create_payload,
@@ -497,7 +499,7 @@ SELECT action_kind,
        cancel_payload,
        updated_at_utc
 FROM hyperliquid_submissions
-WHERE oid = ?
+WHERE order_id = ?
 `, oidHex).Scan(&actionKind, &createPayload, &modifyPayloads, &cancelPayload, &updatedAtUTC)
 
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {

@@ -1,6 +1,6 @@
 * xref:index.adoc[Overview]
 * xref:setup.adoc[Setup]
-* xref:debug-mode.adoc[Debug mode]
+* xref:debug-mode.adoc[Debug mode (requires debug build tag)]
 * xref:architecture.adoc[Architecture]
 ** xref:architecture/order-scaler.adoc[Order scaler]
 * xref:operations.adoc[Operations]

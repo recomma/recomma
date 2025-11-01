@@ -3,6 +3,17 @@
 
 This page explains how developers can exercise the Recomma binary without completing the normal WebAuthn vault ceremony. Debug mode is designed for local experiments, feature development, and automated tests. It should never be enabled in environments that handle real funds.
 
+[NOTE]
+====
+The debug helpers are excluded from release builds. Compile the binary with the `debugmode` build tag whenever you need this feature:
+
+```
+go build -tags debugmode ./cmd/recomma
+```
+
+The `--debug` flag and `RECOMMA_DEBUG` environment toggle are hidden in builds that omit the tag and will raise an error if set.
+====
+
 == What debug mode does
 
 Debug mode pretends that a vault user already completed enrollment and injected secrets into the controller. When `--debug` (or `RECOMMA_DEBUG=true`) is set and the expected environment variables are present, the process:
@@ -33,6 +44,12 @@ Each variable is trimmed before use. URL validation rejects obvious typos to avo
 == Enabling debug mode
 
 . Export the required environment variables. Store development-only credentials in a `.env.debug` file or your shell profile. Never reuse production keys.
+. Build or run the binary with the `debugmode` tag so the flag is available:
++
+[source,bash]
+----
+go run -tags debugmode ./cmd/recomma --help
+----
 . Launch the binary with the flag or environment toggle:
 +
 [source,bash]
@@ -61,4 +78,4 @@ TIP: When scripting tests, inject the environment variables directly into the pr
 * The injected user has the hard-coded username `debug` and an ID of `0`. Features that rely on real user metadata may need additional scaffolding when tested in debug mode.
 * This mode bypasses the strongest security guarantees of Recomma. Keep it behind firewalls and avoid connecting wallets with transferable value.
 
-Disable debug mode and restart the binary when you are ready to return to normal operations.
+Disable debug mode and restart the binary when you are ready to return to normal operations. Building without `-tags debugmode` also removes the flag and environment toggle entirely.

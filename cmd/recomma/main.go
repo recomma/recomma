@@ -26,6 +26,7 @@ import (
 	"github.com/recomma/recomma/hl"
 	"github.com/recomma/recomma/hl/ws"
 	"github.com/recomma/recomma/internal/api"
+	"github.com/recomma/recomma/internal/debugmode"
 	"github.com/recomma/recomma/internal/origin"
 	"github.com/recomma/recomma/internal/vault"
 	rlog "github.com/recomma/recomma/log"
@@ -55,6 +56,12 @@ func main() {
 		fatal("invalid configuration", err)
 	}
 
+	if cfg.Debug && !debugmode.Available() {
+		fatal("debug mode unavailable", debugmode.ErrUnavailable)
+	}
+
+	debugEnabled := cfg.Debug && debugmode.Available()
+
 	allowedOrigins := origin.BuildAllowedOrigins(cfg.HTTPListen, cfg.PublicOrigin)
 	rpID := origin.DeriveRPID(cfg.HTTPListen, cfg.PublicOrigin)
 
@@ -67,7 +74,7 @@ func main() {
 	slog.SetDefault(logger)
 	log.SetOutput(slog.NewLogLogger(logger.Handler(), slog.LevelDebug).Writer())
 
-	webui.SetDebug(cfg.Debug)
+	webui.SetDebug(debugEnabled)
 
 	appCtx = rlog.ContextWithLogger(appCtx, logger)
 
@@ -91,8 +98,8 @@ func main() {
 	initialVaultState := vault.StateSetupRequired
 	var controllerOpts []vault.ControllerOption
 
-	if cfg.Debug {
-		secrets, err := loadDebugSecretsFromEnv()
+	if debugEnabled {
+		secrets, err := debugmode.LoadSecretsFromEnv()
 		if err != nil {
 			fatal("load debug secrets", err)
 		}
@@ -102,7 +109,7 @@ func main() {
 		}
 		controllerOpts = append(controllerOpts,
 			vault.WithInitialSecrets(secrets),
-			vault.WithInitialUser(debugUser(now)),
+			vault.WithInitialUser(debugmode.DebugUser(now)),
 			vault.WithInitialTimestamps(nil, &now, nil),
 		)
 		initialVaultState = vault.StateUnsealed
@@ -141,7 +148,7 @@ func main() {
 		api.WithWebAuthnService(webAuthApi),
 		api.WithVaultController(vaultController),
 		api.WithOrderScalerMaxMultiplier(cfg.OrderScalerMaxMultiplier),
-		api.WithDebugMode(cfg.Debug),
+		api.WithDebugMode(debugEnabled),
 	)
 
 	strictServer := api.NewStrictHandler(apiHandler, []api.StrictMiddlewareFunc{

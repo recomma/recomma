@@ -15,6 +15,7 @@ import (
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/hl"
+	"github.com/recomma/recomma/internal/debugmode"
 	"github.com/recomma/recomma/internal/vault"
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
@@ -57,6 +58,7 @@ type ApiHandler struct {
 	webauthn *WebAuthnService
 	vault    *vault.Controller
 	session  *vaultSessionManager
+	debug    bool
 
 	orderScalerMaxMultiplier float64
 	orders                   recomma.Emitter
@@ -163,6 +165,13 @@ func WithOrderScalerMaxMultiplier(max float64) HandlerOption {
 		if max > 0 {
 			h.orderScalerMaxMultiplier = max
 		}
+	}
+}
+
+// WithDebugMode toggles debug behaviour for the handler.
+func WithDebugMode(enabled bool) HandlerOption {
+	return func(h *ApiHandler) {
+		h.debug = enabled && debugmode.Available()
 	}
 }
 

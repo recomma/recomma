@@ -151,7 +151,7 @@ func (h *ApiHandler) GetVaultStatus(ctx context.Context, request GetVaultStatusR
 		}
 	}
 
-	return GetVaultStatus200JSONResponse(convertControllerStatus(status)), nil
+	return GetVaultStatus200JSONResponse(h.convertControllerStatus(status)), nil
 }
 
 func (h *ApiHandler) SealVault(ctx context.Context, request SealVaultRequestObject) (SealVaultResponseObject, error) {
@@ -179,7 +179,7 @@ func (h *ApiHandler) SealVault(ctx context.Context, request SealVaultRequestObje
 		h.session.Clear()
 	}
 
-	status := convertControllerStatus(h.vault.Status())
+	status := h.convertControllerStatus(h.vault.Status())
 	expiredCookie := (&http.Cookie{
 		Name:     vaultSessionCookieName,
 		Value:    "",
@@ -259,7 +259,7 @@ func (h *ApiHandler) SetupVault(ctx context.Context, request SetupVaultRequestOb
 		h.session.Clear()
 	}
 
-	return SetupVault201JSONResponse(convertControllerStatus(h.vault.Status())), nil
+	return SetupVault201JSONResponse(h.convertControllerStatus(h.vault.Status())), nil
 }
 
 func (h *ApiHandler) UnsealVault(ctx context.Context, request UnsealVaultRequestObject) (UnsealVaultResponseObject, error) {
@@ -306,7 +306,7 @@ func (h *ApiHandler) UnsealVault(ctx context.Context, request UnsealVaultRequest
 				SameSite: http.SameSiteStrictMode,
 			}).String()
 
-			status := convertControllerStatus(h.vault.Status())
+			status := h.convertControllerStatus(h.vault.Status())
 			status.SessionExpiresAt = &expiry
 
 			return UnsealVault200JSONResponse{
@@ -321,6 +321,10 @@ func (h *ApiHandler) UnsealVault(ctx context.Context, request UnsealVaultRequest
 }
 
 func (h *ApiHandler) requireSession(ctx context.Context) (valid bool, expired bool) {
+	if h.debug {
+		return true, false
+	}
+
 	if h.session == nil {
 		h.logger.WarnContext(ctx, "requireSession called without session manager")
 		return false, false
@@ -365,7 +369,7 @@ func (h *ApiHandler) controllerStatus(ctx context.Context) (vault.ControllerStat
 	return h.vault.Status(), nil
 }
 
-func convertControllerStatus(status vault.ControllerStatus) VaultStatus {
+func (h *ApiHandler) convertControllerStatus(status vault.ControllerStatus) VaultStatus {
 	apiStatus := VaultStatus{
 		State: VaultState(status.State),
 	}
@@ -387,6 +391,8 @@ func convertControllerStatus(status vault.ControllerStatus) VaultStatus {
 	if status.SessionExpiresAt != nil {
 		apiStatus.SessionExpiresAt = status.SessionExpiresAt
 	}
+	enabled := h.debug
+	apiStatus.DebugMode = &enabled
 	return apiStatus
 }
 

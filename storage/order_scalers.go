@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -10,6 +11,14 @@ import (
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/storage/sqlcgen"
 )
+
+const (
+	scaledOrderPayloadType = "scaled_order.audit.v1"
+)
+
+type scaledOrderPayload struct {
+	SubmittedOrderID *string `json:"submitted_order_id,omitempty"`
+}
 
 type OrderScalerState struct {
 	Multiplier float64
@@ -365,8 +374,32 @@ func (s *Storage) InsertScaledOrderAudit(ctx context.Context, params ScaledOrder
 		createdAt = time.Now().UTC()
 	}
 
+	var (
+		payloadType *string
+		payloadBlob []byte
+	)
+
+	if params.SubmittedOrderID != nil {
+		encoded, err := json.Marshal(scaledOrderPayload{SubmittedOrderID: params.SubmittedOrderID})
+		if err != nil {
+			return ScaledOrderAudit{}, fmt.Errorf("encode scaled order payload: %w", err)
+		}
+		payloadBlob = encoded
+		pt := scaledOrderPayloadType
+		payloadType = &pt
+	}
+
+	orderID := params.OrderId.Hex()
+	if params.SubmittedOrderID != nil && *params.SubmittedOrderID != "" {
+		orderID = *params.SubmittedOrderID
+	} else {
+		orderID = fmt.Sprintf("%s#%d", params.OrderId.Hex(), params.StackIndex)
+	}
+
 	insert := sqlcgen.InsertScaledOrderParams{
-		OrderID:             params.OrderId.Hex(),
+		VenueID:             defaultHyperliquidVenueID,
+		Wallet:              defaultHyperliquidWallet,
+		OrderID:             orderID,
 		DealID:              int64(params.DealID),
 		BotID:               int64(params.BotID),
 		OriginalSize:        params.OriginalSize,
@@ -377,18 +410,17 @@ func (s *Storage) InsertScaledOrderAudit(ctx context.Context, params ScaledOrder
 		OrderSide:           params.OrderSide,
 		MultiplierUpdatedBy: params.MultiplierUpdatedBy,
 		CreatedAtUtc:        createdAt.UTC().UnixMilli(),
-		SubmittedOrderID:    params.SubmittedOrderID,
 		Skipped:             boolToInt(params.Skipped),
 		SkipReason:          params.SkipReason,
+		PayloadType:         payloadType,
+		PayloadBlob:         payloadBlob,
 	}
 
-	id, err := s.queries.InsertScaledOrder(ctx, insert)
-	if err != nil {
+	if err := s.queries.InsertScaledOrder(ctx, insert); err != nil {
 		return ScaledOrderAudit{}, err
 	}
 
 	audit := ScaledOrderAudit{
-		ID:                  id,
 		OrderId:             params.OrderId,
 		DealID:              params.DealID,
 		BotID:               params.BotID,
@@ -447,7 +479,10 @@ func (s *Storage) ListScaledOrdersByOrderId(ctx context.Context, oid orderid.Ord
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rows, err := s.queries.ListScaledOrdersByOrderId(ctx, oid.Hex())
+	rows, err := s.queries.ListScaledOrdersByOrderId(ctx, sqlcgen.ListScaledOrdersByOrderIdParams{
+		VenueID: defaultHyperliquidVenueID,
+		OrderID: oid.Hex(),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -459,7 +494,10 @@ func (s *Storage) ListScaledOrdersByDeal(ctx context.Context, dealID uint32) ([]
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rows, err := s.queries.ListScaledOrdersByDeal(ctx, int64(dealID))
+	rows, err := s.queries.ListScaledOrdersByDeal(ctx, sqlcgen.ListScaledOrdersByDealParams{
+		DealID:  int64(dealID),
+		VenueID: defaultHyperliquidVenueID,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -512,6 +550,15 @@ func convertScaledOrder(row sqlcgen.ScaledOrder) (ScaledOrderAudit, error) {
 		return ScaledOrderAudit{}, fmt.Errorf("decode orderid %q: %w", row.OrderID, err)
 	}
 
+	var submittedID *string
+	if row.PayloadType != nil && *row.PayloadType == scaledOrderPayloadType && len(row.PayloadBlob) > 0 {
+		var payload scaledOrderPayload
+		if err := json.Unmarshal(row.PayloadBlob, &payload); err != nil {
+			return ScaledOrderAudit{}, fmt.Errorf("decode scaled order payload for %q: %w", row.OrderID, err)
+		}
+		submittedID = payload.SubmittedOrderID
+	}
+
 	return ScaledOrderAudit{
 		ID:                  row.ID,
 		OrderId:             *oid,
@@ -525,7 +572,7 @@ func convertScaledOrder(row sqlcgen.ScaledOrder) (ScaledOrderAudit, error) {
 		OrderSide:           row.OrderSide,
 		MultiplierUpdatedBy: row.MultiplierUpdatedBy,
 		CreatedAt:           time.UnixMilli(row.CreatedAtUtc).UTC(),
-		SubmittedOrderID:    row.SubmittedOrderID,
+		SubmittedOrderID:    submittedID,
 		Skipped:             row.Skipped != 0,
 		SkipReason:          row.SkipReason,
 	}, nil

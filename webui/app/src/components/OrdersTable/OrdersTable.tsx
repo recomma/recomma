@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   BotRecord,
-  CancelOrderByMetadataResponse,
+  CancelOrderByOrderIdResponse,
   DealRecord,
   ListBotsResponse,
   OrderFilterState,
@@ -44,7 +44,7 @@ import { COLUMN_ORDER, COLUMN_LABELS, REQUIRED_COLUMNS, DEFAULT_VISIBLE_COLUMNS 
 import { useOrdersData } from './hooks/useOrdersData';
 import { groupOrders } from './utils/orderDataTransformers';
 import {
-  getMetadataHex,
+  getOrderIdHex as getOrderIdHex,
   getIdentifiers,
   extractSide,
   extractOrderType,
@@ -59,7 +59,7 @@ import { getOrderTimestamp } from './utils/orderDataTransformers';
 import { formatDate } from './utils/orderFormatters';
 import { getStatusInfo } from './utils/orderStatus';
 import {
-  metadataCellRenderer,
+  orderIdCellRenderer,
   orderTypeCellRenderer,
   sideCellRenderer,
   createPriceCellRenderer,
@@ -91,7 +91,7 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
   const [selectedBot, setSelectedBot] = useState<BotRecord | null>(null);
   const [botDetailDialogOpen, setBotDetailDialogOpen] = useState(false);
   const [bulkCancelDialogOpen, setBulkCancelDialogOpen] = useState(false);
-  const [bulkCancelContext, setBulkCancelContext] = useState<{ dealId: string; metadataHashes: string[] } | null>(null);
+  const [bulkCancelContext, setBulkCancelContext] = useState<{ dealId: string; orderIds: string[] } | null>(null);
   const [isBulkCanceling, setIsBulkCanceling] = useState(false);
   const [visibleColumns, setVisibleColumns] =
     useState<OrderColumnKey[]>(DEFAULT_VISIBLE_COLUMNS);
@@ -116,7 +116,7 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
     return groupedOrders.map((group) => {
       const order = group.latest;
       const identifiers = getIdentifiers(order);
-      const metadataHex = getMetadataHex(order);
+      const oidHex = getOrderIdHex(order);
       const side = extractSide(order);
       const priceValue = getNumericPrice(order);
       const quantityValue = getNumericQuantity(order);
@@ -127,7 +127,7 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
       return {
         rowType: 'order' as const,
         id: group.key,
-        metadata: metadataHex,
+        orderId: oidHex,
         botId: identifiers.bot_id?.toString() ?? '—',
         dealId: identifiers.deal_id?.toString() ?? '—',
         orderType: extractOrderType(order),
@@ -171,7 +171,7 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
     sortedDeals.forEach(([dealId, orders]) => {
       const deal = dealsMap.get(dealId) ?? null;
       const firstOrder = orders[0];
-      const metadataHashes = new Set(orders.map((o) => o.metadata));
+      const orderIds = new Set(orders.map((o) => o.orderId));
 
       const dealRow: DealGroupRow = {
         rowType: 'deal-header' as const,
@@ -180,8 +180,8 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
         botId: firstOrder?.botId ?? '—',
         deal,
         orderCount: orders.length,
-        metadataHashes,
-        metadata: '',
+        orderIds,
+        orderId: '',
         orderType: '',
         orderPosition: '',
         side: '',
@@ -290,11 +290,11 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
     if (!orderToCancel) return;
 
     setIsCanceling(true);
-    const metadata = orderToCancel.metadata ?? orderToCancel.identifiers.hex;
+    const orderId = orderToCancel.order_id ?? orderToCancel.identifiers.hex;
 
     try {
       const response = await fetch(
-        buildOpsApiUrl(`/api/orders/${metadata}/cancel`),
+        buildOpsApiUrl(`/api/orders/${orderId}/cancel`),
         {
           method: 'POST',
           credentials: 'include',
@@ -309,13 +309,13 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
         throw new Error(`Failed to cancel order: ${response.statusText}`);
       }
 
-      const result: CancelOrderByMetadataResponse = await response.json();
+      const result: CancelOrderByOrderIdResponse = await response.json();
 
       toast.success(`Order cancel ${result.status}`, {
-        description: result.message || `Metadata: ${metadata}`,
+        description: result.message || `Metadata: ${orderId}`,
       });
 
-      void refreshOrdersForMetadata(metadata);
+      void refreshOrdersForMetadata(orderId);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       toast.error('Failed to cancel order', {
@@ -333,8 +333,8 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
     setCancelDialogOpen(true);
   }, []);
 
-  const promptCancelAllOrders = useCallback((metadataHashes: Set<string>, dealId: string) => {
-    const hashArray = Array.from(metadataHashes);
+  const promptCancelAllOrders = useCallback((orderIds: Set<string>, dealId: string) => {
+    const hashArray = Array.from(orderIds);
     if (hashArray.length === 0) {
       toast.info('No orders to cancel for this deal.', {
         description: `Deal #${dealId}`,
@@ -344,13 +344,13 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
 
     setBulkCancelContext({
       dealId,
-      metadataHashes: hashArray,
+      orderIds: hashArray,
     });
     setBulkCancelDialogOpen(true);
   }, []);
 
-  const executeCancelAllOrders = useCallback(async (metadataHashes: Set<string>, dealId: string) => {
-    const hashArray = Array.from(metadataHashes);
+  const executeCancelAllOrders = useCallback(async (orderIds: Set<string>, dealId: string) => {
+    const hashArray = Array.from(orderIds);
     const totalCount = hashArray.length;
 
     toast.info(`Canceling ${totalCount} order${totalCount === 1 ? '' : 's'}...`, {
@@ -360,10 +360,10 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
     let successCount = 0;
     let failCount = 0;
 
-    for (const metadata of hashArray) {
+    for (const orderId of hashArray) {
       try {
         const response = await fetch(
-          buildOpsApiUrl(`/api/orders/${metadata}/cancel`),
+          buildOpsApiUrl(`/api/orders/${orderId}/cancel`),
           {
             method: 'POST',
             credentials: 'include',
@@ -389,8 +389,8 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
         description: failCount > 0 ? `${failCount} failed` : undefined,
       });
 
-      for (const metadata of hashArray) {
-        void refreshOrdersForMetadata(metadata);
+      for (const orderId of hashArray) {
+        void refreshOrdersForMetadata(orderId);
       }
     }
 
@@ -408,7 +408,7 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
 
     setIsBulkCanceling(true);
     try {
-      await executeCancelAllOrders(new Set(bulkCancelContext.metadataHashes), bulkCancelContext.dealId);
+      await executeCancelAllOrders(new Set(bulkCancelContext.orderIds), bulkCancelContext.dealId);
       setBulkCancelDialogOpen(false);
       setBulkCancelContext(null);
     } finally {
@@ -458,12 +458,12 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
 
   const columnDefinitions = useMemo<Record<OrderColumnKey, Column<TableRow>>>(
     () => ({
-      metadata: {
-        id: 'metadata',
-        name: COLUMN_LABELS.metadata,
+      orderId: {
+        id: 'orderId',
+        name: COLUMN_LABELS.orderId,
         width: 200,
         widthMin: 150,
-        cellRenderer: metadataCellRenderer,
+        cellRenderer: orderIdCellRenderer,
       },
       botId: {
         id: 'botId',
@@ -812,7 +812,7 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
               {orderToCancel && (
                 <div className="mt-3 rounded bg-gray-50 p-2 text-xs">
                   <div className="font-mono text-gray-700">
-                    {orderToCancel.metadata ?? orderToCancel.identifiers.hex}
+                    {orderToCancel.order_id ?? orderToCancel.identifiers.hex}
                   </div>
                 </div>
               )}
@@ -845,7 +845,7 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
           <AlertDialogHeader>
             <AlertDialogTitle>Cancel All Orders for Deal</AlertDialogTitle>
             <AlertDialogDescription>
-              {`This will attempt to cancel ${bulkCancelContext?.metadataHashes.length ?? 0} order${(bulkCancelContext?.metadataHashes.length ?? 0) === 1 ? '' : 's'} for deal #${bulkCancelContext?.dealId ?? 'N/A'}.`}
+              {`This will attempt to cancel ${bulkCancelContext?.orderIds.length ?? 0} order${(bulkCancelContext?.orderIds.length ?? 0) === 1 ? '' : 's'} for deal #${bulkCancelContext?.dealId ?? 'N/A'}.`}
               <span className="mt-3 block text-xs text-muted-foreground">
                 This action cannot be undone.
               </span>
@@ -860,7 +860,7 @@ export function OrdersTable({ filters, selectedBotId, selectedDealId, onBotSelec
             >
               {isBulkCanceling
                 ? 'Canceling...'
-                : `Cancel ${bulkCancelContext?.metadataHashes.length ?? 0} Order${(bulkCancelContext?.metadataHashes.length ?? 0) === 1 ? '' : 's'}`}
+                : `Cancel ${bulkCancelContext?.orderIds.length ?? 0} Order${(bulkCancelContext?.orderIds.length ?? 0) === 1 ? '' : 's'}`}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

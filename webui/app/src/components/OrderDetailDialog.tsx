@@ -216,7 +216,7 @@ export function OrderDetailDialog({ order, open, onOpenChange }: OrderDetailDial
   const [dealPayload, setDealPayload] = useState<UnknownRecord | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const metadataHex = detailedOrder.metadata ?? detailedOrder.identifiers.hex;
+  const oidHex = detailedOrder.order_id ?? detailedOrder.identifiers.hex;
 
   useEffect(() => {
     if (!open) {
@@ -224,12 +224,12 @@ export function OrderDetailDialog({ order, open, onOpenChange }: OrderDetailDial
     }
 
     const identifiers = order.identifiers;
-    const metadata = order.metadata ?? identifiers.hex;
+    const order_id = order.order_id ?? identifiers.hex;
 
     setLoading(true);
 
     Promise.all([
-      fetch(buildOpsApiUrl(`/api/orders?metadata=${metadata}&include_log=true`))
+      fetch(buildOpsApiUrl(`/api/orders?order_id=${order_id}&include_log=true`))
         .then(async (response) => {
           if (!response.ok) throw new Error('API not available');
           const data: ListOrdersResponse = await response.json();
@@ -336,9 +336,9 @@ export function OrderDetailDialog({ order, open, onOpenChange }: OrderDetailDial
       : '—';
   const submissionReduceOnly = submissionOrder?.reduce_only ?? false;
   const submissionClientOrderId =
-    submissionOrder?.client_order_id ||
-    cancelAction?.client_order_id ||
-    statusOrder?.client_order_id ||
+    submissionOrder?.cloid ||
+    cancelAction?.cloid ||
+    statusOrder?.cloid ||
     '—';
 
   const statusTimestampDisplay = formatDateTime(status?.status_timestamp ?? statusOrder?.timestamp);
@@ -411,7 +411,7 @@ export function OrderDetailDialog({ order, open, onOpenChange }: OrderDetailDial
           </DialogDescription>
           <div className="flex items-center gap-2 mt-2 flex-wrap">
             <code className="text-xs bg-gray-100 px-2 py-1 rounded font-mono">
-              {metadataHex}
+              {oidHex}
             </code>
             <Button
               variant="ghost"

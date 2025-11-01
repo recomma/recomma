@@ -1,7 +1,7 @@
 import type { OrderColumnKey } from './types';
 
 export const COLUMN_ORDER: OrderColumnKey[] = [
-  'metadata',
+  'orderId',
   'orderType',
   'orderPosition',
   'side',
@@ -14,7 +14,7 @@ export const COLUMN_ORDER: OrderColumnKey[] = [
 ];
 
 export const COLUMN_LABELS: Record<OrderColumnKey, string> = {
-  metadata: 'Client Order ID',
+  orderId: 'Client Order ID',
   botId: 'Bot ID',
   dealId: 'Deal ID',
   orderType: 'Order Type',
@@ -28,6 +28,6 @@ export const COLUMN_LABELS: Record<OrderColumnKey, string> = {
   actions: 'Actions',
 };
 
-export const REQUIRED_COLUMNS = new Set<OrderColumnKey>(['metadata', 'actions']);
+export const REQUIRED_COLUMNS = new Set<OrderColumnKey>(['orderId', 'actions']);
 export const DEFAULT_VISIBLE_COLUMNS: OrderColumnKey[] = [...COLUMN_ORDER];
 export const DEFAULT_FETCH_LIMIT = 100;

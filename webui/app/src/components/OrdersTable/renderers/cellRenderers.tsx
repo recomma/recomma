@@ -9,16 +9,16 @@ import { formatPrice, formatQuantity } from '../utils/orderFormatters';
 import { getOrderTypeBadge } from './statusBadges';
 
 /**
- * Renders metadata cell with code formatting
+ * Renders OrderId cell with code formatting
  */
-export function metadataCellRenderer(params: CellRendererParams<TableRow>) {
+export function orderIdCellRenderer(params: CellRendererParams<TableRow>) {
   const row = params.row.data;
   if (!row || row.rowType === 'deal-header') {
     return null;
   }
   return (
     <code className="text-xs px-1.5 py-0.5 rounded font-mono">
-      {String(row.metadata)}
+      {String(row.orderId)}
     </code>
   );
 }

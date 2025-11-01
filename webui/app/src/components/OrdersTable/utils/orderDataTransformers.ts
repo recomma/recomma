@@ -1,6 +1,6 @@
 import type { OrderRecord } from '../../../types/api';
 import type { OrderGroup } from '../types';
-import { getIdentifiers, getMetadataHex } from './orderFieldExtractors';
+import { getIdentifiers, getOrderIdHex } from './orderFieldExtractors';
 
 /**
  * Builds a unique identity string for an order
@@ -8,7 +8,7 @@ import { getIdentifiers, getMetadataHex } from './orderFieldExtractors';
 export const buildOrderIdentity = (order: OrderRecord): string => {
   const identifiers = getIdentifiers(order);
   return [
-    getMetadataHex(order),
+    getOrderIdHex(order),
     identifiers.bot_event_id?.toString() ?? 'unknown-event',
     identifiers.bot_id?.toString() ?? 'unknown-bot',
     identifiers.deal_id?.toString() ?? 'unknown-deal',

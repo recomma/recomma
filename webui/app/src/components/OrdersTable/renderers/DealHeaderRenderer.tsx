@@ -14,7 +14,7 @@ interface DealHeaderRendererProps {
   onToggleDeal: (dealId: string) => void;
   onViewDealDetails: (deal: DealRecord) => void;
   onViewBotDetails: (botId: string) => void;
-  onCancelAllOrders: (metadataHashes: Set<string>, dealId: string) => void;
+  onCancelAllOrders: (orderIds: Set<string>, dealId: string) => void;
   bbo?: HyperliquidBestBidOffer;
 }
 
@@ -139,7 +139,7 @@ export function DealHeaderRenderer({
             className="h-7 px-2 text-xs font-medium text-red-600 hover:text-red-700"
             onClick={(e) => {
               e.stopPropagation();
-              onCancelAllOrders(dealRow.metadataHashes, dealRow.dealId);
+              onCancelAllOrders(dealRow.orderIds, dealRow.dealId);
             }}
           >
             <AlertCircle className="h-3.5 w-3.5" />

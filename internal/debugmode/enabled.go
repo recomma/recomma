@@ -1,4 +1,6 @@
-package main
+//go:build debugmode
+
+package debugmode
 
 import (
 	"fmt"
@@ -19,8 +21,13 @@ const (
 	debugUserUsername          = "debug"
 )
 
-// loadDebugSecretsFromEnv reads the debug secrets from the environment.
-func loadDebugSecretsFromEnv() (*vault.Secrets, error) {
+// Available reports whether the binary includes debug mode helpers.
+func Available() bool {
+	return true
+}
+
+// LoadSecretsFromEnv reads the debug secrets from the environment.
+func LoadSecretsFromEnv() (*vault.Secrets, error) {
 	lookup := func(envKey string) (string, error) {
 		raw, ok := os.LookupEnv(envKey)
 		if !ok {
@@ -74,7 +81,8 @@ func loadDebugSecretsFromEnv() (*vault.Secrets, error) {
 	return secrets, nil
 }
 
-func debugUser(now time.Time) *vault.User {
+// DebugUser returns the synthetic debug vault user.
+func DebugUser(now time.Time) *vault.User {
 	return &vault.User{
 		ID:        0,
 		Username:  debugUserUsername,

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/recomma/recomma/internal/debugmode"
 	"github.com/vearutop/statigz"
 	"github.com/vearutop/statigz/brotli"
 	"github.com/vearutop/statigz/zstd"
@@ -26,7 +27,7 @@ var (
 
 // SetDebug toggles debug mode for runtime config exposure.
 func SetDebug(enabled bool) {
-	debug.Store(enabled)
+	debug.Store(enabled && debugmode.Available())
 }
 
 func FS() fs.FS {

@@ -15,6 +15,7 @@ import (
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/hl"
+	"github.com/recomma/recomma/internal/debugmode"
 	"github.com/recomma/recomma/internal/vault"
 	"github.com/recomma/recomma/metadata"
 	"github.com/recomma/recomma/recomma"
@@ -170,7 +171,7 @@ func WithOrderScalerMaxMultiplier(max float64) HandlerOption {
 // WithDebugMode toggles debug behaviour for the handler.
 func WithDebugMode(enabled bool) HandlerOption {
 	return func(h *ApiHandler) {
-		h.debug = enabled
+		h.debug = enabled && debugmode.Available()
 	}
 }
 

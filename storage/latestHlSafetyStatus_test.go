@@ -268,17 +268,17 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 				base := time.Date(2024, time.March, 10, 17, 0, 0, 0, time.UTC)
 
 				otherDeal := uint32(9100)
-				otherMD := orderid.OrderId{
+				otherOid := orderid.OrderId{
 					BotID:      50,
 					DealID:     otherDeal,
 					BotEventID: 1,
 				}
-				insertSafetyEvent(t, store, otherMD, base, order{
+				insertSafetyEvent(t, store, otherOid, base, order{
 					position:  1,
 					ordersize: 1,
 					volume:    1,
 				})
-				recordStatus(t, store, otherMD, hyperliquid.WsOrder{
+				recordStatus(t, store, otherOid, hyperliquid.WsOrder{
 					Order: hyperliquid.WsBasicOrder{
 						Coin:      coin,
 						Side:      "B",
@@ -287,7 +287,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 						Oid:       500,
 						Timestamp: base.Add(5 * time.Second).UnixMilli(),
 						OrigSz:    "1",
-						Cloid:     otherMD.HexAsPointer(),
+						Cloid:     otherOid.HexAsPointer(),
 					},
 					Status:          hyperliquid.OrderStatusValueFilled,
 					StatusTimestamp: base.Add(5 * time.Second).UnixMilli(),

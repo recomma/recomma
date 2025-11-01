@@ -58,13 +58,13 @@
 
 ## Storage & Data Modeling
 - SQLite schema (`storage/sqlc/schema.sql`) covers 3Commas bots/deals/events, Hyperliquid submissions/status history, vault payloads, and WebAuthn credentials.
-- Sqlc queries (`storage/sqlc/queries.sql`) power both API pagination and internal helpers (e.g., metadata lookups, take-profit queries).
+- Sqlc queries (`storage/sqlc/queries.sql`) power both API pagination and internal helpers (e.g., OrderId lookups, take-profit queries).
 - Storage methods publish `StreamEvent`s so the API can fan-out live updates without polling.
 
 ## API & Eventing
 - OpenAPI spec lives in `openapi.yaml`; generation config is `oapi.yaml`.
 - `internal/api/handler.go` implements the strict server interface, wraps vault + WebAuthn services, and exposes Hyperliquid price subscriptions.
-- SSE is delivered through `internal/api/stream_controller.go`; filters support metadata prefix, bot/deal IDs, timestamps.
+- SSE is delivered through `internal/api/stream_controller.go`; filters support OrderID prefix, bot/deal IDs, timestamps.
 - Manual order actions go through the API to the queue emitter to reuse worker pacing.
 
 ## Testing & Fixtures

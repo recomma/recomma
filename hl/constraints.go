@@ -44,19 +44,19 @@ func (c CoinConstraints) NotionalBelowMinimum(size, price float64) bool {
 	return notional+1e-12 < c.MinNotional
 }
 
-// ConstraintsResolver fetches/caches Hyperliquid metadata for rounding.
+// ConstraintsResolver fetches/caches Hyperliquid OrderId for rounding.
 type ConstraintsResolver interface {
 	Resolve(ctx context.Context, coin string) (CoinConstraints, error)
 }
 
-// InfoProvider describes the subset of hyperliquid.Info used for metadata discovery.
+// InfoProvider describes the subset of hyperliquid.Info used for OrderId discovery.
 type InfoProvider interface {
 	MetaAndAssetCtxs(ctx context.Context) (*hyperliquid.MetaAndAssetCtxs, error)
 	SpotMetaAndAssetCtxs(ctx context.Context) (*hyperliquid.SpotMetaAndAssetCtxs, error)
 }
 
-// MetadataCache resolves rounding metadata once and keeps it hot for callers.
-type MetadataCache struct {
+// OrderIdCache resolves rounding OrderId once and keeps it hot for callers.
+type OrderIdCache struct {
 	info InfoProvider
 
 	once sync.Once
@@ -65,16 +65,16 @@ type MetadataCache struct {
 	decimals map[string]int
 }
 
-// NewMetadataCache builds a resolver backed by the provided Info client.
-func NewMetadataCache(info InfoProvider) *MetadataCache {
-	return &MetadataCache{
+// NewOrderIdCache builds a resolver backed by the provided Info client.
+func NewOrderIdCache(info InfoProvider) *OrderIdCache {
+	return &OrderIdCache{
 		info:     info,
 		decimals: make(map[string]int),
 	}
 }
 
 // Resolve implements ConstraintsResolver.
-func (m *MetadataCache) Resolve(ctx context.Context, coin string) (CoinConstraints, error) {
+func (m *OrderIdCache) Resolve(ctx context.Context, coin string) (CoinConstraints, error) {
 	if coin == "" {
 		return CoinConstraints{}, fmt.Errorf("coin is required")
 	}
@@ -101,7 +101,7 @@ func (m *MetadataCache) Resolve(ctx context.Context, coin string) (CoinConstrain
 	}, nil
 }
 
-func (m *MetadataCache) ensureLoaded(ctx context.Context) {
+func (m *OrderIdCache) ensureLoaded(ctx context.Context) {
 	m.once.Do(func() {
 		perpMeta, perpErr := m.info.MetaAndAssetCtxs(ctx)
 		if perpErr == nil {

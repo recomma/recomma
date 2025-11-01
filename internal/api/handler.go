@@ -16,7 +16,7 @@ import (
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/hl"
 	"github.com/recomma/recomma/internal/vault"
-	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
 )
@@ -38,9 +38,9 @@ type Store interface {
 	GetBotOrderScalerOverride(ctx context.Context, botID uint32) (*OrderScalerOverride, bool, error)
 	UpsertBotOrderScalerOverride(ctx context.Context, botID uint32, multiplier *float64, notes *string, updatedBy string) (OrderScalerOverride, error)
 	DeleteBotOrderScalerOverride(ctx context.Context, botID uint32, updatedBy string) error
-	ResolveEffectiveOrderScalerConfig(ctx context.Context, md metadata.Metadata) (EffectiveOrderScaler, error)
-	LoadHyperliquidSubmission(ctx context.Context, md metadata.Metadata) (recomma.Action, bool, error)
-	LoadHyperliquidStatus(ctx context.Context, md metadata.Metadata) (*hyperliquid.WsOrder, bool, error)
+	ResolveEffectiveOrderScalerConfig(ctx context.Context, oid orderid.OrderId) (EffectiveOrderScaler, error)
+	LoadHyperliquidSubmission(ctx context.Context, oid orderid.OrderId) (recomma.Action, bool, error)
+	LoadHyperliquidStatus(ctx context.Context, oid orderid.OrderId) (*hyperliquid.WsOrder, bool, error)
 }
 
 // StreamSource publishes live order mutations for the SSE endpoint.
@@ -239,15 +239,15 @@ func (h *ApiHandler) ListOrders(ctx context.Context, req ListOrdersRequestObject
 	limit := clampPageSize(req.Params.Limit)
 
 	opts := ListOrdersOptions{
-		MetadataPrefix: req.Params.Metadata,
-		BotID:          req.Params.BotId,
-		DealID:         req.Params.DealId,
-		BotEventID:     req.Params.BotEventId,
-		ObservedFrom:   req.Params.ObservedFrom,
-		ObservedTo:     req.Params.ObservedTo,
-		IncludeLog:     includeLog,
-		Limit:          limit,
-		PageToken:      deref(req.Params.PageToken),
+		OrderIdPrefix: req.Params.OrderId,
+		BotID:         req.Params.BotId,
+		DealID:        req.Params.DealId,
+		BotEventID:    req.Params.BotEventId,
+		ObservedFrom:  req.Params.ObservedFrom,
+		ObservedTo:    req.Params.ObservedTo,
+		IncludeLog:    includeLog,
+		Limit:         limit,
+		PageToken:     deref(req.Params.PageToken),
 	}
 
 	rows, next, err := h.store.ListOrders(ctx, opts)
@@ -267,12 +267,12 @@ func (h *ApiHandler) ListOrderScalers(ctx context.Context, req ListOrderScalersR
 	limit := clampPageSize(req.Params.Limit)
 
 	opts := ListOrderScalersOptions{
-		MetadataPrefix: req.Params.Metadata,
-		BotID:          req.Params.BotId,
-		DealID:         req.Params.DealId,
-		BotEventID:     req.Params.BotEventId,
-		Limit:          limit,
-		PageToken:      deref(req.Params.PageToken),
+		OrderIdPrefix: req.Params.OrderId,
+		BotID:         req.Params.BotId,
+		DealID:        req.Params.DealId,
+		BotEventID:    req.Params.BotEventId,
+		Limit:         limit,
+		PageToken:     deref(req.Params.PageToken),
 	}
 
 	rows, next, err := h.store.ListOrderScalers(ctx, opts)
@@ -285,7 +285,7 @@ func (h *ApiHandler) ListOrderScalers(ctx context.Context, req ListOrderScalersR
 		cfg := item.Config
 		cfg.Multiplier = clampOrderScalerMultiplier(cfg.Multiplier, h.orderScalerMaxMultiplier)
 		records = append(records, OrderScalerConfigRecord{
-			Metadata:   item.Metadata.Hex(),
+			OrderId:    item.OrderId.Hex(),
 			ObservedAt: item.ObservedAt,
 			Actor:      item.Actor,
 			Config:     cfg,
@@ -314,7 +314,7 @@ func (h *ApiHandler) GetOrderScalerConfig(ctx context.Context, req GetOrderScale
 		return GetOrderScalerConfig500Response{}, nil
 	}
 
-	effective, err := h.store.ResolveEffectiveOrderScalerConfig(ctx, metadata.Metadata{})
+	effective, err := h.store.ResolveEffectiveOrderScalerConfig(ctx, orderid.OrderId{})
 	if err != nil {
 		h.logger.ErrorContext(ctx, "resolve default order scaler", slog.String("error", err.Error()))
 		return GetOrderScalerConfig500Response{}, nil
@@ -355,7 +355,7 @@ func (h *ApiHandler) UpdateOrderScalerConfig(ctx context.Context, req UpdateOrde
 
 	effective := EffectiveOrderScaler{
 		Default:    state,
-		Metadata:   "",
+		OrderId:    "",
 		Multiplier: state.Multiplier,
 		Source:     Default,
 	}
@@ -393,7 +393,7 @@ func (h *ApiHandler) GetBotOrderScalerConfig(ctx context.Context, req GetBotOrde
 		return GetBotOrderScalerConfig500Response{}, nil
 	}
 
-	effective, err := h.store.ResolveEffectiveOrderScalerConfig(ctx, metadata.Metadata{BotID: botID})
+	effective, err := h.store.ResolveEffectiveOrderScalerConfig(ctx, orderid.OrderId{BotID: botID})
 	if err != nil {
 		h.logger.ErrorContext(ctx, "resolve bot order scaler", slog.String("error", err.Error()), slog.Uint64("bot_id", uint64(botID)))
 		return GetBotOrderScalerConfig500Response{}, nil
@@ -448,7 +448,7 @@ func (h *ApiHandler) UpsertBotOrderScalerConfig(ctx context.Context, req UpsertB
 		return UpsertBotOrderScalerConfig500Response{}, nil
 	}
 
-	effective, err := h.store.ResolveEffectiveOrderScalerConfig(ctx, metadata.Metadata{BotID: botID})
+	effective, err := h.store.ResolveEffectiveOrderScalerConfig(ctx, orderid.OrderId{BotID: botID})
 	if err != nil {
 		h.logger.ErrorContext(ctx, "resolve bot order scaler", slog.String("error", err.Error()), slog.Uint64("bot_id", uint64(botID)))
 		return UpsertBotOrderScalerConfig500Response{}, nil
@@ -490,7 +490,7 @@ func (h *ApiHandler) DeleteBotOrderScalerConfig(ctx context.Context, req DeleteB
 		return DeleteBotOrderScalerConfig500Response{}, nil
 	}
 
-	effective, err := h.store.ResolveEffectiveOrderScalerConfig(ctx, metadata.Metadata{BotID: botID})
+	effective, err := h.store.ResolveEffectiveOrderScalerConfig(ctx, orderid.OrderId{BotID: botID})
 	if err != nil {
 		h.logger.ErrorContext(ctx, "resolve bot order scaler", slog.String("error", err.Error()), slog.Uint64("bot_id", uint64(botID)))
 		return DeleteBotOrderScalerConfig500Response{}, nil
@@ -613,14 +613,14 @@ func (h *ApiHandler) buildOrderRecords(ctx context.Context, rows []OrderItem, in
 func (h *ApiHandler) orderRecordFromItem(ctx context.Context, row OrderItem, includeLog bool) (OrderRecord, bool) {
 	if row.BotEvent == nil {
 		h.logger.WarnContext(ctx, "order row missing bot event",
-			slog.String("metadata", row.Metadata.Hex()))
+			slog.String("orderid", row.OrderId.Hex()))
 		return OrderRecord{}, false
 	}
 
-	identifiers := makeOrderIdentifiers(row.Metadata, row.BotEvent, row.ObservedAt)
+	identifiers := makeOrderIdentifiers(row.OrderId, row.BotEvent, row.ObservedAt)
 
 	record := OrderRecord{
-		Metadata:    row.Metadata.Hex(),
+		OrderId:     row.OrderId.Hex(),
 		Identifiers: identifiers,
 		ObservedAt:  row.ObservedAt,
 		ThreeCommas: ThreeCommasOrderState{
@@ -636,7 +636,7 @@ func (h *ApiHandler) orderRecordFromItem(ctx context.Context, row OrderItem, inc
 		entries := make([]OrderLogEntry, 0, len(row.LogEntries))
 		identCopy := record.Identifiers
 		for _, logRow := range row.LogEntries {
-			entry, ok := h.makeOrderLogEntry(ctx, logRow.Metadata, logRow.ObservedAt, logRow.Type, logRow.BotEvent, logRow.Submission, logRow.Status, logRow.ScalerConfig, logRow.ScaledAudit, logRow.Actor, &identCopy, nil)
+			entry, ok := h.makeOrderLogEntry(ctx, logRow.OrderId, logRow.ObservedAt, logRow.Type, logRow.BotEvent, logRow.Submission, logRow.Status, logRow.ScalerConfig, logRow.ScaledAudit, logRow.Actor, &identCopy, nil)
 			if !ok {
 				continue
 			}
@@ -650,46 +650,46 @@ func (h *ApiHandler) orderRecordFromItem(ctx context.Context, row OrderItem, inc
 	return record, true
 }
 
-// CancelOrderByMetadata satisfies StrictServerInterface.
-func (h *ApiHandler) CancelOrderByMetadata(ctx context.Context, req CancelOrderByMetadataRequestObject) (CancelOrderByMetadataResponseObject, error) {
+// CancelOrderByOrderId satisfies StrictServerInterface.
+func (h *ApiHandler) CancelOrderByOrderId(ctx context.Context, req CancelOrderByOrderIdRequestObject) (CancelOrderByOrderIdResponseObject, error) {
 	if h.orders == nil {
 		if h.logger != nil {
-			h.logger.Warn("CancelOrderByMetadata requested but emitter not configured")
+			h.logger.Warn("CancelOrderByOrderId requested but emitter not configured")
 		}
-		return CancelOrderByMetadata500Response{}, nil
+		return CancelOrderByOrderId500Response{}, nil
 	}
 
-	rawMetadata := strings.TrimSpace(req.Metadata)
-	if rawMetadata == "" {
-		return CancelOrderByMetadata400Response{}, nil
+	rawOrderId := strings.TrimSpace(req.OrderId)
+	if rawOrderId == "" {
+		return CancelOrderByOrderId400Response{}, nil
 	}
 
-	md, err := metadata.FromHexString(rawMetadata)
+	oid, err := orderid.FromHexString(rawOrderId)
 	if err != nil {
 		if h.logger != nil {
-			h.logger.Warn("CancelOrderByMetadata invalid metadata", slog.String("metadata", rawMetadata), slog.String("error", err.Error()))
+			h.logger.Warn("CancelOrderByOrderId invalid orderid", slog.String("orderid", rawOrderId), slog.String("error", err.Error()))
 		}
-		return CancelOrderByMetadata400Response{}, nil
+		return CancelOrderByOrderId400Response{}, nil
 	}
 
-	action, found, err := h.store.LoadHyperliquidSubmission(ctx, *md)
+	action, found, err := h.store.LoadHyperliquidSubmission(ctx, *oid)
 	if err != nil {
 		if h.logger != nil {
-			h.logger.Error("CancelOrderByMetadata load submission failed", slog.String("metadata", md.Hex()), slog.String("error", err.Error()))
+			h.logger.Error("CancelOrderByOrderId load submission failed", slog.String("orderid", oid.Hex()), slog.String("error", err.Error()))
 		}
-		return CancelOrderByMetadata500Response{}, nil
+		return CancelOrderByOrderId500Response{}, nil
 	}
 	if !found || (action.Create == nil && action.Modify == nil) {
 		if h.logger != nil {
-			h.logger.Info("CancelOrderByMetadata submission not found", slog.String("metadata", md.Hex()))
+			h.logger.Info("CancelOrderByOrderId submission not found", slog.String("orderid", oid.Hex()))
 		}
-		return CancelOrderByMetadata404Response{}, nil
+		return CancelOrderByOrderId404Response{}, nil
 	}
 	if action.Cancel != nil {
 		if h.logger != nil {
-			h.logger.Info("CancelOrderByMetadata cancel already recorded", slog.String("metadata", md.Hex()))
+			h.logger.Info("CancelOrderByOrderId cancel already recorded", slog.String("orderid", oid.Hex()))
 		}
-		return CancelOrderByMetadata409Response{}, nil
+		return CancelOrderByOrderId409Response{}, nil
 	}
 
 	coin := ""
@@ -700,23 +700,23 @@ func (h *ApiHandler) CancelOrderByMetadata(ctx context.Context, req CancelOrderB
 	}
 	if coin == "" {
 		if h.logger != nil {
-			h.logger.Info("CancelOrderByMetadata missing coin", slog.String("metadata", md.Hex()))
+			h.logger.Info("CancelOrderByOrderId missing coin", slog.String("orderid", oid.Hex()))
 		}
-		return CancelOrderByMetadata404Response{}, nil
+		return CancelOrderByOrderId404Response{}, nil
 	}
 
-	status, haveStatus, err := h.store.LoadHyperliquidStatus(ctx, *md)
+	status, haveStatus, err := h.store.LoadHyperliquidStatus(ctx, *oid)
 	if err != nil {
 		if h.logger != nil {
-			h.logger.Error("CancelOrderByMetadata load status failed", slog.String("metadata", md.Hex()), slog.String("error", err.Error()))
+			h.logger.Error("CancelOrderByOrderId load status failed", slog.String("orderid", oid.Hex()), slog.String("error", err.Error()))
 		}
-		return CancelOrderByMetadata500Response{}, nil
+		return CancelOrderByOrderId500Response{}, nil
 	}
 	if haveStatus && !isCancelableStatus(status) {
 		if h.logger != nil {
-			h.logger.Info("CancelOrderByMetadata order not cancelable", slog.String("metadata", md.Hex()), slog.String("status", string(status.Status)))
+			h.logger.Info("CancelOrderByOrderId order not cancelable", slog.String("orderid", oid.Hex()), slog.String("status", string(status.Status)))
 		}
-		return CancelOrderByMetadata409Response{}, nil
+		return CancelOrderByOrderId409Response{}, nil
 	}
 
 	var (
@@ -734,24 +734,24 @@ func (h *ApiHandler) CancelOrderByMetadata(ctx context.Context, req CancelOrderB
 
 	cancelPayload := hyperliquid.CancelOrderRequestByCloid{
 		Coin:  coin,
-		Cloid: md.Hex(),
+		Cloid: oid.Hex(),
 	}
-	resp := CancelOrderByMetadataResponse{
-		Metadata: md.Hex(),
+	resp := CancelOrderByOrderIdResponse{
+		OrderId: oid.Hex(),
 		Cancel: &HyperliquidCancelOrder{
-			Coin:          cancelPayload.Coin,
-			ClientOrderId: cancelPayload.Cloid,
+			Coin:  cancelPayload.Coin,
+			Cloid: cancelPayload.Cloid,
 		},
 	}
 
 	if dryRun {
 		resp.Status = "validated"
 		resp.Message = strPtr("dry-run requested; cancel not enqueued")
-		return CancelOrderByMetadata202JSONResponse(resp), nil
+		return CancelOrderByOrderId202JSONResponse(resp), nil
 	}
 
 	work := recomma.OrderWork{
-		MD: *md,
+		OrderId: *oid,
 		Action: recomma.Action{
 			Type:   recomma.ActionCancel,
 			Cancel: &cancelPayload,
@@ -763,9 +763,9 @@ func (h *ApiHandler) CancelOrderByMetadata(ctx context.Context, req CancelOrderB
 
 	if err := h.orders.Emit(ctx, work); err != nil {
 		if h.logger != nil {
-			h.logger.Error("CancelOrderByMetadata emit failed", slog.String("metadata", md.Hex()), slog.String("error", err.Error()))
+			h.logger.Error("CancelOrderByOrderId emit failed", slog.String("orderid", oid.Hex()), slog.String("error", err.Error()))
 		}
-		return CancelOrderByMetadata500Response{}, nil
+		return CancelOrderByOrderId500Response{}, nil
 	}
 
 	resp.Status = "queued"
@@ -776,10 +776,10 @@ func (h *ApiHandler) CancelOrderByMetadata(ctx context.Context, req CancelOrderB
 	}
 
 	if h.logger != nil {
-		h.logger.Info("CancelOrderByMetadata queued", slog.String("metadata", md.Hex()), slog.String("coin", coin))
+		h.logger.Info("CancelOrderByOrderId queued", slog.String("orderid", oid.Hex()), slog.String("coin", coin))
 	}
 
-	return CancelOrderByMetadata202JSONResponse(resp), nil
+	return CancelOrderByOrderId202JSONResponse(resp), nil
 }
 
 // StreamOrders satisfies StrictServerInterface.
@@ -789,11 +789,11 @@ func (h *ApiHandler) StreamOrders(ctx context.Context, req StreamOrdersRequestOb
 	}
 
 	filter := StreamFilter{
-		MetadataPrefix: req.Params.Metadata,
-		BotID:          req.Params.BotId,
-		DealID:         req.Params.DealId,
-		BotEventID:     req.Params.BotEventId,
-		ObservedFrom:   req.Params.ObservedFrom,
+		OrderIdPrefix: req.Params.OrderId,
+		BotID:         req.Params.BotId,
+		DealID:        req.Params.DealId,
+		BotEventID:    req.Params.BotEventId,
+		ObservedFrom:  req.Params.ObservedFrom,
 	}
 
 	ch, err := h.stream.Subscribe(ctx, filter)
@@ -933,9 +933,9 @@ func (h *ApiHandler) StreamHyperliquidPrices(ctx context.Context, req StreamHype
 
 // writeSSEFrame marshals the event payload and writes an SSE-formatted frame.
 func (h *ApiHandler) writeSSEFrame(ctx context.Context, w io.Writer, evt StreamEvent) error {
-	ident := makeOrderIdentifiers(evt.Metadata, evt.BotEvent, evt.ObservedAt)
+	ident := makeOrderIdentifiers(evt.OrderId, evt.BotEvent, evt.ObservedAt)
 
-	entry, ok := h.makeOrderLogEntry(ctx, evt.Metadata, evt.ObservedAt, evt.Type, evt.BotEvent, evt.Submission, evt.Status, evt.ScalerConfig, evt.ScaledOrderAudit, evt.Actor, &ident, evt.Sequence)
+	entry, ok := h.makeOrderLogEntry(ctx, evt.OrderId, evt.ObservedAt, evt.Type, evt.BotEvent, evt.Submission, evt.Status, evt.ScalerConfig, evt.ScaledOrderAudit, evt.Actor, &ident, evt.Sequence)
 	if !ok {
 		return nil
 	}
@@ -1128,24 +1128,24 @@ type ListDealsOptions struct {
 }
 
 type ListOrdersOptions struct {
-	MetadataPrefix *string
-	BotID          *int64
-	DealID         *int64
-	BotEventID     *int64
-	ObservedFrom   *time.Time
-	ObservedTo     *time.Time
-	IncludeLog     bool
-	Limit          int
-	PageToken      string
+	OrderIdPrefix *string
+	BotID         *int64
+	DealID        *int64
+	BotEventID    *int64
+	ObservedFrom  *time.Time
+	ObservedTo    *time.Time
+	IncludeLog    bool
+	Limit         int
+	PageToken     string
 }
 
 type ListOrderScalersOptions struct {
-	MetadataPrefix *string
-	BotID          *int64
-	DealID         *int64
-	BotEventID     *int64
-	Limit          int
-	PageToken      string
+	OrderIdPrefix *string
+	BotID         *int64
+	DealID        *int64
+	BotEventID    *int64
+	Limit         int
+	PageToken     string
 }
 
 /* ---- streaming primitives ---- */
@@ -1156,7 +1156,7 @@ type BotItem struct {
 }
 
 type OrderItem struct {
-	Metadata         metadata.Metadata
+	OrderId          orderid.OrderId
 	ObservedAt       time.Time
 	BotEvent         *tc.BotEvent
 	LatestSubmission interface{}
@@ -1165,7 +1165,7 @@ type OrderItem struct {
 }
 
 type OrderScalerConfigItem struct {
-	Metadata   metadata.Metadata
+	OrderId    orderid.OrderId
 	ObservedAt time.Time
 	Actor      string
 	Config     EffectiveOrderScaler
@@ -1183,7 +1183,7 @@ const (
 
 type OrderLogItem struct {
 	Type         OrderLogEntryType
-	Metadata     metadata.Metadata
+	OrderId      orderid.OrderId
 	ObservedAt   time.Time
 	BotEvent     *tc.BotEvent
 	Submission   interface{}
@@ -1194,16 +1194,16 @@ type OrderLogItem struct {
 }
 
 type StreamFilter struct {
-	MetadataPrefix *string
-	BotID          *int64
-	DealID         *int64
-	BotEventID     *int64
-	ObservedFrom   *time.Time
+	OrderIdPrefix *string
+	BotID         *int64
+	DealID        *int64
+	BotEventID    *int64
+	ObservedFrom  *time.Time
 }
 
 type StreamEvent struct {
 	Type             OrderLogEntryType
-	Metadata         metadata.Metadata
+	OrderId          orderid.OrderId
 	ObservedAt       time.Time
 	BotEvent         *tc.BotEvent
 	Submission       interface{}
@@ -1214,16 +1214,16 @@ type StreamEvent struct {
 	Actor            *string
 }
 
-func makeOrderIdentifiers(md metadata.Metadata, event *tc.BotEvent, fallback time.Time) OrderIdentifiers {
+func makeOrderIdentifiers(oid orderid.OrderId, event *tc.BotEvent, fallback time.Time) OrderIdentifiers {
 	createdAt := fallback
 	if event != nil && !event.CreatedAt.IsZero() {
 		createdAt = event.CreatedAt
 	}
 	return OrderIdentifiers{
-		Hex:        md.Hex(),
-		BotId:      int64(md.BotID),
-		DealId:     int64(md.DealID),
-		BotEventId: int64(md.BotEventID),
+		Hex:        oid.Hex(),
+		BotId:      int64(oid.BotID),
+		DealId:     int64(oid.DealID),
+		BotEventId: int64(oid.BotEventID),
 		CreatedAt:  createdAt,
 	}
 }
@@ -1344,7 +1344,7 @@ func convertHyperliquidCreateOrder(req hyperliquid.CreateOrderRequest) Hyperliqu
 		OrderType:  convertHyperliquidOrderType(req.OrderType),
 	}
 	if req.ClientOrderID != nil {
-		order.ClientOrderId = req.ClientOrderID
+		order.Cloid = req.ClientOrderID
 	}
 	return order
 }
@@ -1381,25 +1381,25 @@ func convertHyperliquidModify(req hyperliquid.ModifyOrderRequest) (HyperliquidMo
 		action.Oid = &v
 	case string:
 		val := oid
-		action.ClientOrderId = &val
+		action.Cloid = &val
 	case *string:
 		if oid != nil {
 			val := *oid
-			action.ClientOrderId = &val
+			action.Cloid = &val
 		}
 	case fmt.Stringer:
 		val := oid.String()
-		action.ClientOrderId = &val
+		action.Cloid = &val
 	default:
 		// unknown identifier shape
 	}
 
-	if action.Oid == nil && action.ClientOrderId == nil && req.Order.ClientOrderID != nil {
+	if action.Oid == nil && action.Cloid == nil && req.Order.ClientOrderID != nil {
 		val := *req.Order.ClientOrderID
-		action.ClientOrderId = &val
+		action.Cloid = &val
 	}
 
-	if action.Oid == nil && action.ClientOrderId == nil {
+	if action.Oid == nil && action.Cloid == nil {
 		return HyperliquidModifyAction{}, false
 	}
 
@@ -1409,8 +1409,8 @@ func convertHyperliquidModify(req hyperliquid.ModifyOrderRequest) (HyperliquidMo
 func convertHyperliquidCancel(req hyperliquid.CancelOrderRequestByCloid) HyperliquidCancelAction {
 	return HyperliquidCancelAction{
 		Cancel: HyperliquidCancelOrder{
-			Coin:          req.Coin,
-			ClientOrderId: req.Cloid,
+			Coin:  req.Coin,
+			Cloid: req.Cloid,
 		},
 	}
 }
@@ -1421,14 +1421,14 @@ func convertHyperliquidWsOrder(src *hyperliquid.WsOrder) (HyperliquidWsOrder, bo
 	}
 
 	order := HyperliquidWsBasicOrder{
-		Coin:          src.Order.Coin,
-		Side:          src.Order.Side,
-		LimitPx:       src.Order.LimitPx,
-		Size:          src.Order.Sz,
-		Oid:           src.Order.Oid,
-		Timestamp:     src.Order.Timestamp,
-		OrigSize:      src.Order.OrigSz,
-		ClientOrderId: src.Order.Cloid,
+		Coin:      src.Order.Coin,
+		Side:      src.Order.Side,
+		LimitPx:   src.Order.LimitPx,
+		Size:      src.Order.Sz,
+		Oid:       src.Order.Oid,
+		Timestamp: src.Order.Timestamp,
+		OrigSize:  src.Order.OrigSz,
+		Cloid:     src.Order.Cloid,
 	}
 
 	return HyperliquidWsOrder{
@@ -1438,15 +1438,15 @@ func convertHyperliquidWsOrder(src *hyperliquid.WsOrder) (HyperliquidWsOrder, bo
 	}, true
 }
 
-func cloneIdentifiers(base *OrderIdentifiers, md metadata.Metadata, createdAt, fallback time.Time) *OrderIdentifiers {
+func cloneIdentifiers(base *OrderIdentifiers, oid orderid.OrderId, createdAt, fallback time.Time) *OrderIdentifiers {
 	var ident OrderIdentifiers
 	if base != nil {
 		ident = *base
 	}
-	ident.Hex = md.Hex()
-	ident.BotId = int64(md.BotID)
-	ident.DealId = int64(md.DealID)
-	ident.BotEventId = int64(md.BotEventID)
+	ident.Hex = oid.Hex()
+	ident.BotId = int64(oid.BotID)
+	ident.DealId = int64(oid.DealID)
+	ident.BotEventId = int64(oid.BotEventID)
 	if !createdAt.IsZero() {
 		ident.CreatedAt = createdAt
 	} else if ident.CreatedAt.IsZero() {
@@ -1455,11 +1455,11 @@ func cloneIdentifiers(base *OrderIdentifiers, md metadata.Metadata, createdAt, f
 	return &ident
 }
 
-func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata, observedAt time.Time, entryType OrderLogEntryType, botEvent *tc.BotEvent, submission interface{}, status *hyperliquid.WsOrder, config *EffectiveOrderScaler, audit *ScaledOrderAudit, actor *string, baseIdentifiers *OrderIdentifiers, sequence *int64) (OrderLogEntry, bool) {
-	metadataHex := md.Hex()
+func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, oid orderid.OrderId, observedAt time.Time, entryType OrderLogEntryType, botEvent *tc.BotEvent, submission interface{}, status *hyperliquid.WsOrder, config *EffectiveOrderScaler, audit *ScaledOrderAudit, actor *string, baseIdentifiers *OrderIdentifiers, sequence *int64) (OrderLogEntry, bool) {
+	oidHex := oid.Hex()
 	var entry OrderLogEntry
 	var botEventID *int64
-	if id := md.BotEventID; id != 0 {
+	if id := oid.BotEventID; id != 0 {
 		val := int64(id)
 		botEventID = &val
 	}
@@ -1470,16 +1470,16 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata
 	case ThreeCommasEvent:
 		if botEvent == nil {
 			h.logger.WarnContext(ctx, "missing bot event for log entry",
-				slog.String("metadata", metadataHex))
+				slog.String("orderid", oidHex))
 			return OrderLogEntry{}, false
 		}
 		logEntry := ThreeCommasLogEntry{
-			Metadata:   metadataHex,
+			OrderId:    oidHex,
 			ObservedAt: observedAt,
 			Event:      convertThreeCommasBotEvent(botEvent),
 			BotEventId: botEventID,
 		}
-		if identifiers := cloneIdentifiers(baseIdentifiers, md, botEvent.CreatedAt, observedAt); identifiers != nil {
+		if identifiers := cloneIdentifiers(baseIdentifiers, oid, botEvent.CreatedAt, observedAt); identifiers != nil {
 			logEntry.Identifiers = identifiers
 		}
 		if sequence != nil {
@@ -1487,7 +1487,7 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata
 		}
 		if err := entry.FromThreeCommasLogEntry(logEntry); err != nil {
 			h.logger.WarnContext(ctx, "marshal threecommas log entry",
-				slog.String("metadata", metadataHex),
+				slog.String("orderid", oidHex),
 				slog.String("error", err.Error()))
 			return OrderLogEntry{}, false
 		}
@@ -1495,16 +1495,16 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata
 		action, ok := convertHyperliquidAction(submission)
 		if !ok {
 			h.logger.WarnContext(ctx, "unexpected submission payload",
-				slog.String("metadata", metadataHex))
+				slog.String("orderid", oidHex))
 			return OrderLogEntry{}, false
 		}
 		logEntry := HyperliquidSubmissionLogEntry{
-			Metadata:   metadataHex,
+			OrderId:    oidHex,
 			ObservedAt: observedAt,
 			Action:     action,
 			BotEventId: botEventID,
 		}
-		if identifiers := cloneIdentifiers(baseIdentifiers, md, createdAt(botEvent), observedAt); identifiers != nil {
+		if identifiers := cloneIdentifiers(baseIdentifiers, oid, createdAt(botEvent), observedAt); identifiers != nil {
 			logEntry.Identifiers = identifiers
 		}
 		if sequence != nil {
@@ -1512,7 +1512,7 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata
 		}
 		if err := entry.FromHyperliquidSubmissionLogEntry(logEntry); err != nil {
 			h.logger.WarnContext(ctx, "marshal hyperliquid submission log entry",
-				slog.String("metadata", metadataHex),
+				slog.String("orderid", oidHex),
 				slog.String("error", err.Error()))
 			return OrderLogEntry{}, false
 		}
@@ -1520,16 +1520,16 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata
 		ws, ok := convertHyperliquidWsOrder(status)
 		if !ok {
 			h.logger.WarnContext(ctx, "missing hyperliquid status payload",
-				slog.String("metadata", metadataHex))
+				slog.String("orderid", oidHex))
 			return OrderLogEntry{}, false
 		}
 		logEntry := HyperliquidStatusLogEntry{
-			Metadata:   metadataHex,
+			OrderId:    oidHex,
 			ObservedAt: observedAt,
 			Status:     ws,
 			BotEventId: botEventID,
 		}
-		if identifiers := cloneIdentifiers(baseIdentifiers, md, createdAt(botEvent), observedAt); identifiers != nil {
+		if identifiers := cloneIdentifiers(baseIdentifiers, oid, createdAt(botEvent), observedAt); identifiers != nil {
 			logEntry.Identifiers = identifiers
 		}
 		if sequence != nil {
@@ -1537,14 +1537,14 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata
 		}
 		if err := entry.FromHyperliquidStatusLogEntry(logEntry); err != nil {
 			h.logger.WarnContext(ctx, "marshal hyperliquid status log entry",
-				slog.String("metadata", metadataHex),
+				slog.String("orderid", oidHex),
 				slog.String("error", err.Error()))
 			return OrderLogEntry{}, false
 		}
 	case OrderScalerConfigEntry:
 		if clampedConfig == nil {
 			h.logger.WarnContext(ctx, "missing scaler config payload",
-				slog.String("metadata", metadataHex))
+				slog.String("orderid", oidHex))
 			return OrderLogEntry{}, false
 		}
 		actorVal := ""
@@ -1552,12 +1552,12 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata
 			actorVal = *actor
 		}
 		logEntry := OrderScalerConfigLogEntry{
-			Metadata:   metadataHex,
+			OrderId:    oidHex,
 			ObservedAt: observedAt,
 			Config:     *clampedConfig,
 			Actor:      actorVal,
 		}
-		if identifiers := cloneIdentifiers(baseIdentifiers, md, observedAt, observedAt); identifiers != nil {
+		if identifiers := cloneIdentifiers(baseIdentifiers, oid, observedAt, observedAt); identifiers != nil {
 			logEntry.Identifiers = identifiers
 		}
 		if sequence != nil {
@@ -1565,14 +1565,14 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata
 		}
 		if err := entry.FromOrderScalerConfigLogEntry(logEntry); err != nil {
 			h.logger.WarnContext(ctx, "marshal scaler config log entry",
-				slog.String("metadata", metadataHex),
+				slog.String("orderid", oidHex),
 				slog.String("error", err.Error()))
 			return OrderLogEntry{}, false
 		}
 	case ScaledOrderAuditEntry:
 		if audit == nil {
 			h.logger.WarnContext(ctx, "missing scaled order audit payload",
-				slog.String("metadata", metadataHex))
+				slog.String("orderid", oidHex))
 			return OrderLogEntry{}, false
 		}
 		actorVal := ""
@@ -1580,7 +1580,7 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata
 			actorVal = *actor
 		}
 		logEntry := ScaledOrderAuditLogEntry{
-			Metadata:   metadataHex,
+			OrderId:    oidHex,
 			ObservedAt: observedAt,
 			Audit:      *audit,
 			Actor:      actorVal,
@@ -1589,7 +1589,7 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata
 			cfgCopy := *clampedConfig
 			logEntry.Effective = &cfgCopy
 		}
-		if identifiers := cloneIdentifiers(baseIdentifiers, md, createdAt(botEvent), observedAt); identifiers != nil {
+		if identifiers := cloneIdentifiers(baseIdentifiers, oid, createdAt(botEvent), observedAt); identifiers != nil {
 			logEntry.Identifiers = identifiers
 		}
 		if sequence != nil {
@@ -1597,13 +1597,13 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, md metadata.Metadata
 		}
 		if err := entry.FromScaledOrderAuditLogEntry(logEntry); err != nil {
 			h.logger.WarnContext(ctx, "marshal scaled order audit log entry",
-				slog.String("metadata", metadataHex),
+				slog.String("orderid", oidHex),
 				slog.String("error", err.Error()))
 			return OrderLogEntry{}, false
 		}
 	default:
 		h.logger.WarnContext(ctx, "unknown log entry type",
-			slog.String("metadata", metadataHex),
+			slog.String("orderid", oidHex),
 			slog.String("type", string(entryType)))
 		return OrderLogEntry{}, false
 	}

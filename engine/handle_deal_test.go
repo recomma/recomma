@@ -12,7 +12,7 @@ import (
 	"github.com/recomma/recomma/filltracker"
 	"github.com/recomma/recomma/hl"
 	"github.com/recomma/recomma/internal/testutil"
-	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
@@ -84,7 +84,7 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 	)
 	base := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	activeEvent, activeMD := testutil.NewBotEvent(t, base, botID, dealID)
+	activeEvent, activeOid := testutil.NewBotEvent(t, base, botID, dealID)
 	modifyEvent, _ := testutil.NewBotEvent(
 		t,
 		base.Add(30*time.Second),
@@ -134,7 +134,7 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 			name:   "cancel emitted after local create",
 			events: []tc.BotEvent{cancelEvent(base.Add(2 * time.Minute))},
 			prepare: func(t *testing.T, h *harness) {
-				inserted, err := h.store.RecordThreeCommasBotEvent(h.ctx, activeMD, activeEvent)
+				inserted, err := h.store.RecordThreeCommasBotEvent(h.ctx, activeOid, activeEvent)
 				require.NoError(t, err)
 				require.NotZero(t, inserted)
 
@@ -143,8 +143,8 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 					BotEvent: activeEvent,
 				}
 
-				createReq := adapter.ToCreateOrderRequest(h.deal.ToCurrency, be, activeMD)
-				require.NoError(t, h.store.RecordHyperliquidOrderRequest(h.ctx, activeMD, createReq, inserted))
+				createReq := adapter.ToCreateOrderRequest(h.deal.ToCurrency, be, activeOid)
+				require.NoError(t, h.store.RecordHyperliquidOrderRequest(h.ctx, activeOid, createReq, inserted))
 			},
 			wantActions: []recomma.ActionType{recomma.ActionCancel},
 			wantStatuses: []tc.MarketOrderStatusString{
@@ -156,7 +156,7 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 			name:   "modify emitted after local create",
 			events: []tc.BotEvent{modifyEvent},
 			prepare: func(t *testing.T, h *harness) {
-				inserted, err := h.store.RecordThreeCommasBotEvent(h.ctx, activeMD, activeEvent)
+				inserted, err := h.store.RecordThreeCommasBotEvent(h.ctx, activeOid, activeEvent)
 				require.NoError(t, err)
 				require.NotZero(t, inserted)
 
@@ -165,8 +165,8 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 					BotEvent: activeEvent,
 				}
 
-				createReq := adapter.ToCreateOrderRequest(h.deal.ToCurrency, be, activeMD)
-				require.NoError(t, h.store.RecordHyperliquidOrderRequest(h.ctx, activeMD, createReq, inserted))
+				createReq := adapter.ToCreateOrderRequest(h.deal.ToCurrency, be, activeOid)
+				require.NoError(t, h.store.RecordHyperliquidOrderRequest(h.ctx, activeOid, createReq, inserted))
 			},
 			wantActions: []recomma.ActionType{recomma.ActionModify},
 			wantStatuses: []tc.MarketOrderStatusString{
@@ -232,16 +232,16 @@ func TestProcessDeal_TakeProfitSizedFromTracker(t *testing.T) {
 		ToCurrency: coin,
 	}))
 
-	baseEvent, baseMD := testutil.NewBotEvent(t, base, botID, dealID,
+	baseEvent, baseOid := testutil.NewBotEvent(t, base, botID, dealID,
 		testutil.WithAction(tc.BotEventActionExecute),
 		testutil.WithStatus(tc.MarketOrderStatusString(tc.Filled)),
 		testutil.WithPrice(10),
 		testutil.WithSize(5),
 		testutil.WithOrderType(tc.MarketOrderDealOrderTypeBase),
 	)
-	_, err := h.store.RecordThreeCommasBotEvent(h.ctx, baseMD, baseEvent)
+	_, err := h.store.RecordThreeCommasBotEvent(h.ctx, baseOid, baseEvent)
 	require.NoError(t, err)
-	require.NoError(t, h.store.RecordHyperliquidStatus(h.ctx, baseMD, makeWsStatus(baseMD, coin, "B", hyperliquid.OrderStatusValueFilled, 5, 0, 10, base.Add(time.Second))))
+	require.NoError(t, h.store.RecordHyperliquidStatus(h.ctx, baseOid, makeWsStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 5, 0, 10, base.Add(time.Second))))
 
 	tracker := filltracker.New(h.store, nil)
 	require.NoError(t, tracker.Rebuild(h.ctx))
@@ -284,7 +284,7 @@ func TestProcessDeal_AppliesOrderScaler(t *testing.T) {
 	require.NoError(t, err)
 
 	base := time.Now().UTC()
-	event, md := testutil.NewBotEvent(t, base, botID, dealID,
+	event, oid := testutil.NewBotEvent(t, base, botID, dealID,
 		testutil.WithPrice(12.34),
 		testutil.WithSize(2.0),
 	)
@@ -299,7 +299,7 @@ func TestProcessDeal_AppliesOrderScaler(t *testing.T) {
 	require.InDelta(t, 12.34, work.Action.Create.Price, 1e-6)
 	require.InDelta(t, 1.0, work.BotEvent.Size, 1e-6)
 
-	audits, err := h.store.ListScaledOrdersByMetadata(ctx, md)
+	audits, err := h.store.ListScaledOrdersByOrderId(ctx, oid)
 	require.NoError(t, err)
 	require.Len(t, audits, 1)
 	require.InDelta(t, 2.0, audits[0].OriginalSize, 1e-6)
@@ -325,7 +325,7 @@ func TestProcessDeal_ScaledOrderBelowMinimumRecordsAudit(t *testing.T) {
 	require.NoError(t, err)
 
 	base := time.Now().UTC()
-	event, md := testutil.NewBotEvent(t, base, botID, dealID,
+	event, oid := testutil.NewBotEvent(t, base, botID, dealID,
 		testutil.WithPrice(10.0),
 		testutil.WithSize(1.0),
 	)
@@ -335,7 +335,7 @@ func TestProcessDeal_ScaledOrderBelowMinimumRecordsAudit(t *testing.T) {
 
 	require.Empty(t, h.emitter.items)
 
-	audits, listErr := h.store.ListScaledOrdersByMetadata(ctx, md)
+	audits, listErr := h.store.ListScaledOrdersByOrderId(ctx, oid)
 	require.NoError(t, listErr)
 	require.Len(t, audits, 1)
 	require.True(t, audits[0].Skipped)
@@ -343,7 +343,7 @@ func TestProcessDeal_ScaledOrderBelowMinimumRecordsAudit(t *testing.T) {
 	require.Contains(t, *audits[0].SkipReason, "below minimum notional")
 }
 
-func makeWsStatus(md metadata.Metadata, coin, side string, status hyperliquid.OrderStatusValue, original, remaining, limit float64, ts time.Time) hyperliquid.WsOrder {
+func makeWsStatus(oid orderid.OrderId, coin, side string, status hyperliquid.OrderStatusValue, original, remaining, limit float64, ts time.Time) hyperliquid.WsOrder {
 	return hyperliquid.WsOrder{
 		Order: hyperliquid.WsBasicOrder{
 			Coin:      coin,
@@ -353,7 +353,7 @@ func makeWsStatus(md metadata.Metadata, coin, side string, status hyperliquid.Or
 			Oid:       ts.UnixNano(),
 			Timestamp: ts.UnixMilli(),
 			OrigSz:    formatFloat(original),
-			Cloid:     md.HexAsPointer(),
+			Cloid:     oid.HexAsPointer(),
 		},
 		Status:          status,
 		StatusTimestamp: ts.UnixMilli(),

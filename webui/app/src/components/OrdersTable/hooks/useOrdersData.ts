@@ -4,8 +4,8 @@ import type { DealRecord, ListDealsResponse, ListOrdersResponse, OrderFilterStat
 import { buildOpsApiUrl } from '../../../config/opsApi';
 import type { FetchOrdersOptions } from '../types';
 import { DEFAULT_FETCH_LIMIT } from '../constants';
-import { createOrderQueryParams, extractMetadataFromEvent } from '../utils/queryParams';
-import { getMetadataHex } from '../utils/orderFieldExtractors';
+import { createOrderQueryParams, extractOrderIdFromEvent as extractOrderIdFromEvent } from '../utils/queryParams';
+import { getOrderIdHex } from '../utils/orderFieldExtractors';
 import { generateMockOrders } from '../mockData';
 import { attachOrderStreamHandlers } from '../../../utils/orderStream';
 
@@ -97,10 +97,10 @@ export function useOrdersData(filters: OrderFilterState) {
     }
   }, []);
 
-  const refreshOrdersForMetadata = useCallback(
-    async (metadata: string) => {
+  const refreshOrdersForOrderId = useCallback(
+    async (order_id: string) => {
       const params = createOrderQueryParams(filters, { includeLimit: false });
-      params.set('metadata', metadata);
+      params.set('order_id', order_id);
       params.append('limit', String(DEFAULT_FETCH_LIMIT));
 
       const url = buildOpsApiUrl(`/api/orders?${params.toString()}`);
@@ -121,14 +121,14 @@ export function useOrdersData(filters: OrderFilterState) {
         }
 
         const updatedItems = data.items ?? [];
-        const metadataKeys =
+        const orderIdKeys =
           updatedItems.length > 0
-            ? new Set(updatedItems.map((order) => getMetadataHex(order)))
-            : new Set([metadata]);
+            ? new Set(updatedItems.map((order) => getOrderIdHex(order)))
+            : new Set([order_id]);
 
         setOrders((previous) => {
           const remaining = previous.filter(
-            (order) => !metadataKeys.has(getMetadataHex(order)),
+            (order) => !orderIdKeys.has(getOrderIdHex(order)),
           );
 
           if (updatedItems.length === 0) {
@@ -198,9 +198,9 @@ export function useOrdersData(filters: OrderFilterState) {
           abortController.abort();
         }
 
-        const metadata = extractMetadataFromEvent(event.data);
-        if (metadata) {
-          toast.info(`Order ${metadata} updated`);
+        const order_id = extractOrderIdFromEvent(event.data);
+        if (order_id) {
+          toast.info(`Order ${order_id} updated`);
         } else {
           toast.info('Order updated in real-time');
         }
@@ -211,8 +211,8 @@ export function useOrdersData(filters: OrderFilterState) {
           void fetchDeals();
         };
 
-        if (metadata) {
-          const refreshPromise = refreshOrdersForMetadata(metadata);
+        if (order_id) {
+          const refreshPromise = refreshOrdersForOrderId(order_id);
           refreshPromise.finally(() => {
             if (pendingFullReloadRef.current) {
               runFullReload();
@@ -239,12 +239,12 @@ export function useOrdersData(filters: OrderFilterState) {
       detachHandlers?.();
       eventSource?.close();
     };
-  }, [fetchOrders, fetchDeals, filters, refreshOrdersForMetadata]);
+  }, [fetchOrders, fetchDeals, filters, refreshOrdersForOrderId]);
 
   return {
     orders,
     deals,
     loading,
-    refreshOrdersForMetadata,
+    refreshOrdersForMetadata: refreshOrdersForOrderId,
   };
 }

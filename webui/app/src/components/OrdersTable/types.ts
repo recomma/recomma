@@ -13,7 +13,7 @@ export const statusToneClasses: Record<StatusTone, string> = {
 export type SideVariant = 'buy' | 'sell' | 'neutral';
 
 export type OrderColumnKey =
-  | 'metadata'
+  | 'orderId'
   | 'botId'
   | 'dealId'
   | 'orderType'
@@ -29,7 +29,7 @@ export type OrderColumnKey =
 export type OrderRow = {
   rowType: 'order';
   id: string;
-  metadata: string;
+  orderId: string;
   botId: string;
   dealId: string;
   orderType: string;
@@ -57,8 +57,8 @@ export type DealGroupRow = {
   botId: string;
   deal: DealRecord | null;
   orderCount: number;
-  metadataHashes: Set<string>;
-  metadata: string; // For column compatibility
+  orderIds: Set<string>;
+  orderId: string; // For column compatibility
   orderType: string;
   orderPosition: string;
   side: string;

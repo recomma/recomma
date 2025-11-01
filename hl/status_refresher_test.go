@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/orderid"
 	"github.com/sonirico/go-hyperliquid"
 	"github.com/stretchr/testify/require"
 )
@@ -28,29 +28,29 @@ func (f *fakeInfo) QueryOrderByCloid(_ context.Context, cloid string) (*hyperliq
 
 type fakeStatusStore struct {
 	mu      sync.Mutex
-	mds     []metadata.Metadata
+	oids    []orderid.OrderId
 	records map[string]hyperliquid.WsOrder
 }
 
-func (s *fakeStatusStore) ListHyperliquidMetadata(context.Context) ([]metadata.Metadata, error) {
-	return append([]metadata.Metadata(nil), s.mds...), nil
+func (s *fakeStatusStore) ListHyperliquidOrderIds(context.Context) ([]orderid.OrderId, error) {
+	return append([]orderid.OrderId(nil), s.oids...), nil
 }
 
-func (s *fakeStatusStore) RecordHyperliquidStatus(_ context.Context, md metadata.Metadata, status hyperliquid.WsOrder) error {
+func (s *fakeStatusStore) RecordHyperliquidStatus(_ context.Context, oid orderid.OrderId, status hyperliquid.WsOrder) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.records == nil {
 		s.records = make(map[string]hyperliquid.WsOrder)
 	}
-	s.records[md.Hex()] = status
+	s.records[oid.Hex()] = status
 	return nil
 }
 
 func TestStatusRefresherRefresh(t *testing.T) {
 	ctx := context.Background()
 
-	md := metadata.Metadata{BotID: 1, DealID: 2, BotEventID: 3}
-	cloid := md.Hex()
+	oid := orderid.OrderId{BotID: 1, DealID: 2, BotEventID: 3}
+	cloid := oid.Hex()
 
 	fillResult := &hyperliquid.OrderQueryResult{
 		Status: hyperliquid.OrderQueryStatusSuccess,
@@ -76,7 +76,7 @@ func TestStatusRefresherRefresh(t *testing.T) {
 		},
 	}
 
-	store := &fakeStatusStore{mds: []metadata.Metadata{md}}
+	store := &fakeStatusStore{oids: []orderid.OrderId{oid}}
 
 	refresher := NewStatusRefresher(info, store, WithStatusRefresherConcurrency(1))
 
@@ -85,7 +85,7 @@ func TestStatusRefresherRefresh(t *testing.T) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
-	recorded, ok := store.records[md.Hex()]
+	recorded, ok := store.records[oid.Hex()]
 	require.True(t, ok)
 	require.Equal(t, hyperliquid.OrderStatusValueFilled, recorded.Status)
 	require.Equal(t, cloid, *recorded.Order.Cloid)

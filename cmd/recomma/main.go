@@ -228,7 +228,7 @@ func main() {
 		Wallet:  secrets.Secrets.HYPERLIQUIDWALLET,
 	})
 
-	constraints := hl.NewMetadataCache(info)
+	constraints := hl.NewOrderIdCache(info)
 	scaler := orderscaler.New(store, constraints, logger, orderscaler.WithMaxMultiplier(cfg.OrderScalerMaxMultiplier))
 
 	fillTracker := filltracker.New(store, logger)

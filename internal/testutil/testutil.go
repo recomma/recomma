@@ -6,13 +6,13 @@ import (
 	"time"
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
-	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/orderid"
 )
 
 type EventOpt func(*tc.BotEvent)
 
 func NewBotEvent(t *testing.T, base time.Time, botID uint32,
-	dealID uint32, opts ...EventOpt) (tc.BotEvent, metadata.Metadata) {
+	dealID uint32, opts ...EventOpt) (tc.BotEvent, orderid.OrderId) {
 	t.Helper()
 
 	evt := tc.BotEvent{
@@ -31,12 +31,12 @@ func NewBotEvent(t *testing.T, base time.Time, botID uint32,
 	for _, opt := range opts {
 		opt(&evt)
 	}
-	md := metadata.Metadata{
+	oid := orderid.OrderId{
 		BotID:      uint32(botID),
 		DealID:     uint32(dealID),
 		BotEventID: evt.FingerprintAsID(),
 	}
-	return evt, md
+	return evt, oid
 }
 
 // Modifiers

@@ -15,7 +15,7 @@ import (
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/internal/api"
-	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage/sqlcgen"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
@@ -91,7 +91,7 @@ func (s *Storage) Close() error {
 }
 
 // RecordThreeCommasBotEvent records the threecommas botevents that we acted upon
-func (s *Storage) RecordThreeCommasBotEvent(ctx context.Context, md metadata.Metadata, order tc.BotEvent) (lastInsertId int64, err error) {
+func (s *Storage) RecordThreeCommasBotEvent(ctx context.Context, oid orderid.OrderId, order tc.BotEvent) (lastInsertId int64, err error) {
 	raw, err := json.Marshal(order)
 	if err != nil {
 		return 0, err
@@ -101,10 +101,10 @@ func (s *Storage) RecordThreeCommasBotEvent(ctx context.Context, md metadata.Met
 	defer s.mu.Unlock()
 
 	params := sqlcgen.InsertThreeCommasBotEventParams{
-		Md:           md.Hex(),
-		BotID:        int64(md.BotID),
-		DealID:       int64(md.DealID),
-		BoteventID:   int64(md.BotEventID),
+		OrderID:      oid.Hex(),
+		BotID:        int64(oid.BotID),
+		DealID:       int64(oid.DealID),
+		BoteventID:   int64(oid.BotEventID),
 		CreatedAtUtc: order.CreatedAt.UTC().UnixMilli(),
 		Payload:      raw,
 	}
@@ -118,7 +118,7 @@ func (s *Storage) RecordThreeCommasBotEvent(ctx context.Context, md metadata.Met
 		clone := order
 		s.publishStreamEventLocked(api.StreamEvent{
 			Type:     api.ThreeCommasEvent,
-			Metadata: md,
+			OrderId:  oid,
 			BotEvent: &clone,
 		})
 	}
@@ -127,7 +127,7 @@ func (s *Storage) RecordThreeCommasBotEvent(ctx context.Context, md metadata.Met
 }
 
 // RecordThreeCommasBotEvent records all threecommas botevents, acted upon or not
-func (s *Storage) RecordThreeCommasBotEventLog(ctx context.Context, md metadata.Metadata, order tc.BotEvent) (lastInsertId int64, err error) {
+func (s *Storage) RecordThreeCommasBotEventLog(ctx context.Context, oid orderid.OrderId, order tc.BotEvent) (lastInsertId int64, err error) {
 	raw, err := json.Marshal(order)
 	if err != nil {
 		return 0, err
@@ -137,10 +137,10 @@ func (s *Storage) RecordThreeCommasBotEventLog(ctx context.Context, md metadata.
 	defer s.mu.Unlock()
 
 	params := sqlcgen.InsertThreeCommasBotEventLogParams{
-		Md:           md.Hex(),
-		BotID:        int64(md.BotID),
-		DealID:       int64(md.DealID),
-		BoteventID:   int64(md.BotEventID),
+		OrderID:      oid.Hex(),
+		BotID:        int64(oid.BotID),
+		DealID:       int64(oid.DealID),
+		BoteventID:   int64(oid.BotEventID),
 		CreatedAtUtc: order.CreatedAt.UTC().UnixMilli(),
 		Payload:      raw,
 	}
@@ -197,9 +197,9 @@ func (s *Storage) ListEventsLog(ctx context.Context) ([]recomma.BotEventLog, err
 		if err := json.Unmarshal(row.Payload, &evt); err != nil {
 			return nil, fmt.Errorf("decode bot event: %w", err)
 		}
-		md, err := metadata.FromHexString(row.Md)
+		oid, err := orderid.FromHexString(row.OrderID)
 		if err != nil {
-			return nil, fmt.Errorf("decode metadata: %w", err)
+			return nil, fmt.Errorf("decode orderid: %w", err)
 		}
 		events = append(events, recomma.BotEventLog{
 			RowID:      row.ID,
@@ -207,7 +207,7 @@ func (s *Storage) ListEventsLog(ctx context.Context) ([]recomma.BotEventLog, err
 			BotID:      row.BotID,
 			DealID:     row.DealID,
 			BoteventID: row.BoteventID,
-			Md:         *md,
+			OrderId:    *oid,
 			CreatedAt:  time.UnixMilli(row.CreatedAtUtc).UTC(),
 			ObservedAt: time.UnixMilli(row.ObservedAtUtc).UTC(),
 		})
@@ -216,11 +216,11 @@ func (s *Storage) ListEventsLog(ctx context.Context) ([]recomma.BotEventLog, err
 	return events, nil
 }
 
-func (s *Storage) HasMetadata(ctx context.Context, md metadata.Metadata) (bool, error) {
+func (s *Storage) HasOrderId(ctx context.Context, oid orderid.OrderId) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	exists, err := s.queries.HasThreeCommasMetadata(ctx, md.Hex())
+	exists, err := s.queries.HasThreeCommasOrderId(ctx, oid.Hex())
 	if err != nil {
 		return false, err
 	}
@@ -228,11 +228,11 @@ func (s *Storage) HasMetadata(ctx context.Context, md metadata.Metadata) (bool, 
 	return exists == 1, nil
 }
 
-func (s *Storage) LoadThreeCommasBotEvent(ctx context.Context, md metadata.Metadata) (*tc.BotEvent, error) {
+func (s *Storage) LoadThreeCommasBotEvent(ctx context.Context, oid orderid.OrderId) (*tc.BotEvent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	payload, err := s.queries.FetchThreeCommasBotEvent(ctx, md.Hex())
+	payload, err := s.queries.FetchThreeCommasBotEvent(ctx, oid.Hex())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -248,7 +248,7 @@ func (s *Storage) LoadThreeCommasBotEvent(ctx context.Context, md metadata.Metad
 	return &order, nil
 }
 
-func (s *Storage) RecordHyperliquidOrderRequest(ctx context.Context, md metadata.Metadata, req hyperliquid.CreateOrderRequest, boteventRowId int64) error {
+func (s *Storage) RecordHyperliquidOrderRequest(ctx context.Context, oid orderid.OrderId, req hyperliquid.CreateOrderRequest, boteventRowId int64) error {
 	raw, err := json.Marshal(req)
 	if err != nil {
 		return err
@@ -258,7 +258,7 @@ func (s *Storage) RecordHyperliquidOrderRequest(ctx context.Context, md metadata
 	defer s.mu.Unlock()
 
 	params := sqlcgen.UpsertHyperliquidCreateParams{
-		Md:            md.Hex(),
+		OrderID:       oid.Hex(),
 		CreatePayload: raw,
 		BoteventRowID: boteventRowId,
 	}
@@ -267,11 +267,11 @@ func (s *Storage) RecordHyperliquidOrderRequest(ctx context.Context, md metadata
 		return err
 	}
 
-	s.publishHyperliquidSubmissionLocked(ctx, md, req, boteventRowId)
+	s.publishHyperliquidSubmissionLocked(ctx, oid, req, boteventRowId)
 	return nil
 }
 
-func (s *Storage) AppendHyperliquidModify(ctx context.Context, md metadata.Metadata, req hyperliquid.ModifyOrderRequest, boteventRowId int64) error {
+func (s *Storage) AppendHyperliquidModify(ctx context.Context, oid orderid.OrderId, req hyperliquid.ModifyOrderRequest, boteventRowId int64) error {
 	raw, err := json.Marshal(req)
 	if err != nil {
 		return err
@@ -281,7 +281,7 @@ func (s *Storage) AppendHyperliquidModify(ctx context.Context, md metadata.Metad
 	defer s.mu.Unlock()
 
 	params := sqlcgen.AppendHyperliquidModifyParams{
-		Md:            md.Hex(),
+		OrderID:       oid.Hex(),
 		ModifyPayload: raw,
 		BoteventRowID: boteventRowId,
 	}
@@ -290,11 +290,11 @@ func (s *Storage) AppendHyperliquidModify(ctx context.Context, md metadata.Metad
 		return err
 	}
 
-	s.publishHyperliquidSubmissionLocked(ctx, md, req, boteventRowId)
+	s.publishHyperliquidSubmissionLocked(ctx, oid, req, boteventRowId)
 	return nil
 }
 
-func (s *Storage) RecordHyperliquidCancel(ctx context.Context, md metadata.Metadata, req hyperliquid.CancelOrderRequestByCloid, boteventRowId int64) error {
+func (s *Storage) RecordHyperliquidCancel(ctx context.Context, oid orderid.OrderId, req hyperliquid.CancelOrderRequestByCloid, boteventRowId int64) error {
 	raw, err := json.Marshal(req)
 	if err != nil {
 		return err
@@ -304,7 +304,7 @@ func (s *Storage) RecordHyperliquidCancel(ctx context.Context, md metadata.Metad
 	defer s.mu.Unlock()
 
 	params := sqlcgen.UpsertHyperliquidCancelParams{
-		Md:            md.Hex(),
+		OrderID:       oid.Hex(),
 		CancelPayload: raw,
 		BoteventRowID: boteventRowId,
 	}
@@ -313,11 +313,11 @@ func (s *Storage) RecordHyperliquidCancel(ctx context.Context, md metadata.Metad
 		return err
 	}
 
-	s.publishHyperliquidSubmissionLocked(ctx, md, req, boteventRowId)
+	s.publishHyperliquidSubmissionLocked(ctx, oid, req, boteventRowId)
 	return nil
 }
 
-func (s *Storage) RecordHyperliquidStatus(ctx context.Context, md metadata.Metadata, status hyperliquid.WsOrder) error {
+func (s *Storage) RecordHyperliquidStatus(ctx context.Context, oid orderid.OrderId, status hyperliquid.WsOrder) error {
 	raw, err := json.Marshal(status)
 	if err != nil {
 		return err
@@ -327,7 +327,7 @@ func (s *Storage) RecordHyperliquidStatus(ctx context.Context, md metadata.Metad
 	defer s.mu.Unlock()
 
 	params := sqlcgen.InsertHyperliquidStatusParams{
-		Md:            md.Hex(),
+		OrderID:       oid.Hex(),
 		Status:        raw,
 		RecordedAtUtc: time.Now().UTC().UnixMilli(),
 	}
@@ -338,16 +338,16 @@ func (s *Storage) RecordHyperliquidStatus(ctx context.Context, md metadata.Metad
 
 	copy := status
 	s.publishStreamEventLocked(api.StreamEvent{
-		Type:     api.HyperliquidStatus,
-		Metadata: md,
-		Status:   &copy,
+		Type:    api.HyperliquidStatus,
+		OrderId: oid,
+		Status:  &copy,
 	})
 
 	return nil
 }
 
-func (s *Storage) loadLatestHyperliquidStatusLocked(ctx context.Context, md metadata.Metadata) (*hyperliquid.WsOrder, bool, error) {
-	payload, err := s.queries.FetchLatestHyperliquidStatus(ctx, md.Hex())
+func (s *Storage) loadLatestHyperliquidStatusLocked(ctx context.Context, oid orderid.OrderId) (*hyperliquid.WsOrder, bool, error) {
+	payload, err := s.queries.FetchLatestHyperliquidStatus(ctx, oid.Hex())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -363,7 +363,7 @@ func (s *Storage) loadLatestHyperliquidStatusLocked(ctx context.Context, md meta
 	return &decoded, true, nil
 }
 
-func (s *Storage) publishHyperliquidSubmissionLocked(ctx context.Context, md metadata.Metadata, submission interface{}, boteventRowID int64) {
+func (s *Storage) publishHyperliquidSubmissionLocked(ctx context.Context, oid orderid.OrderId, submission interface{}, boteventRowID int64) {
 	if s.stream == nil || submission == nil {
 		return
 	}
@@ -377,7 +377,7 @@ func (s *Storage) publishHyperliquidSubmissionLocked(ctx context.Context, md met
 
 	s.publishStreamEventLocked(api.StreamEvent{
 		Type:       api.HyperliquidSubmission,
-		Metadata:   md,
+		OrderId:    oid,
 		BotEvent:   botEvent,
 		Submission: submission,
 	})
@@ -408,11 +408,11 @@ func (s *Storage) publishStreamEventLocked(evt api.StreamEvent) {
 	s.stream.Publish(evt)
 }
 
-func (s *Storage) ListHyperliquidStatuses(ctx context.Context, md metadata.Metadata) ([]hyperliquid.WsOrder, error) {
+func (s *Storage) ListHyperliquidStatuses(ctx context.Context, oid orderid.OrderId) ([]hyperliquid.WsOrder, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rows, err := s.queries.ListHyperliquidStatuses(ctx, md.Hex())
+	rows, err := s.queries.ListHyperliquidStatuses(ctx, oid.Hex())
 	if err != nil {
 		return nil, err
 	}
@@ -429,51 +429,51 @@ func (s *Storage) ListHyperliquidStatuses(ctx context.Context, md metadata.Metad
 	return out, nil
 }
 
-// ListHyperliquidMetadata returns the metadata fingerprints we have submitted to Hyperliquid.
-func (s *Storage) ListHyperliquidMetadata(ctx context.Context) ([]metadata.Metadata, error) {
+// ListHyperliquidOrderIds returns the OrderId fingerprints we have submitted to Hyperliquid.
+func (s *Storage) ListHyperliquidOrderIds(ctx context.Context) ([]orderid.OrderId, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rows, err := s.queries.ListHyperliquidMetadata(ctx)
+	rows, err := s.queries.ListHyperliquidOrderIds(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	out := make([]metadata.Metadata, 0, len(rows))
+	out := make([]orderid.OrderId, 0, len(rows))
 	for _, hex := range rows {
 		if hex == "" {
 			continue
 		}
-		md, err := metadata.FromHexString(hex)
+		oid, err := orderid.FromHexString(hex)
 		if err != nil {
-			return nil, fmt.Errorf("decode metadata %q: %w", hex, err)
+			return nil, fmt.Errorf("decode orderid %q: %w", hex, err)
 		}
-		out = append(out, *md)
+		out = append(out, *oid)
 	}
 
 	return out, nil
 }
 
-// ListMetadataForDeal returns the distinct metadata fingerprints observed for a deal.
-func (s *Storage) ListMetadataForDeal(ctx context.Context, dealID uint32) ([]metadata.Metadata, error) {
+// ListOrderIdsForDeal returns the distinct OrderId fingerprints observed for a deal.
+func (s *Storage) ListOrderIdsForDeal(ctx context.Context, dealID uint32) ([]orderid.OrderId, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	result, err := s.queries.GetMetadataForDeal(ctx, int64(dealID))
+	result, err := s.queries.GetOrderIdForDeal(ctx, int64(dealID))
 	if err != nil {
 		return nil, err
 	}
 
-	var list []metadata.Metadata
-	for _, mdHex := range result {
-		if mdHex == "" {
+	var list []orderid.OrderId
+	for _, oidHex := range result {
+		if oidHex == "" {
 			continue
 		}
-		md, err := metadata.FromHexString(mdHex)
+		oid, err := orderid.FromHexString(oidHex)
 		if err != nil {
-			return nil, fmt.Errorf("decode metadata %q: %w", mdHex, err)
+			return nil, fmt.Errorf("decode orderid %q: %w", oidHex, err)
 		}
-		list = append(list, *md)
+		list = append(list, *oid)
 	}
 
 	return list, nil
@@ -482,7 +482,7 @@ func (s *Storage) ListMetadataForDeal(ctx context.Context, dealID uint32) ([]met
 // HyperliquidSafetyStatus captures the latest Hyperliquid state for a single
 // averaging (safety) order fingerprint.
 type HyperliquidSafetyStatus struct {
-	Metadata         metadata.Metadata
+	OrderId          orderid.OrderId
 	BotID            uint32
 	DealID           uint32
 	OrderType        string
@@ -504,13 +504,13 @@ func (s *Storage) ListLatestHyperliquidSafetyStatuses(ctx context.Context, dealI
 
 	result := make([]HyperliquidSafetyStatus, 0, len(rows))
 	for _, row := range rows {
-		md, err := metadata.FromHexString(row.Md)
+		oid, err := orderid.FromHexString(row.OrderID)
 		if err != nil {
-			return nil, fmt.Errorf("decode metadata %q: %w", row.Md, err)
+			return nil, fmt.Errorf("decode orderid %q: %w", row.OrderID, err)
 		}
 
 		status := HyperliquidSafetyStatus{
-			Metadata:         *md,
+			OrderId:          *oid,
 			BotID:            uint32(row.BotID),
 			DealID:           uint32(row.DealID),
 			HLStatusRecorded: time.UnixMilli(row.RecordedAtUtc).UTC(),
@@ -568,11 +568,11 @@ func (s *Storage) DealSafetiesFilled(ctx context.Context, dealID uint32) (bool, 
 	return true, nil
 }
 
-func (s *Storage) LoadHyperliquidSubmission(ctx context.Context, md metadata.Metadata) (recomma.Action, bool, error) {
+func (s *Storage) LoadHyperliquidSubmission(ctx context.Context, oid orderid.OrderId) (recomma.Action, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	row, err := s.queries.FetchHyperliquidSubmission(ctx, md.Hex())
+	row, err := s.queries.FetchHyperliquidSubmission(ctx, oid.Hex())
 	if errors.Is(err, sql.ErrNoRows) {
 		return recomma.Action{}, false, nil
 	}
@@ -627,14 +627,14 @@ func (s *Storage) LoadHyperliquidSubmission(ctx context.Context, md metadata.Met
 	return action, true, nil
 }
 
-func (s *Storage) LoadHyperliquidStatus(ctx context.Context, md metadata.Metadata) (*hyperliquid.WsOrder, bool, error) {
+func (s *Storage) LoadHyperliquidStatus(ctx context.Context, oid orderid.OrderId) (*hyperliquid.WsOrder, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.loadLatestHyperliquidStatusLocked(ctx, md)
+	return s.loadLatestHyperliquidStatusLocked(ctx, oid)
 }
 
-func (s *Storage) LoadHyperliquidRequest(ctx context.Context, md metadata.Metadata) (*hyperliquid.CreateOrderRequest, bool, error) {
-	action, found, err := s.LoadHyperliquidSubmission(ctx, md)
+func (s *Storage) LoadHyperliquidRequest(ctx context.Context, oid orderid.OrderId) (*hyperliquid.CreateOrderRequest, bool, error) {
+	action, found, err := s.LoadHyperliquidSubmission(ctx, oid)
 	return action.Create, found, err
 }
 
@@ -735,7 +735,7 @@ func (s *Storage) ListDealIDs(ctx context.Context) ([]int64, error) {
 	return s.queries.ListDealIDs(ctx)
 }
 
-func (s *Storage) LoadTakeProfitForDeal(ctx context.Context, dealID uint32) (*metadata.Metadata, *tc.BotEvent, error) {
+func (s *Storage) LoadTakeProfitForDeal(ctx context.Context, dealID uint32) (*orderid.OrderId, *tc.BotEvent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -747,9 +747,9 @@ func (s *Storage) LoadTakeProfitForDeal(ctx context.Context, dealID uint32) (*me
 		return nil, nil, fmt.Errorf("load take profit for deal %d: %w", dealID, err)
 	}
 
-	md, err := metadata.FromHexString(row.Md)
+	oid, err := orderid.FromHexString(row.OrderID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("decode metadata %q: %w", row.Md, err)
+		return nil, nil, fmt.Errorf("decode orderid %q: %w", row.OrderID, err)
 	}
 
 	var evt tc.BotEvent
@@ -757,5 +757,5 @@ func (s *Storage) LoadTakeProfitForDeal(ctx context.Context, dealID uint32) (*me
 		return nil, nil, fmt.Errorf("decode take profit bot event: %w", err)
 	}
 
-	return md, &evt, nil
+	return oid, &evt, nil
 }

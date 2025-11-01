@@ -3,14 +3,14 @@ package hl
 import (
 	"testing"
 
-	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/orderid"
 	"github.com/sonirico/go-hyperliquid"
 	"github.com/stretchr/testify/require"
 )
 
 func TestOrderResultToWsOrder(t *testing.T) {
-	md := metadata.Metadata{BotID: 1, DealID: 2, BotEventID: 3}
-	cloid := md.Hex()
+	oid := orderid.OrderId{BotID: 1, DealID: 2, BotEventID: 3}
+	cloid := oid.Hex()
 
 	result := &hyperliquid.OrderQueryResult{
 		Status: hyperliquid.OrderQueryStatusSuccess,
@@ -30,7 +30,7 @@ func TestOrderResultToWsOrder(t *testing.T) {
 		},
 	}
 
-	wsOrder, err := orderResultToWsOrder(md, result)
+	wsOrder, err := orderResultToWsOrder(oid, result)
 	require.NoError(t, err)
 	require.NotNil(t, wsOrder)
 	require.Equal(t, hyperliquid.OrderStatusValueFilled, wsOrder.Status)
@@ -43,12 +43,12 @@ func TestOrderResultToWsOrder(t *testing.T) {
 }
 
 func TestOrderResultToWsOrderUnknown(t *testing.T) {
-	md := metadata.Metadata{BotID: 1, DealID: 2, BotEventID: 3}
+	oid := orderid.OrderId{BotID: 1, DealID: 2, BotEventID: 3}
 	result := &hyperliquid.OrderQueryResult{
 		Status: hyperliquid.OrderQueryStatusError,
 	}
 
-	wsOrder, err := orderResultToWsOrder(md, result)
+	wsOrder, err := orderResultToWsOrder(oid, result)
 	require.NoError(t, err)
 	require.Nil(t, wsOrder)
 }

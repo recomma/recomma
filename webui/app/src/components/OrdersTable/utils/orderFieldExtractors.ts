@@ -43,10 +43,10 @@ const getCancelPayload = (
 };
 
 /**
- * Gets metadata hex from order
+ * Gets OrderId hex from order
  */
-export const getMetadataHex = (order: OrderRecord): string =>
-  order.metadata ?? order.identifiers.hex;
+export const getOrderIdHex = (order: OrderRecord): string =>
+  order.order_id ?? order.identifiers.hex;
 
 /**
  * Gets identifiers from order

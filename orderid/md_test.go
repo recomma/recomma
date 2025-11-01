@@ -1,4 +1,4 @@
-package metadata
+package orderid
 
 import (
 	"bytes"
@@ -35,7 +35,7 @@ func TestAsHex_(t *testing.T) {
 				}
 			}()
 
-			got := tc.md.AsHex()
+			got := tc.oid.AsHex()
 			if tc.wantPanic {
 				return
 			}
@@ -58,19 +58,19 @@ func TestFromHex(t *testing.T) {
 				return
 			}
 			// we can reuse the existing tests just in reverse
-			md, err := FromHex(mustHex(tc.hex))
+			oid, err := FromHex(mustHex(tc.hex))
 			if tc.wantErrorFromHex != nil {
 				require.Error(tt, err, tc.wantErrorFromHex)
-				require.Nil(tt, md)
+				require.Nil(tt, oid)
 				return
 			}
 
 			require.NoError(tt, err)
 
-			if md != nil {
+			if oid != nil {
 
-				if diff := cmp.Diff(*md, tc.md); diff != "" {
-					tt.Errorf("not equal\nwant: %v\ngot:  %v", tc.md, *md)
+				if diff := cmp.Diff(*oid, tc.oid); diff != "" {
+					tt.Errorf("not equal\nwant: %v\ngot:  %v", tc.oid, *oid)
 				}
 			}
 		})
@@ -86,19 +86,19 @@ func TestFromHexString(t *testing.T) {
 				return
 			}
 			// we can reuse the existing tests just in reverse
-			md, err := FromHexString(tc.hex)
+			oid, err := FromHexString(tc.hex)
 			if tc.wantErrorFromHex != nil {
 				require.Error(tt, err, tc.wantErrorFromHex)
-				require.Nil(tt, md)
+				require.Nil(tt, oid)
 				return
 			}
 
 			require.NoError(tt, err)
 
-			if md != nil {
+			if oid != nil {
 
-				if diff := cmp.Diff(*md, tc.md); diff != "" {
-					tt.Errorf("not equal\nwant: %v\ngot:  %v", tc.md, *md)
+				if diff := cmp.Diff(*oid, tc.oid); diff != "" {
+					tt.Errorf("not equal\nwant: %v\ngot:  %v", tc.oid, *oid)
 				}
 			}
 		})
@@ -107,7 +107,7 @@ func TestFromHexString(t *testing.T) {
 
 type hexData struct {
 	name             string
-	md               Metadata
+	oid              OrderId
 	hex              string
 	wantPanic        bool
 	wantErrorFromHex error
@@ -117,12 +117,12 @@ func getTests() []hexData {
 	return []hexData{
 		{
 			name: "Empty",
-			md:   Metadata{},
+			oid:  OrderId{},
 			hex:  "00000000 00000000 00000000 7B D5 C6 6F",
 		},
 		{
 			name: "small values sample",
-			md: Metadata{
+			oid: OrderId{
 				BotID:      1,
 				DealID:     2,
 				BotEventID: 3,
@@ -131,7 +131,7 @@ func getTests() []hexData {
 		},
 		{
 			name: "boundary",
-			md: Metadata{
+			oid: OrderId{
 				BotID:      0x01020304,
 				DealID:     0xAABBCCDD,
 				BotEventID: 3735928559, // 0xDEADBEEF within uint32
@@ -140,7 +140,7 @@ func getTests() []hexData {
 		},
 		{
 			name: "received back from API",
-			md: Metadata{
+			oid: OrderId{
 				BotID:      16541235,
 				DealID:     2381631392,
 				BotEventID: 568275668,

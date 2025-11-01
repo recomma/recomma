@@ -4,12 +4,12 @@ import (
 	"math"
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
-	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	"github.com/sonirico/go-hyperliquid"
 )
 
-// ToCreateOrderRequest converts one 3Commas BotEvent + its Deal metadata
+// ToCreateOrderRequest converts one 3Commas BotEvent + its Deal OrderId
 // into your venue's CreateOrderRequest.
 //
 // Mapping notes:
@@ -17,7 +17,7 @@ import (
 // - IsBuy: BotEvent.Type == "BUY".
 // - Price / Size: BotEvent already exposes float64 fields.
 // - ReduceOnly: true for SELL + take-profit BotEvent.
-func ToCreateOrderRequest(currency string, event recomma.BotEvent, md metadata.Metadata) hyperliquid.CreateOrderRequest {
+func ToCreateOrderRequest(currency string, event recomma.BotEvent, oid orderid.OrderId) hyperliquid.CreateOrderRequest {
 	isBuy := event.Type == tc.BUY
 	reduceOnly := !isBuy && event.OrderType == tc.MarketOrderDealOrderTypeTakeProfit
 
@@ -28,7 +28,7 @@ func ToCreateOrderRequest(currency string, event recomma.BotEvent, md metadata.M
 		Size:          event.Size,
 		ReduceOnly:    reduceOnly,
 		OrderType:     orderTypeFrom3C(event),
-		ClientOrderID: md.HexAsPointer(),
+		ClientOrderID: oid.HexAsPointer(),
 	}
 
 	return req
@@ -98,7 +98,7 @@ func BuildAction(
 	currency string,
 	prev *recomma.BotEvent,
 	next recomma.BotEvent,
-	md metadata.Metadata,
+	oid orderid.OrderId,
 ) recomma.Action {
 	// 1. classify transition
 	prevState := classify(prev)
@@ -107,20 +107,20 @@ func BuildAction(
 	switch {
 	case prev == nil && nextState == stateActive:
 		// New order we have never submitted → create
-		req := ToCreateOrderRequest(currency, next, md)
+		req := ToCreateOrderRequest(currency, next, oid)
 		return recomma.Action{Type: recomma.ActionCreate, Create: &req}
 	case prev == nil:
 		// Never saw it active; HL won’t have it either
 		return recomma.Action{Type: recomma.ActionNone, Reason: "skipped: no prior order submitted"}
 	case prevState == stateActive && nextState == stateCancelled:
-		cancel := ToCancelByCloidRequest(currency, md)
+		cancel := ToCancelByCloidRequest(currency, oid)
 		return recomma.Action{Type: recomma.ActionCancel, Cancel: &cancel}
 	case prevState == stateActive && nextState == stateFilled:
 		// Nothing to do on Hyperliquid, but tell caller to persist updated snapshot
 		return recomma.Action{Type: recomma.ActionNone, Reason: "filled locally"}
 	case prevState == stateActive && nextState == stateActive:
 		if needsModify(prev, &next) {
-			modify := ToModifyOrderRequest(currency, next, md)
+			modify := ToModifyOrderRequest(currency, next, oid)
 			return recomma.Action{Type: recomma.ActionModify, Modify: &modify}
 		}
 		return recomma.Action{Type: recomma.ActionNone, Reason: "no material change"}
@@ -129,17 +129,17 @@ func BuildAction(
 	}
 }
 
-func ToCancelByCloidRequest(currency string, md metadata.Metadata) hyperliquid.CancelOrderRequestByCloid {
+func ToCancelByCloidRequest(currency string, oid orderid.OrderId) hyperliquid.CancelOrderRequestByCloid {
 	return hyperliquid.CancelOrderRequestByCloid{
 		Coin:  currency,
-		Cloid: md.Hex(),
+		Cloid: oid.Hex(),
 	}
 }
 
-func ToModifyOrderRequest(currency string, next recomma.BotEvent, md metadata.Metadata) hyperliquid.ModifyOrderRequest {
-	req := ToCreateOrderRequest(currency, next, md)
+func ToModifyOrderRequest(currency string, next recomma.BotEvent, oid orderid.OrderId) hyperliquid.ModifyOrderRequest {
+	req := ToCreateOrderRequest(currency, next, oid)
 	return hyperliquid.ModifyOrderRequest{
-		Oid:   md.Hex(),
+		Oid:   oid.Hex(),
 		Order: req,
 	}
 }

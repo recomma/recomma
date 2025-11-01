@@ -93,7 +93,7 @@ export interface paths {
         };
         /**
          * Inspect vault state
-         * @description Returns the current vault lifecycle state plus metadata about the active user and session. This endpoint is unauthenticated so the frontend can poll during setup.
+         * @description Returns the current vault lifecycle state plus meta data about the active user and session. This endpoint is unauthenticated so the frontend can poll during setup.
          */
         get: operations["getVaultStatus"];
         put?: never;
@@ -233,7 +233,7 @@ export interface paths {
         };
         /**
          * List acted-on bot events with Hyperliquid context
-         * @description Returns rows from `threecommas_botevents` (the actionable subset). Each row includes the raw 3Commas payload, plus the latest matching submission and status from Hyperliquid if present. Use the filters to drill down to a single metadata hex, bot, deal, or bot-event ID. The `from`/`to` window operates on the bot-event `observed_at` timestamp so you can page through history. Setting `include_log=true` embeds matching entries from `threecommas_botevents_log` and `hyperliquid_status_history` within each result, filtered by the same time window.
+         * @description Returns rows from `threecommas_botevents` (the actionable subset). Each row includes the raw 3Commas payload, plus the latest matching submission and status from Hyperliquid if present. Use the filters to drill down to a single OrderId hex, bot, deal, or bot-event ID. The `from`/`to` window operates on the bot-event `observed_at` timestamp so you can page through history. Setting `include_log=true` embeds matching entries from `threecommas_botevents_log` and `hyperliquid_status_history` within each result, filtered by the same time window.
          */
         get: operations["listOrders"];
         put?: never;
@@ -244,7 +244,79 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/orders/{metadata}/cancel": {
+    "/api/orders/scalers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List effective order scaler configurations for observed OrderId
+         * @description Returns the effective multiplier applied to each OrderId tuple that has interacted with the scaler subsystem. The response resolves bot-level overrides against the global default multiplier and surfaces the source OrderId (default vs. override) along with operator notes. Use the filters to scope results to a OrderId prefix, bot, deal, or bot-event identifier.
+         */
+        get: operations["listOrderScalers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/order-scaler": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Retrieve the global order scaler multiplier
+         * @description Returns the current default multiplier applied to all mirrored orders when no per-bot override exists. The response includes the underlying configuration record and the effective multiplier OrderId that downstream components apply.
+         */
+        get: operations["getOrderScalerConfig"];
+        /**
+         * Update the global order scaler multiplier
+         * @description Sets the default multiplier applied to mirrored orders. The request is idempotent—replaying the same value yields the identical response. Multipliers must be greater than zero and cannot exceed the configured maximum.
+         */
+        put: operations["updateOrderScalerConfig"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/bots/{botId}/order-scaler": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Retrieve the effective order scaler for a bot
+         * @description Returns the global default, any persisted override, and the effective multiplier applied to orders emitted by the specified bot.
+         */
+        get: operations["getBotOrderScalerConfig"];
+        /**
+         * Upsert a bot-specific order scaler override
+         * @description Creates or updates the override multiplier for the supplied bot. Supplying the same multiplier repeatedly is idempotent. Multipliers must be greater than zero and cannot exceed the configured maximum.
+         */
+        put: operations["upsertBotOrderScalerConfig"];
+        post?: never;
+        /**
+         * Delete a bot-specific order scaler override
+         * @description Removes the override for the supplied bot and immediately reverts to the global default multiplier. The operation is idempotent and returns the effective configuration after deletion.
+         */
+        delete: operations["deleteBotOrderScalerConfig"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/orders/{order_id}/cancel": {
         parameters: {
             query?: never;
             header?: never;
@@ -254,10 +326,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Cancel Hyperliquid order by metadata
-         * @description Enqueues a Hyperliquid cancel action for the order identified by the supplied metadata hex. The service resolves the most recent submission for the metadata to determine the CLOID and venue coin.
+         * Cancel Hyperliquid order by OrderId
+         * @description Enqueues a Hyperliquid cancel action for the order identified by the supplied OrderId hex. The service resolves the most recent submission for the OrderId to determine the CLOID and venue coin.
          */
-        post: operations["cancelOrderByMetadata"];
+        post: operations["cancelOrderByOrderId"];
         delete?: never;
         options?: never;
         head?: never;
@@ -273,7 +345,7 @@ export interface paths {
         };
         /**
          * Stream live changes to acted-on orders
-         * @description Server Sent Events channel fed by writes to `threecommas_botevents`, `hyperliquid_submissions`, and `hyperliquid_status_history`. Each `data:` frame is a JSON object containing the raw payload we stored for that update, plus the metadata hex and timestamps. Filters match the query semantics of `/api/orders`.
+         * @description Server Sent Events channel fed by writes to `threecommas_botevents`, `hyperliquid_submissions`, and `hyperliquid_status_history`. Each `data:` frame is a JSON object containing the raw payload we stored for that update, plus the OrderId hex and timestamps. Filters match the query semantics of `/api/orders`.
          */
         get: operations["streamOrders"];
         put?: never;
@@ -462,23 +534,23 @@ export interface components {
             payload: components["schemas"]["Deal"];
         };
         OrderRecord: {
-            /** @description Metadata hash (hex) as stored in `threecommas_botevents`. */
-            metadata: string;
-            /** @description Parsed bot/deal information derived from the metadata. `hex` repeats the `metadata` value. */
+            /** @description OrderId hash (hex) as stored in `threecommas_botevents`. */
+            order_id: string;
+            /** @description Parsed bot/deal information derived from the OrderId. `hex` repeats the `OrderId` value. */
             identifiers: components["schemas"]["OrderIdentifiers"];
             /**
              * Format: date-time
              * @description Timestamp when Recomma observed the order update.
              */
             observed_at: string;
-            /** @description Latest parsed 3Commas bot-event associated with this metadata. */
+            /** @description Latest parsed 3Commas bot-event associated with this OrderId. */
             three_commas: components["schemas"]["ThreeCommasOrderState"];
-            /** @description Latest Hyperliquid submission/status captured for this metadata. */
+            /** @description Latest Hyperliquid submission/status captured for this OrderId. */
             hyperliquid?: components["schemas"]["HyperliquidOrderState"];
             /** @description Present only when `include_log=true`. Entries follow the same structured shape as the SSE stream. */
             log_entries?: components["schemas"]["OrderLogEntry"][] | null;
         };
-        CancelOrderByMetadataRequest: {
+        CancelOrderByOrderIdRequest: {
             /** @description Optional operator note recorded alongside the cancel request. */
             reason?: string | null;
             /**
@@ -487,9 +559,9 @@ export interface components {
              */
             dry_run: boolean;
         };
-        CancelOrderByMetadataResponse: {
-            /** @description Metadata hex identifying the targeted order. */
-            metadata: string;
+        CancelOrderByOrderIdResponse: {
+            /** @description OrderID hex identifying the targeted order. */
+            order_id: string;
             /** @description Outcome of the cancel attempt (for example `queued`, `skipped`, or `noop`). */
             status: string;
             /** @description Hyperliquid cancel payload that will be submitted when applicable. */
@@ -498,7 +570,7 @@ export interface components {
             message?: string | null;
         };
         OrderIdentifiers: {
-            /** @description Case-insensitive hash deriving from the 3Commas metadata payload. */
+            /** @description Case-insensitive hash deriving from the 3Commas OrderId payload. */
             hex: string;
             /** Format: int64 */
             bot_id: number;
@@ -513,7 +585,7 @@ export interface components {
             created_at: string;
         };
         ThreeCommasOrderState: {
-            /** @description Parsed 3Commas bot event emitted for this metadata. */
+            /** @description Parsed 3Commas bot event emitted for this OrderId. */
             event: components["schemas"]["ThreeCommasBotEvent"];
         };
         ThreeCommasBotEvent: {
@@ -550,9 +622,9 @@ export interface components {
             text: string;
         };
         HyperliquidOrderState: {
-            /** @description Most recent action we submitted to Hyperliquid for this metadata (last write wins). */
+            /** @description Most recent action we submitted to Hyperliquid for this OrderId (last write wins). */
             latest_submission?: components["schemas"]["HyperliquidAction"];
-            /** @description Most recent order status update received from Hyperliquid for this metadata. */
+            /** @description Most recent order status update received from Hyperliquid for this OrderId. */
             latest_status?: components["schemas"]["HyperliquidWsOrder"];
         };
         HyperliquidAction: components["schemas"]["HyperliquidNoopAction"] | components["schemas"]["HyperliquidCreateAction"] | components["schemas"]["HyperliquidModifyAction"] | components["schemas"]["HyperliquidCancelAction"];
@@ -591,7 +663,7 @@ export interface components {
              */
             oid?: number | null;
             /** @description Client order identifier (CLOID) to target when `oid` is not available. */
-            client_order_id?: string | null;
+            cloid?: string | null;
             order: components["schemas"]["HyperliquidCreateOrder"];
         } & {
             /**
@@ -620,7 +692,7 @@ export interface components {
             size: number;
             reduce_only: boolean;
             order_type: components["schemas"]["HyperliquidOrderType"];
-            client_order_id?: string | null;
+            cloid?: string | null;
         };
         HyperliquidOrderType: {
             limit?: components["schemas"]["HyperliquidLimitOrder"];
@@ -639,7 +711,7 @@ export interface components {
         };
         HyperliquidCancelOrder: {
             coin: string;
-            client_order_id: string;
+            cloid: string;
         };
         HyperliquidBestBidOffer: {
             /** @description Hyperliquid coin ticker (for example `ETH`). */
@@ -683,17 +755,17 @@ export interface components {
             /** Format: int64 */
             timestamp: number;
             orig_size: string;
-            client_order_id?: string | null;
+            cloid?: string | null;
         };
         /** @enum {string} */
         HyperliquidOrderStatus: "open" | "filled" | "canceled" | "triggered" | "rejected" | "marginCanceled" | "vaultWithdrawalCanceled" | "openInterestCapCanceled" | "selfTradeCanceled" | "reduceOnlyCanceled" | "siblingFilledCanceled" | "delistedCanceled" | "liquidatedCanceled" | "scheduledCancel" | "tickRejected" | "minTradeNtlRejected" | "perpMarginRejected" | "reduceOnlyRejected" | "badAloPxRejected" | "iocCancelRejected" | "badTriggerPxRejected" | "marketOrderNoLiquidityRejected" | "positionIncreaseAtOpenInterestCapRejected" | "positionFlipAtOpenInterestCapRejected" | "tooAggressiveAtOpenInterestCapRejected" | "openInterestIncreaseRejected";
-        OrderLogEntry: components["schemas"]["ThreeCommasLogEntry"] | components["schemas"]["HyperliquidSubmissionLogEntry"] | components["schemas"]["HyperliquidStatusLogEntry"];
+        OrderLogEntry: components["schemas"]["ThreeCommasLogEntry"] | components["schemas"]["HyperliquidSubmissionLogEntry"] | components["schemas"]["HyperliquidStatusLogEntry"] | components["schemas"]["OrderScalerConfigLogEntry"] | components["schemas"]["ScaledOrderAuditLogEntry"];
         OrderLogEntryBase: {
             /** @enum {string} */
-            type: "three_commas_event" | "hyperliquid_submission" | "hyperliquid_status";
-            /** @description Metadata hash (hex) identifying the order context. */
-            metadata: string;
-            /** @description Bot/deal identifiers derived from the metadata when available. */
+            type: "three_commas_event" | "hyperliquid_submission" | "hyperliquid_status" | "order_scaler_config" | "scaled_order_audit";
+            /** @description OrderId hash (hex) identifying the order context. */
+            order_id: string;
+            /** @description Bot/deal identifiers derived from the OrderId when available. */
             identifiers?: components["schemas"]["OrderIdentifiers"];
             /** Format: date-time */
             observed_at: string;
@@ -704,6 +776,111 @@ export interface components {
             sequence?: number | null;
             /** Format: int64 */
             bot_event_id?: number | null;
+        };
+        /** @enum {string} */
+        OrderScalerSource: "default" | "bot_override";
+        OrderScalerState: {
+            /** Format: double */
+            multiplier: number;
+            /** Format: date-time */
+            updated_at: string;
+            updated_by: string;
+            notes?: string | null;
+        };
+        OrderScalerEffectiveMultiplier: {
+            source: components["schemas"]["OrderScalerSource"];
+            /** Format: double */
+            value: number;
+            /** Format: date-time */
+            updated_at: string;
+            updated_by: string;
+            notes?: string | null;
+        };
+        OrderScalerConfigResponse: {
+            default: components["schemas"]["OrderScalerState"];
+            effective: components["schemas"]["OrderScalerEffectiveMultiplier"];
+        };
+        BotOrderScalerConfigResponse: {
+            /** Format: int64 */
+            bot_id: number;
+            default: components["schemas"]["OrderScalerState"];
+            override?: components["schemas"]["OrderScalerOverride"];
+            effective: components["schemas"]["OrderScalerEffectiveMultiplier"];
+        };
+        OrderScalerUpdateRequest: {
+            /** Format: double */
+            multiplier: number;
+            notes?: string | null;
+        };
+        OrderScalerOverride: {
+            /** Format: int64 */
+            bot_id: number;
+            /** Format: double */
+            multiplier?: number | null;
+            notes?: string | null;
+            /** Format: date-time */
+            effective_from: string;
+            /** Format: date-time */
+            updated_at: string;
+            updated_by: string;
+        };
+        EffectiveOrderScaler: {
+            order_id: string;
+            /** Format: double */
+            multiplier: number;
+            source: components["schemas"]["OrderScalerSource"];
+            default: components["schemas"]["OrderScalerState"];
+            override?: components["schemas"]["OrderScalerOverride"];
+        };
+        OrderScalerConfigLogEntry: components["schemas"]["OrderLogEntryBase"] & {
+            config: components["schemas"]["EffectiveOrderScaler"];
+            actor: string;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "order_scaler_config";
+        };
+        OrderScalerConfigRecord: {
+            order_id: string;
+            /** Format: date-time */
+            observed_at: string;
+            actor: string;
+            config: components["schemas"]["EffectiveOrderScaler"];
+        };
+        ScaledOrderAudit: {
+            /** Format: int64 */
+            deal_id: number;
+            /** Format: int64 */
+            bot_id: number;
+            /** Format: double */
+            original_size: number;
+            /** Format: double */
+            scaled_size: number;
+            /** Format: double */
+            multiplier: number;
+            /** Format: double */
+            rounding_delta: number;
+            stack_index: number;
+            order_side: string;
+            multiplier_updated_by: string;
+            /** Format: date-time */
+            created_at: string;
+            submitted_order_id?: string | null;
+            skipped: boolean;
+            skip_reason?: string | null;
+        };
+        ScaledOrderAuditLogEntry: components["schemas"]["OrderLogEntryBase"] & {
+            audit: components["schemas"]["ScaledOrderAudit"];
+            effective?: components["schemas"]["EffectiveOrderScaler"];
+            actor: string;
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "scaled_order_audit";
         };
         ThreeCommasLogEntry: components["schemas"]["OrderLogEntryBase"] & {
             event: components["schemas"]["ThreeCommasBotEvent"];
@@ -1689,8 +1866,8 @@ export interface operations {
     listOrders: {
         parameters: {
             query?: {
-                /** @description Case-insensitive prefix match on metadata hex; exact match recommended for drill-down. */
-                metadata?: string;
+                /** @description Case-insensitive prefix match on OrderId hex; exact match recommended for drill-down. */
+                order_id?: string;
                 /** @description Restrict to events emitted by this bot ID. */
                 bot_id?: number;
                 /** @description Restrict to events emitted by this deal ID. */
@@ -1701,7 +1878,7 @@ export interface operations {
                 observed_from?: string;
                 /** @description ISO-8601 timestamp; include events observed at or before this time. */
                 observed_to?: string;
-                /** @description When true, embed `log_entries` for each order, limited to the same metadata and time range (default false). */
+                /** @description When true, embed `log_entries` for each order, limited to the same OrderId and time range (default false). */
                 include_log?: boolean;
                 /** @description Maximum number of rows (default 100, max 500). */
                 limit?: number;
@@ -1742,19 +1919,284 @@ export interface operations {
             };
         };
     };
-    cancelOrderByMetadata: {
+    listOrderScalers: {
+        parameters: {
+            query?: {
+                /** @description Case-insensitive prefix match on OrderId hex; exact match recommended for drill-down. */
+                order_id?: string;
+                /** @description Restrict to OrderId emitted by this bot ID. */
+                bot_id?: number;
+                /** @description Restrict to OrderId emitted by this deal ID. */
+                deal_id?: number;
+                /** @description Restrict to a specific 3Commas bot-event ID (exact match). */
+                bot_event_id?: number;
+                /** @description Maximum number of rows (default 100, max 500). */
+                limit?: number;
+                /** @description Opaque cursor returned by a previous call. */
+                page_token?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Effective multiplier records matching the requested filters. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["OrderScalerConfigRecord"][];
+                        next_page_token?: string | null;
+                    };
+                };
+            };
+            /** @description Invalid parameters */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getOrderScalerConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Global order scaler configuration. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderScalerConfigResponse"];
+                };
+            };
+            /** @description Missing or invalid session. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateOrderScalerConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderScalerUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated global order scaler configuration. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderScalerConfigResponse"];
+                };
+            };
+            /** @description Invalid multiplier or payload. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid session. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getBotOrderScalerConfig: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                /** @description Order metadata identifier (case-insensitive hex string with optional `0x` prefix). */
-                metadata: string;
+                /** @description 3Commas bot identifier. */
+                botId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Order scaler configuration for the requested bot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotOrderScalerConfigResponse"];
+                };
+            };
+            /** @description Invalid bot identifier. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid session. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    upsertBotOrderScalerConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 3Commas bot identifier. */
+                botId: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderScalerUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated bot-level order scaler configuration. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotOrderScalerConfigResponse"];
+                };
+            };
+            /** @description Invalid bot identifier or multiplier. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid session. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deleteBotOrderScalerConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 3Commas bot identifier. */
+                botId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Effective configuration after removing the override. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotOrderScalerConfigResponse"];
+                };
+            };
+            /** @description Invalid bot identifier. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid session. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cancelOrderByOrderId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Order OrderId identifier (case-insensitive hex string with optional `0x` prefix). */
+                order_id: string;
             };
             cookie?: never;
         };
         requestBody?: {
             content: {
-                "application/json": components["schemas"]["CancelOrderByMetadataRequest"];
+                "application/json": components["schemas"]["CancelOrderByOrderIdRequest"];
             };
         };
         responses: {
@@ -1764,17 +2206,17 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CancelOrderByMetadataResponse"];
+                    "application/json": components["schemas"]["CancelOrderByOrderIdResponse"];
                 };
             };
-            /** @description Invalid metadata or payload */
+            /** @description Invalid OrderId or payload */
             400: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description Metadata not found or no cancellable order present */
+            /** @description OrderId not found or no cancellable order present */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -1800,8 +2242,8 @@ export interface operations {
     streamOrders: {
         parameters: {
             query?: {
-                /** @description Case-insensitive prefix match; only events for matching metadata are emitted. */
-                metadata?: string;
+                /** @description Case-insensitive prefix match; only events for matching OrderId are emitted. */
+                order_id?: string;
                 /** @description Restrict to this bot ID. */
                 bot_id?: number;
                 /** @description Restrict to this deal ID. */

@@ -8,7 +8,7 @@ import (
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	api "github.com/recomma/recomma/internal/api"
-	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/orderid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -84,8 +84,8 @@ func TestResolveEffectiveOrderScaler(t *testing.T) {
 	err := store.RecordBot(ctx, tc.Bot{Id: int(botID)}, now)
 	require.NoError(t, err)
 
-	md := metadata.Metadata{BotID: botID}
-	effective, err := store.ResolveEffectiveOrderScaler(ctx, md)
+	oid := orderid.OrderId{BotID: botID}
+	effective, err := store.ResolveEffectiveOrderScaler(ctx, oid)
 	require.NoError(t, err)
 	require.Equal(t, OrderScalerSourceDefault, effective.Source)
 	require.Nil(t, effective.Override)
@@ -96,7 +96,7 @@ func TestResolveEffectiveOrderScaler(t *testing.T) {
 	override, err := store.UpsertBotOrderScaler(ctx, botID, &multiplier, &note, "tester")
 	require.NoError(t, err)
 
-	effective, err = store.ResolveEffectiveOrderScaler(ctx, metadata.Metadata{BotID: botID, DealID: 1, BotEventID: 1})
+	effective, err = store.ResolveEffectiveOrderScaler(ctx, orderid.OrderId{BotID: botID, DealID: 1, BotEventID: 1})
 	require.NoError(t, err)
 	require.Equal(t, OrderScalerSourceBotOverride, effective.Source)
 	require.NotNil(t, effective.Override)
@@ -179,9 +179,9 @@ func TestOrderScalerConfigEvents(t *testing.T) {
 		if evt.Type != api.OrderScalerConfigEntry {
 			continue
 		}
-		if evt.Metadata.BotID == 0 {
+		if evt.OrderId.BotID == 0 {
 			defaultEvt = evt
-		} else if evt.Metadata.BotID == botID {
+		} else if evt.OrderId.BotID == botID {
 			overrideEvt = evt
 		}
 	}
@@ -219,9 +219,9 @@ func TestRecordScaledOrderPublishesEvent(t *testing.T) {
 	_, err = store.UpsertBotOrderScaler(ctx, botID, &mult, nil, "tester")
 	require.NoError(t, err)
 
-	md := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 1}
+	oid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
 	params := RecordScaledOrderParams{
-		Metadata:     md,
+		OrderId:      oid,
 		DealID:       dealID,
 		BotID:        botID,
 		OriginalSize: 200.0,
@@ -257,7 +257,7 @@ func TestRecordScaledOrderPublishesEvent(t *testing.T) {
 	require.Nil(t, auditEvt.ScaledOrderAudit.SkipReason)
 	require.NotNil(t, auditEvt.ScalerConfig)
 	require.InDelta(t, mult, auditEvt.ScalerConfig.Multiplier, 1e-9)
-	require.Equal(t, md.Hex(), auditEvt.ScalerConfig.Metadata)
+	require.Equal(t, oid.Hex(), auditEvt.ScalerConfig.OrderId)
 }
 
 func TestRecordScaledOrderUsesAppliedMultiplier(t *testing.T) {
@@ -280,9 +280,9 @@ func TestRecordScaledOrderUsesAppliedMultiplier(t *testing.T) {
 	require.NoError(t, err)
 
 	applied := 1.5
-	md := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 7}
+	oid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 7}
 	params := RecordScaledOrderParams{
-		Metadata:          md,
+		OrderId:           oid,
 		DealID:            dealID,
 		BotID:             botID,
 		OriginalSize:      100.0,
@@ -335,13 +335,13 @@ func TestScaledOrderAuditHistory(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	md := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 101}
+	oid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 101}
 	later := base.Add(2 * time.Second)
 	earlier := base.Add(1 * time.Second)
 	submittedID := "hl-order-1"
 
 	_, err = store.InsertScaledOrderAudit(ctx, ScaledOrderAuditParams{
-		Metadata:            md,
+		OrderId:             oid,
 		DealID:              dealID,
 		BotID:               botID,
 		OriginalSize:        250.0,
@@ -356,7 +356,7 @@ func TestScaledOrderAuditHistory(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = store.InsertScaledOrderAudit(ctx, ScaledOrderAuditParams{
-		Metadata:            md,
+		OrderId:             oid,
 		DealID:              dealID,
 		BotID:               botID,
 		OriginalSize:        125.0,
@@ -370,9 +370,9 @@ func TestScaledOrderAuditHistory(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	otherMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 202}
+	otherOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 202}
 	audit3, err := store.InsertScaledOrderAudit(ctx, ScaledOrderAuditParams{
-		Metadata:            otherMD,
+		OrderId:             otherOid,
 		DealID:              dealID,
 		BotID:               botID,
 		OriginalSize:        300.0,
@@ -387,20 +387,20 @@ func TestScaledOrderAuditHistory(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	byMetadata, err := store.ListScaledOrdersByMetadata(ctx, md)
+	byOid, err := store.ListScaledOrdersByOrderId(ctx, oid)
 	require.NoError(t, err)
-	require.Len(t, byMetadata, 2)
-	require.True(t, !byMetadata[0].CreatedAt.After(byMetadata[1].CreatedAt))
-	require.Equal(t, md.Hex(), byMetadata[0].Metadata.Hex())
-	require.Equal(t, 0, byMetadata[0].StackIndex)
-	require.Equal(t, 1, byMetadata[1].StackIndex)
-	require.False(t, byMetadata[0].Skipped)
-	require.Nil(t, byMetadata[0].SkipReason)
+	require.Len(t, byOid, 2)
+	require.True(t, !byOid[0].CreatedAt.After(byOid[1].CreatedAt))
+	require.Equal(t, oid.Hex(), byOid[0].OrderId.Hex())
+	require.Equal(t, 0, byOid[0].StackIndex)
+	require.Equal(t, 1, byOid[1].StackIndex)
+	require.False(t, byOid[0].Skipped)
+	require.Nil(t, byOid[0].SkipReason)
 
 	byDeal, err := store.ListScaledOrdersByDeal(ctx, dealID)
 	require.NoError(t, err)
 	require.Len(t, byDeal, 3)
-	require.Equal(t, otherMD.Hex(), byDeal[2].Metadata.Hex())
+	require.Equal(t, otherOid.Hex(), byDeal[2].OrderId.Hex())
 	require.NotNil(t, byDeal[2].SubmittedOrderID)
 	require.Equal(t, submittedID, *byDeal[2].SubmittedOrderID)
 	require.Equal(t, "system", byDeal[2].MultiplierUpdatedBy)
@@ -422,8 +422,8 @@ func TestListOrderScalers(t *testing.T) {
 	err = store.RecordThreeCommasDeal(ctx, tc.Deal{Id: int(dealID), BotId: int(botID), CreatedAt: base, UpdatedAt: base})
 	require.NoError(t, err)
 
-	md := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 1}
-	_, err = store.RecordThreeCommasBotEvent(ctx, md, tc.BotEvent{CreatedAt: base})
+	oid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
+	_, err = store.RecordThreeCommasBotEvent(ctx, oid, tc.BotEvent{CreatedAt: base})
 	require.NoError(t, err)
 
 	mult := 0.73
@@ -436,7 +436,7 @@ func TestListOrderScalers(t *testing.T) {
 	require.Len(t, rows, 1)
 
 	record := rows[0]
-	require.Equal(t, md.Hex(), record.Metadata.Hex())
+	require.Equal(t, oid.Hex(), record.OrderId.Hex())
 	require.Equal(t, "auditor", record.Actor)
 	require.InDelta(t, mult, record.Config.Multiplier, 1e-9)
 	require.Equal(t, api.BotOverride, record.Config.Source)

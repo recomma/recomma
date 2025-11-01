@@ -8,7 +8,7 @@ export function generateMockOrders(): OrderRecord[] {
 
   const sampleOrders: OrderRecord[] = [
     {
-      metadata: 'mock-order-1',
+      order_id: 'mock-order-1',
       identifiers: {
         hex: 'mock-order-1',
         bot_id: 16541235,
@@ -49,7 +49,7 @@ export function generateMockOrders(): OrderRecord[] {
             size: 0.15,
             reduce_only: false,
             order_type: { limit: { tif: 'Gtc' } },
-            client_order_id: 'mock-order-1',
+            cloid: 'mock-order-1',
           },
         },
         latest_status: {
@@ -62,14 +62,14 @@ export function generateMockOrders(): OrderRecord[] {
             size: '0.15',
             orig_size: '0.15',
             timestamp: now,
-            client_order_id: 'mock-order-1',
+            cloid: 'mock-order-1',
           },
         },
       },
       log_entries: [],
     } as unknown as OrderRecord,
     {
-      metadata: 'mock-order-2',
+      order_id: 'mock-order-2',
       identifiers: {
         hex: 'mock-order-2',
         bot_id: 17551234,
@@ -110,7 +110,7 @@ export function generateMockOrders(): OrderRecord[] {
             size: 2.5,
             reduce_only: true,
             order_type: { limit: { tif: 'Gtc' } },
-            client_order_id: 'mock-order-2',
+            cloid: 'mock-order-2',
           },
         },
         latest_status: {
@@ -123,7 +123,7 @@ export function generateMockOrders(): OrderRecord[] {
             size: '0',
             orig_size: '2.5',
             timestamp: now,
-            client_order_id: 'mock-order-2',
+            cloid: 'mock-order-2',
           },
         },
       },

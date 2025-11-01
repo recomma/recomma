@@ -11,7 +11,7 @@ import (
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/adapter"
-	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
@@ -36,8 +36,8 @@ func TestServiceRebuildAggregatesExecutedOrders(t *testing.T) {
 
 	recordDeal(t, store, dealID, botID, coin)
 
-	baseMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 1}
-	takeProfitMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 2}
+	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
+	takeProfitOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
 
 	baseEvent := tc.BotEvent{
 		CreatedAt:   time.Now().Add(-5 * time.Minute),
@@ -52,8 +52,8 @@ func TestServiceRebuildAggregatesExecutedOrders(t *testing.T) {
 		IsMarket:    true,
 		Text:        "base order filled",
 	}
-	require.NoError(t, recordEvent(store, baseMD, baseEvent))
-	require.NoError(t, recordStatus(store, baseMD, makeStatus(baseMD, coin, "B", hyperliquid.OrderStatusValueFilled, 100, 0, 10, baseEvent.CreatedAt.Add(time.Second))))
+	require.NoError(t, recordEvent(store, baseOid, baseEvent))
+	require.NoError(t, recordStatus(store, baseOid, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 100, 0, 10, baseEvent.CreatedAt.Add(time.Second))))
 
 	takeProfitEvent := tc.BotEvent{
 		CreatedAt:   time.Now().Add(-4 * time.Minute),
@@ -68,8 +68,8 @@ func TestServiceRebuildAggregatesExecutedOrders(t *testing.T) {
 		IsMarket:    false,
 		Text:        "tp placed",
 	}
-	require.NoError(t, recordEvent(store, takeProfitMD, takeProfitEvent))
-	require.NoError(t, recordStatus(store, takeProfitMD, makeStatus(takeProfitMD, coin, "S", hyperliquid.OrderStatusValueOpen, 100, 100, 10.5, takeProfitEvent.CreatedAt.Add(time.Second))))
+	require.NoError(t, recordEvent(store, takeProfitOid, takeProfitEvent))
+	require.NoError(t, recordStatus(store, takeProfitOid, makeStatus(takeProfitOid, coin, "S", hyperliquid.OrderStatusValueOpen, 100, 100, 10.5, takeProfitEvent.CreatedAt.Add(time.Second))))
 
 	require.NoError(t, tracker.Rebuild(ctx))
 
@@ -101,11 +101,11 @@ func TestServiceUpdateStatusAdjustsPosition(t *testing.T) {
 
 	recordDeal(t, store, dealID, botID, coin)
 
-	baseMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 1}
-	tpMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 2}
+	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
+	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
 	now := time.Now()
 
-	require.NoError(t, recordEvent(store, baseMD, tc.BotEvent{
+	require.NoError(t, recordEvent(store, baseOid, tc.BotEvent{
 		CreatedAt: now.Add(-6 * time.Minute),
 		Action:    tc.BotEventActionExecute,
 		Coin:      coin,
@@ -117,9 +117,9 @@ func TestServiceUpdateStatusAdjustsPosition(t *testing.T) {
 		IsMarket:  true,
 		Text:      "base fill",
 	}))
-	require.NoError(t, recordStatus(store, baseMD, makeStatus(baseMD, coin, "B", hyperliquid.OrderStatusValueFilled, 200, 0, 0.2, now.Add(-5*time.Minute))))
+	require.NoError(t, recordStatus(store, baseOid, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 200, 0, 0.2, now.Add(-5*time.Minute))))
 
-	require.NoError(t, recordEvent(store, tpMD, tc.BotEvent{
+	require.NoError(t, recordEvent(store, tpOid, tc.BotEvent{
 		CreatedAt: now.Add(-4 * time.Minute),
 		Action:    tc.BotEventActionPlace,
 		Coin:      coin,
@@ -130,15 +130,15 @@ func TestServiceUpdateStatusAdjustsPosition(t *testing.T) {
 		OrderType: tc.MarketOrderDealOrderTypeTakeProfit,
 		Text:      "tp placed",
 	}))
-	initialStatus := makeStatus(tpMD, coin, "S", hyperliquid.OrderStatusValueOpen, 200, 200, 0.205, now.Add(-4*time.Minute+time.Second))
-	require.NoError(t, recordStatus(store, tpMD, initialStatus))
+	initialStatus := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueOpen, 200, 200, 0.205, now.Add(-4*time.Minute+time.Second))
+	require.NoError(t, recordStatus(store, tpOid, initialStatus))
 
 	require.NoError(t, tracker.Rebuild(ctx))
 
 	// Partial fill: remaining 80 of 200.
-	partialStatus := makeStatus(tpMD, coin, "S", hyperliquid.OrderStatusValueOpen, 200, 80, 0.205, now)
-	require.NoError(t, recordStatus(store, tpMD, partialStatus))
-	require.NoError(t, tracker.UpdateStatus(ctx, tpMD, partialStatus))
+	partialStatus := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueOpen, 200, 80, 0.205, now)
+	require.NoError(t, recordStatus(store, tpOid, partialStatus))
+	require.NoError(t, tracker.UpdateStatus(ctx, tpOid, partialStatus))
 
 	snapshot, ok := tracker.Snapshot(dealID)
 	require.True(t, ok)
@@ -166,10 +166,10 @@ func TestReconcileTakeProfits(t *testing.T) {
 
 	recordDeal(t, store, dealID, botID, coin)
 
-	tpMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 1}
+	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
 	now := time.Now()
 
-	require.NoError(t, recordEvent(store, tpMD, tc.BotEvent{
+	require.NoError(t, recordEvent(store, tpOid, tc.BotEvent{
 		CreatedAt: now.Add(-5 * time.Minute),
 		Action:    tc.BotEventActionPlace,
 		Coin:      coin,
@@ -181,17 +181,17 @@ func TestReconcileTakeProfits(t *testing.T) {
 		Text:      "tp placed",
 	}))
 
-	initialStatus := makeStatus(tpMD, coin, "S", hyperliquid.OrderStatusValueOpen, 150, 150, 1.2, now.Add(-4*time.Minute))
-	require.NoError(t, recordStatus(store, tpMD, initialStatus))
+	initialStatus := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueOpen, 150, 150, 1.2, now.Add(-4*time.Minute))
+	require.NoError(t, recordStatus(store, tpOid, initialStatus))
 
 	require.NoError(t, tracker.Rebuild(ctx))
 
-	fresher := makeStatus(tpMD, coin, "S", hyperliquid.OrderStatusValueOpen, 150, 40, 1.2, now.Add(-2*time.Minute))
-	require.NoError(t, tracker.UpdateStatus(ctx, tpMD, fresher))
+	fresher := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueOpen, 150, 40, 1.2, now.Add(-2*time.Minute))
+	require.NoError(t, tracker.UpdateStatus(ctx, tpOid, fresher))
 
 	// Older timestamp that reports a larger remaining size should be ignored.
-	stale := makeStatus(tpMD, coin, "S", hyperliquid.OrderStatusValueOpen, 150, 120, 1.2, now.Add(-3*time.Minute))
-	require.NoError(t, tracker.UpdateStatus(ctx, tpMD, stale))
+	stale := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueOpen, 150, 120, 1.2, now.Add(-3*time.Minute))
+	require.NoError(t, tracker.UpdateStatus(ctx, tpOid, stale))
 
 	snapshot, ok := tracker.Snapshot(dealID)
 	require.True(t, ok)
@@ -216,7 +216,7 @@ func TestApplyScaledOrderUpdatesSnapshot(t *testing.T) {
 
 	recordDeal(t, store, dealID, botID, coin)
 
-	baseMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 1}
+	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
 	now := time.Now().UTC()
 
 	baseEvent := tc.BotEvent{
@@ -229,20 +229,20 @@ func TestApplyScaledOrderUpdatesSnapshot(t *testing.T) {
 		Size:      100,
 		OrderType: tc.MarketOrderDealOrderTypeBase,
 	}
-	require.NoError(t, recordEvent(store, baseMD, baseEvent))
+	require.NoError(t, recordEvent(store, baseOid, baseEvent))
 
-	initialStatus := makeStatus(baseMD, coin, "B", hyperliquid.OrderStatusValueOpen, 100, 100, 24.5, now.Add(-90*time.Second))
-	require.NoError(t, recordStatus(store, baseMD, initialStatus))
+	initialStatus := makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueOpen, 100, 100, 24.5, now.Add(-90*time.Second))
+	require.NoError(t, recordStatus(store, baseOid, initialStatus))
 
 	require.NoError(t, tracker.Rebuild(ctx))
 
-	tracker.ApplyScaledOrder(baseMD, 40, 24.25)
+	tracker.ApplyScaledOrder(baseOid, 40, 24.25)
 
 	snapshot, ok := tracker.Snapshot(dealID)
 	require.True(t, ok)
 	var order *OrderSnapshot
 	for i := range snapshot.Orders {
-		if snapshot.Orders[i].Metadata.Hex() == baseMD.Hex() {
+		if snapshot.Orders[i].OrderId.Hex() == baseOid.Hex() {
 			order = &snapshot.Orders[i]
 			break
 		}
@@ -269,9 +269,9 @@ func TestReconcileTakeProfitsCancelsWhenFlat(t *testing.T) {
 
 	recordDeal(t, store, dealID, botID, coin)
 
-	baseMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 1}
-	tpMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 2}
-	closeMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 3}
+	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
+	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
+	closeOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 3}
 	now := time.Now()
 
 	baseEvent := tc.BotEvent{
@@ -286,8 +286,8 @@ func TestReconcileTakeProfitsCancelsWhenFlat(t *testing.T) {
 		IsMarket:  true,
 		Text:      "base fill",
 	}
-	require.NoError(t, recordEvent(store, baseMD, baseEvent))
-	require.NoError(t, recordStatus(store, baseMD, makeStatus(baseMD, coin, "B", hyperliquid.OrderStatusValueFilled, 5, 0, 8, now.Add(-9*time.Minute))))
+	require.NoError(t, recordEvent(store, baseOid, baseEvent))
+	require.NoError(t, recordStatus(store, baseOid, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 5, 0, 8, now.Add(-9*time.Minute))))
 
 	tpEvent := tc.BotEvent{
 		CreatedAt: now.Add(-8 * time.Minute),
@@ -300,9 +300,9 @@ func TestReconcileTakeProfitsCancelsWhenFlat(t *testing.T) {
 		OrderType: tc.MarketOrderDealOrderTypeTakeProfit,
 		Text:      "tp placed",
 	}
-	require.NoError(t, recordEvent(store, tpMD, tpEvent))
-	tpStatus := makeStatus(tpMD, coin, "S", hyperliquid.OrderStatusValueOpen, 5, 5, 8.5, now.Add(-7*time.Minute))
-	require.NoError(t, recordStatus(store, tpMD, tpStatus))
+	require.NoError(t, recordEvent(store, tpOid, tpEvent))
+	tpStatus := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueOpen, 5, 5, 8.5, now.Add(-7*time.Minute))
+	require.NoError(t, recordStatus(store, tpOid, tpStatus))
 
 	closeEvent := tc.BotEvent{
 		CreatedAt: now.Add(-6 * time.Minute),
@@ -315,9 +315,9 @@ func TestReconcileTakeProfitsCancelsWhenFlat(t *testing.T) {
 		OrderType: tc.MarketOrderDealOrderTypeManualSafety,
 		Text:      "manual exit",
 	}
-	require.NoError(t, recordEvent(store, closeMD, closeEvent))
-	closeStatus := makeStatus(closeMD, coin, "S", hyperliquid.OrderStatusValueFilled, 5, 0, 8.3, now.Add(-5*time.Minute))
-	require.NoError(t, recordStatus(store, closeMD, closeStatus))
+	require.NoError(t, recordEvent(store, closeOid, closeEvent))
+	closeStatus := makeStatus(closeOid, coin, "S", hyperliquid.OrderStatusValueFilled, 5, 0, 8.3, now.Add(-5*time.Minute))
+	require.NoError(t, recordStatus(store, closeOid, closeStatus))
 
 	require.NoError(t, tracker.Rebuild(ctx))
 
@@ -335,7 +335,7 @@ func TestReconcileTakeProfitsCancelsWhenFlat(t *testing.T) {
 	work := actions[0]
 	require.Equal(t, recomma.ActionCancel, work.Action.Type)
 	require.NotNil(t, work.Action.Cancel)
-	require.Equal(t, tpMD.Hex(), work.Action.Cancel.Cloid)
+	require.Equal(t, tpOid.Hex(), work.Action.Cancel.Cloid)
 }
 
 func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
@@ -356,11 +356,11 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 
 		recordDeal(t, store, dealID, botID, coin)
 
-		baseMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 1}
-		tpMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 2}
+		baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
+		tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
 		now := time.Now()
 
-		require.NoError(t, recordEvent(store, baseMD, tc.BotEvent{
+		require.NoError(t, recordEvent(store, baseOid, tc.BotEvent{
 			CreatedAt: now.Add(-10 * time.Minute),
 			Action:    tc.BotEventActionExecute,
 			Coin:      coin,
@@ -370,7 +370,7 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 			Size:      10,
 			OrderType: tc.MarketOrderDealOrderTypeBase,
 		}))
-		require.NoError(t, recordStatus(store, baseMD, makeStatus(baseMD, coin, "B", hyperliquid.OrderStatusValueFilled, 10, 0, 35, now.Add(-9*time.Minute))))
+		require.NoError(t, recordStatus(store, baseOid, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 10, 0, 35, now.Add(-9*time.Minute))))
 
 		tpEvent := tc.BotEvent{
 			CreatedAt: now.Add(-8 * time.Minute),
@@ -382,11 +382,11 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 			Size:      10,
 			OrderType: tc.MarketOrderDealOrderTypeTakeProfit,
 		}
-		require.NoError(t, recordEvent(store, tpMD, tpEvent))
+		require.NoError(t, recordEvent(store, tpOid, tpEvent))
 
 		// Tracker sees the order as cancelled before reconciliation.
-		tpStatus := makeStatus(tpMD, coin, "S", hyperliquid.OrderStatusValueCanceled, 10, 10, 37, now.Add(-7*time.Minute))
-		require.NoError(t, recordStatus(store, tpMD, tpStatus))
+		tpStatus := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueCanceled, 10, 10, 37, now.Add(-7*time.Minute))
+		require.NoError(t, recordStatus(store, tpOid, tpStatus))
 
 		require.NoError(t, tracker.Rebuild(ctx))
 
@@ -406,10 +406,10 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 		require.NotNil(t, work.Action.Create)
 		require.InDelta(t, 10, work.Action.Create.Size, 1e-6)
 		require.True(t, work.Action.Create.ReduceOnly)
-		require.Equal(t, tpMD.Hex(), work.MD.Hex())
+		require.Equal(t, tpOid.Hex(), work.OrderId.Hex())
 		cloid := work.Action.Create.ClientOrderID
 		require.NotNil(t, cloid)
-		require.Equal(t, tpMD.Hex(), *cloid)
+		require.Equal(t, tpOid.Hex(), *cloid)
 	})
 
 	t.Run("modifies mismatched take profit", func(t *testing.T) {
@@ -421,12 +421,12 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 
 		recordDeal(t, store, dealID+1, botID, coin)
 
-		baseMD := metadata.Metadata{BotID: botID, DealID: dealID + 1, BotEventID: 1}
-		tpMD := metadata.Metadata{BotID: botID, DealID: dealID + 1, BotEventID: 2}
+		baseOid := orderid.OrderId{BotID: botID, DealID: dealID + 1, BotEventID: 1}
+		tpOid := orderid.OrderId{BotID: botID, DealID: dealID + 1, BotEventID: 2}
 		now := time.Now()
 
 		// Base fill establishes net qty 15.
-		require.NoError(t, recordEvent(store, baseMD, tc.BotEvent{
+		require.NoError(t, recordEvent(store, baseOid, tc.BotEvent{
 			CreatedAt: now.Add(-10 * time.Minute),
 			Action:    tc.BotEventActionExecute,
 			Coin:      coin,
@@ -436,7 +436,7 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 			Size:      15,
 			OrderType: tc.MarketOrderDealOrderTypeBase,
 		}))
-		require.NoError(t, recordStatus(store, baseMD, makeStatus(baseMD, coin, "B", hyperliquid.OrderStatusValueFilled, 15, 0, 30, now.Add(-9*time.Minute))))
+		require.NoError(t, recordStatus(store, baseOid, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 15, 0, 30, now.Add(-9*time.Minute))))
 
 		tpEvent := tc.BotEvent{
 			CreatedAt: now.Add(-8 * time.Minute),
@@ -448,11 +448,11 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 			Size:      10,
 			OrderType: tc.MarketOrderDealOrderTypeTakeProfit,
 		}
-		require.NoError(t, recordEvent(store, tpMD, tpEvent))
+		require.NoError(t, recordEvent(store, tpOid, tpEvent))
 
 		// Active order is smaller than the net qty, so reconciliation should resize it.
-		tpStatus := makeStatus(tpMD, coin, "S", hyperliquid.OrderStatusValueOpen, 10, 10, 32, now.Add(-7*time.Minute))
-		require.NoError(t, recordStatus(store, tpMD, tpStatus))
+		tpStatus := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueOpen, 10, 10, 32, now.Add(-7*time.Minute))
+		require.NoError(t, recordStatus(store, tpOid, tpStatus))
 
 		require.NoError(t, tracker.Rebuild(ctx))
 
@@ -473,7 +473,7 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 		require.True(t, work.Action.Modify.Order.ReduceOnly)
 		oid, ok := work.Action.Modify.Oid.(string)
 		require.True(t, ok, "expected string OID")
-		require.Equal(t, tpMD.Hex(), oid)
+		require.Equal(t, tpOid.Hex(), oid)
 	})
 }
 
@@ -493,8 +493,8 @@ func TestEnsureTakeProfitRecreatesAfterStaleSubmission(t *testing.T) {
 
 	recordDeal(t, store, dealID, botID, coin)
 
-	baseMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 1}
-	tpMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 2}
+	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
+	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
 	now := time.Now()
 
 	baseEvent := tc.BotEvent{
@@ -509,8 +509,8 @@ func TestEnsureTakeProfitRecreatesAfterStaleSubmission(t *testing.T) {
 		IsMarket:  true,
 		Text:      "base fill",
 	}
-	require.NoError(t, recordEvent(store, baseMD, baseEvent))
-	require.NoError(t, recordStatus(store, baseMD, makeStatus(baseMD, coin, "B", hyperliquid.OrderStatusValueFilled, 10, 0, 35, now.Add(-9*time.Minute))))
+	require.NoError(t, recordEvent(store, baseOid, baseEvent))
+	require.NoError(t, recordStatus(store, baseOid, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 10, 0, 35, now.Add(-9*time.Minute))))
 
 	tpEvent := tc.BotEvent{
 		CreatedAt: now.Add(-8 * time.Minute),
@@ -523,15 +523,15 @@ func TestEnsureTakeProfitRecreatesAfterStaleSubmission(t *testing.T) {
 		OrderType: tc.MarketOrderDealOrderTypeTakeProfit,
 		Text:      "tp placed",
 	}
-	tpRowID, err := store.RecordThreeCommasBotEvent(ctx, tpMD, tpEvent)
+	tpRowID, err := store.RecordThreeCommasBotEvent(ctx, tpOid, tpEvent)
 	require.NoError(t, err)
 
-	create := adapter.ToCreateOrderRequest(coin, recomma.BotEvent{BotEvent: tpEvent}, tpMD)
+	create := adapter.ToCreateOrderRequest(coin, recomma.BotEvent{BotEvent: tpEvent}, tpOid)
 	require.True(t, create.ReduceOnly)
-	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, tpMD, create, tpRowID))
+	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, tpOid, create, tpRowID))
 
-	canceled := makeStatus(tpMD, coin, "S", hyperliquid.OrderStatusValueCanceled, 10, 10, 37, now.Add(-7*time.Minute))
-	require.NoError(t, recordStatus(store, tpMD, canceled))
+	canceled := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueCanceled, 10, 10, 37, now.Add(-7*time.Minute))
+	require.NoError(t, recordStatus(store, tpOid, canceled))
 
 	require.NoError(t, tracker.Rebuild(ctx))
 
@@ -550,10 +550,10 @@ func TestEnsureTakeProfitRecreatesAfterStaleSubmission(t *testing.T) {
 	require.NotNil(t, work.Action.Create)
 	require.InDelta(t, snapshot.Position.NetQty, work.Action.Create.Size, 1e-6)
 	require.True(t, work.Action.Create.ReduceOnly)
-	require.Equal(t, tpMD.Hex(), work.MD.Hex())
+	require.Equal(t, tpOid.Hex(), work.OrderId.Hex())
 }
 
-func TestReconcileTakeProfitsRecreatesAfterCancelWithMissingMetadata(t *testing.T) {
+func TestReconcileTakeProfitsRecreatesAfterCancelWithMissingOrderId(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -569,8 +569,8 @@ func TestReconcileTakeProfitsRecreatesAfterCancelWithMissingMetadata(t *testing.
 
 	recordDeal(t, store, dealID, botID, coin)
 
-	baseMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 1}
-	tpMD := metadata.Metadata{BotID: botID, DealID: dealID, BotEventID: 2}
+	baseMD := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
+	tpMD := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
 	now := time.Now()
 
 	baseEvent := tc.BotEvent{
@@ -647,7 +647,7 @@ func TestReconcileTakeProfitsRecreatesAfterCancelWithMissingMetadata(t *testing.
 	require.NotNil(t, createWork.Action.Create)
 	require.True(t, createWork.Action.Create.ReduceOnly)
 	require.InDelta(t, snapshot.Position.NetQty, createWork.Action.Create.Size, 1e-6)
-	require.Equal(t, tpMD.Hex(), createWork.MD.Hex())
+	require.Equal(t, tpMD.Hex(), createWork.OrderId.Hex())
 }
 
 // Helpers
@@ -710,16 +710,16 @@ func recordDeal(t *testing.T, store *storage.Storage, dealID, botID uint32, coin
 	require.NoError(t, err)
 }
 
-func recordEvent(store *storage.Storage, md metadata.Metadata, evt tc.BotEvent) error {
-	_, err := store.RecordThreeCommasBotEvent(context.Background(), md, evt)
+func recordEvent(store *storage.Storage, oid orderid.OrderId, evt tc.BotEvent) error {
+	_, err := store.RecordThreeCommasBotEvent(context.Background(), oid, evt)
 	return err
 }
 
-func recordStatus(store *storage.Storage, md metadata.Metadata, status hyperliquid.WsOrder) error {
-	return store.RecordHyperliquidStatus(context.Background(), md, status)
+func recordStatus(store *storage.Storage, oid orderid.OrderId, status hyperliquid.WsOrder) error {
+	return store.RecordHyperliquidStatus(context.Background(), oid, status)
 }
 
-func makeStatus(md metadata.Metadata, coin, side string, status hyperliquid.OrderStatusValue, original, remaining, limit float64, ts time.Time) hyperliquid.WsOrder {
+func makeStatus(oid orderid.OrderId, coin, side string, status hyperliquid.OrderStatusValue, original, remaining, limit float64, ts time.Time) hyperliquid.WsOrder {
 	return hyperliquid.WsOrder{
 		Order: hyperliquid.WsBasicOrder{
 			Coin:      coin,
@@ -729,7 +729,7 @@ func makeStatus(md metadata.Metadata, coin, side string, status hyperliquid.Orde
 			Oid:       ts.UnixNano(),
 			Timestamp: ts.UnixMilli(),
 			OrigSz:    formatFloat(original),
-			Cloid:     md.HexAsPointer(),
+			Cloid:     oid.HexAsPointer(),
 		},
 		Status:          status,
 		StatusTimestamp: ts.UnixMilli(),

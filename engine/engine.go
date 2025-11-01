@@ -13,7 +13,7 @@ import (
 	"github.com/recomma/recomma/adapter"
 	"github.com/recomma/recomma/engine/orderscaler"
 	"github.com/recomma/recomma/filltracker"
-	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
 	"golang.org/x/sync/errgroup"
@@ -197,7 +197,7 @@ func (e *Engine) HandleDeal(ctx context.Context, wi WorkKey) error {
 
 func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, events []tc.BotEvent) error {
 	logger := e.logger.With("deal-id", wi.DealID).With("bot-id", wi.BotID)
-	seen := make(map[uint32]metadata.Metadata)
+	seen := make(map[uint32]orderid.OrderId)
 
 	var fillSnapshot *filltracker.DealSnapshot
 	if e.tracker != nil {
@@ -216,13 +216,13 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 	}
 
 	for _, event := range events {
-		md := metadata.Metadata{
+		oid := orderid.OrderId{
 			BotID:      wi.BotID,
 			DealID:     wi.DealID,
 			BotEventID: event.FingerprintAsID(),
 		}
 		// we want to store all incoming as a log
-		_, err := e.store.RecordThreeCommasBotEventLog(ctx, md, event)
+		_, err := e.store.RecordThreeCommasBotEventLog(ctx, oid, event)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("record bot event log: %w", err)
@@ -239,7 +239,7 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 		// we only want to act on PLACING, CANCEL and MODIFY
 		// we assume here that when within the span of 15s (our poll time) a botevent went from PLACING to CANCEL we can ignore it
 		if event.Action == tc.BotEventActionPlace || event.Action == tc.BotEventActionCancel || event.Action == tc.BotEventActionModify {
-			lastInsertedId, err := e.store.RecordThreeCommasBotEvent(ctx, md, event)
+			lastInsertedId, err := e.store.RecordThreeCommasBotEvent(ctx, oid, event)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					// this means we saw it before, no error
@@ -248,21 +248,21 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 				return fmt.Errorf("record bot event: %w", err)
 			}
 			if lastInsertedId != 0 {
-				seen[md.BotEventID] = md
+				seen[oid.BotEventID] = oid
 			}
 		}
 	}
 
-	for _, md := range seen {
-		action, latestEvent, shouldEmit, err := e.reduceOrderEvents(ctx, currency, md, logger.With("botevent-id", md.BotEventID))
+	for _, oid := range seen {
+		action, latestEvent, shouldEmit, err := e.reduceOrderEvents(ctx, currency, oid, logger.With("botevent-id", oid.BotEventID))
 		if err != nil {
-			return fmt.Errorf("reduce order %d: %w", md.BotEventID, err)
+			return fmt.Errorf("reduce order %d: %w", oid.BotEventID, err)
 		}
 		if !shouldEmit {
 			continue
 		}
 		if fillSnapshot != nil && latestEvent != nil {
-			action, shouldEmit = e.adjustActionWithTracker(currency, md, *latestEvent, action, fillSnapshot, logger.With("botevent-id", md.BotEventID))
+			action, shouldEmit = e.adjustActionWithTracker(currency, oid, *latestEvent, action, fillSnapshot, logger.With("botevent-id", oid.BotEventID))
 			if !shouldEmit {
 				continue
 			}
@@ -270,23 +270,23 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 		var scaleResult *orderscaler.Result
 		if latestEvent != nil {
 			var err error
-			action, scaleResult, shouldEmit, err = e.applyScaling(ctx, md, latestEvent, action, logger.With("botevent-id", md.BotEventID))
+			action, scaleResult, shouldEmit, err = e.applyScaling(ctx, oid, latestEvent, action, logger.With("botevent-id", oid.BotEventID))
 			if err != nil {
-				return fmt.Errorf("scale order %d: %w", md.BotEventID, err)
+				return fmt.Errorf("scale order %d: %w", oid.BotEventID, err)
 			}
 			if !shouldEmit {
 				continue
 			}
 			if e.tracker != nil && scaleResult != nil {
-				e.tracker.ApplyScaledOrder(md, scaleResult.Size, scaleResult.Price)
+				e.tracker.ApplyScaledOrder(oid, scaleResult.Size, scaleResult.Price)
 			}
 		}
-		work := recomma.OrderWork{MD: md, Action: action}
+		work := recomma.OrderWork{OrderId: oid, Action: action}
 		if latestEvent != nil {
 			work.BotEvent = *latestEvent
 		}
 		if err := e.emitter.Emit(ctx, work); err != nil {
-			e.logger.Warn("could not submit order", slog.Any("md", md), slog.Any("action", action), slog.String("error", err.Error()))
+			e.logger.Warn("could not submit order", slog.Any("orderid", oid), slog.Any("action", action), slog.String("error", err.Error()))
 		}
 	}
 
@@ -300,14 +300,14 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 func (e *Engine) reduceOrderEvents(
 	ctx context.Context,
 	currency string,
-	md metadata.Metadata,
+	oid orderid.OrderId,
 	logger *slog.Logger,
 ) (recomma.Action, *recomma.BotEvent, bool, error) {
 
 	// NB: we actually only care about the PLACING one's
 
 	// rows are already sorted by CreatedAt ASC in ListEventsForOrder.
-	events, err := e.store.ListEventsForOrder(ctx, md.BotID, md.DealID, md.BotEventID)
+	events, err := e.store.ListEventsForOrder(ctx, oid.BotID, oid.DealID, oid.BotEventID)
 	if err != nil {
 		return recomma.Action{}, nil, false, fmt.Errorf("load event history: %w", err)
 	}
@@ -320,7 +320,7 @@ func (e *Engine) reduceOrderEvents(
 	prev := previousDistinct(events)
 
 	// Did we already create anything for this CLOID on Hyperliquid?
-	submitted, haveSubmission, err := e.store.LoadHyperliquidSubmission(ctx, md)
+	submitted, haveSubmission, err := e.store.LoadHyperliquidSubmission(ctx, oid)
 	if err != nil {
 		return recomma.Action{}, nil, false, fmt.Errorf("load submission: %w", err)
 	}
@@ -332,7 +332,7 @@ func (e *Engine) reduceOrderEvents(
 		prev = nil
 	}
 
-	action := adapter.BuildAction(currency, prev, latest, md)
+	action := adapter.BuildAction(currency, prev, latest, oid)
 
 	switch action.Type {
 	case recomma.ActionNone:
@@ -350,7 +350,7 @@ func (e *Engine) reduceOrderEvents(
 		// differ. If HL never saw the create we fall back to a create using
 		// the freshest snapshot so the venue ends up with the right values.
 		if !hasLocalOrder {
-			req := adapter.ToCreateOrderRequest(currency, latest, md)
+			req := adapter.ToCreateOrderRequest(currency, latest, oid)
 			logger.Warn("modify requested before create; falling back", slog.Any("latest", latest))
 			logger.Debug("emit create", slog.Any("request", req))
 			return recomma.Action{Type: recomma.ActionCreate, Create: &req}, &latestCopy, true, nil
@@ -412,7 +412,7 @@ func nearlyEqual(a, b float64) bool {
 
 func (e *Engine) adjustActionWithTracker(
 	currency string,
-	md metadata.Metadata,
+	oid orderid.OrderId,
 	latest recomma.BotEvent,
 	action recomma.Action,
 	snapshot *filltracker.DealSnapshot,
@@ -445,7 +445,7 @@ func (e *Engine) adjustActionWithTracker(
 
 	switch action.Type {
 	case recomma.ActionNone:
-		req := adapter.ToCreateOrderRequest(currency, latest, md)
+		req := adapter.ToCreateOrderRequest(currency, latest, oid)
 		req.Size = desiredQty
 		req.ReduceOnly = true
 		logger.Info("placing take profit to match position",
@@ -455,7 +455,7 @@ func (e *Engine) adjustActionWithTracker(
 		return recomma.Action{Type: recomma.ActionCreate, Create: &req}, true
 	case recomma.ActionCreate:
 		if action.Create == nil {
-			req := adapter.ToCreateOrderRequest(currency, latest, md)
+			req := adapter.ToCreateOrderRequest(currency, latest, oid)
 			action.Create = &req
 		}
 		action.Create.Size = desiredQty
@@ -467,7 +467,7 @@ func (e *Engine) adjustActionWithTracker(
 		return action, true
 	case recomma.ActionModify:
 		if action.Modify == nil {
-			req := adapter.ToCreateOrderRequest(currency, latest, md)
+			req := adapter.ToCreateOrderRequest(currency, latest, oid)
 			req.Size = desiredQty
 			req.ReduceOnly = true
 			logger.Warn("modify without prior request; emitting create instead",
@@ -492,7 +492,7 @@ func (e *Engine) adjustActionWithTracker(
 
 func (e *Engine) applyScaling(
 	ctx context.Context,
-	md metadata.Metadata,
+	oid orderid.OrderId,
 	latest *recomma.BotEvent,
 	action recomma.Action,
 	logger *slog.Logger,
@@ -506,7 +506,7 @@ func (e *Engine) applyScaling(
 		if action.Create == nil {
 			return action, nil, true, nil
 		}
-		req := orderscaler.BuildRequest(md, latest.BotEvent, *action.Create)
+		req := orderscaler.BuildRequest(oid, latest.BotEvent, *action.Create)
 		result, err := e.scaler.Scale(ctx, req, action.Create)
 		if err != nil {
 			if errors.Is(err, orderscaler.ErrBelowMinimum) {
@@ -530,7 +530,7 @@ func (e *Engine) applyScaling(
 		if action.Modify == nil {
 			return action, nil, true, nil
 		}
-		req := orderscaler.BuildRequest(md, latest.BotEvent, action.Modify.Order)
+		req := orderscaler.BuildRequest(oid, latest.BotEvent, action.Modify.Order)
 		result, err := e.scaler.Scale(ctx, req, &action.Modify.Order)
 		if err != nil {
 			if errors.Is(err, orderscaler.ErrBelowMinimum) {

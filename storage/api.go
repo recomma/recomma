@@ -17,7 +17,7 @@ import (
 	hyperliquid "github.com/sonirico/go-hyperliquid"
 
 	api "github.com/recomma/recomma/internal/api"
-	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/storage/sqlcgen"
 )
 
@@ -224,12 +224,12 @@ func (s *Storage) ListOrderScalers(ctx context.Context, opts api.ListOrderScaler
 	}
 
 	orderOpts := api.ListOrdersOptions{
-		MetadataPrefix: opts.MetadataPrefix,
-		BotID:          opts.BotID,
-		DealID:         opts.DealID,
-		BotEventID:     opts.BotEventID,
-		Limit:          opts.Limit,
-		PageToken:      opts.PageToken,
+		OrderIdPrefix: opts.OrderIdPrefix,
+		BotID:         opts.BotID,
+		DealID:        opts.DealID,
+		BotEventID:    opts.BotEventID,
+		Limit:         opts.Limit,
+		PageToken:     opts.PageToken,
 	}
 
 	rows, next, err := s.ListOrders(ctx, orderOpts)
@@ -239,16 +239,16 @@ func (s *Storage) ListOrderScalers(ctx context.Context, opts api.ListOrderScaler
 
 	items := make([]api.OrderScalerConfigItem, 0, len(rows))
 	for _, row := range rows {
-		effective, err := s.ResolveEffectiveOrderScaler(ctx, row.Metadata)
+		effective, err := s.ResolveEffectiveOrderScaler(ctx, row.OrderId)
 		if err != nil {
 			return nil, nil, err
 		}
 		cfgPtr := toAPIEffectiveOrderScaler(effective)
 		if cfgPtr == nil {
-			return nil, nil, fmt.Errorf("build effective scaler for %s", row.Metadata.Hex())
+			return nil, nil, fmt.Errorf("build effective scaler for %s", row.OrderId.Hex())
 		}
 		items = append(items, api.OrderScalerConfigItem{
-			Metadata:   row.Metadata,
+			OrderId:    row.OrderId,
 			ObservedAt: effective.UpdatedAt(),
 			Actor:      effective.Actor(),
 			Config:     *cfgPtr,
@@ -298,8 +298,8 @@ func (s *Storage) DeleteBotOrderScalerOverride(ctx context.Context, botID uint32
 	return s.DeleteBotOrderScaler(ctx, botID, updatedBy)
 }
 
-func (s *Storage) ResolveEffectiveOrderScalerConfig(ctx context.Context, md metadata.Metadata) (api.EffectiveOrderScaler, error) {
-	effective, err := s.ResolveEffectiveOrderScaler(ctx, md)
+func (s *Storage) ResolveEffectiveOrderScalerConfig(ctx context.Context, oid orderid.OrderId) (api.EffectiveOrderScaler, error) {
+	effective, err := s.ResolveEffectiveOrderScaler(ctx, oid)
 	if err != nil {
 		return api.EffectiveOrderScaler{}, err
 	}
@@ -363,9 +363,9 @@ func (s *Storage) ListOrders(ctx context.Context, opts api.ListOrdersOptions) ([
 		args = append(args, logTo)
 	}
 
-	if opts.MetadataPrefix != nil {
-		if prefix := strings.TrimSpace(*opts.MetadataPrefix); prefix != "" {
-			conditions = append(conditions, "LOWER(md) LIKE ?")
+	if opts.OrderIdPrefix != nil {
+		if prefix := strings.TrimSpace(*opts.OrderIdPrefix); prefix != "" {
+			conditions = append(conditions, "LOWER(order_id) LIKE ?")
 			args = append(args, strings.ToLower(prefix)+"%")
 		}
 	}
@@ -386,9 +386,10 @@ func (s *Storage) ListOrders(ctx context.Context, opts api.ListOrdersOptions) ([
 		args = append(args, cursorObservedAt, cursorObservedAt, cursorID)
 	}
 
+	// TODO: tear out this hardcoded query -> move to sqlc
 	var queryBuilder strings.Builder
 	queryBuilder.WriteString(`
-SELECT id, md, bot_id, deal_id, botevent_id, created_at_utc, observed_at_utc, payload
+SELECT id, order_id, bot_id, deal_id, botevent_id, created_at_utc, observed_at_utc, payload
 FROM threecommas_botevents`)
 	if len(conditions) > 0 {
 		queryBuilder.WriteString(" WHERE ")
@@ -408,7 +409,7 @@ FROM threecommas_botevents`)
 
 	type rawOrder struct {
 		id         int64
-		md         string
+		oid        string
 		botID      int64
 		dealID     int64
 		botEventID int64
@@ -422,7 +423,7 @@ FROM threecommas_botevents`)
 		var ro rawOrder
 		if err := rows.Scan(
 			&ro.id,
-			&ro.md,
+			&ro.oid,
 			&ro.botID,
 			&ro.dealID,
 			&ro.botEventID,
@@ -451,12 +452,12 @@ FROM threecommas_botevents`)
 	}
 
 	items := make([]api.OrderItem, 0, len(raw))
-	byMetadata := make(map[string][]int, len(raw))
+	byOrderId := make(map[string][]int, len(raw))
 
 	for _, ro := range raw {
-		md, err := metadata.FromHexString(ro.md)
+		oid, err := orderid.FromHexString(ro.oid)
 		if err != nil {
-			return nil, nil, fmt.Errorf("decode metadata %q: %w", ro.md, err)
+			return nil, nil, fmt.Errorf("decode orderid %q: %w", ro.oid, err)
 		}
 
 		var event tc.BotEvent
@@ -466,20 +467,20 @@ FROM threecommas_botevents`)
 		eventCopy := event
 
 		item := api.OrderItem{
-			Metadata:   *md,
+			OrderId:    *oid,
 			ObservedAt: time.UnixMilli(ro.observedAt).UTC(),
 			BotEvent:   &eventCopy,
 		}
 		items = append(items, item)
 		idx := len(items) - 1
-		byMetadata[ro.md] = append(byMetadata[ro.md], idx)
+		byOrderId[ro.oid] = append(byOrderId[ro.oid], idx)
 	}
 
-	for mdHex, indexes := range byMetadata {
+	for oidHex, indexes := range byOrderId {
 		if len(indexes) == 0 {
 			continue
 		}
-		metadataCopy := items[indexes[0]].Metadata
+		oidCopy := items[indexes[0]].OrderId
 
 		var (
 			actionKind     sql.NullString
@@ -489,6 +490,8 @@ FROM threecommas_botevents`)
 			updatedAtUTC   sql.NullInt64
 		)
 
+		// TODO: remove hardcoded query!
+
 		err := s.db.QueryRowContext(ctx, `
 SELECT action_kind,
        create_payload,
@@ -496,11 +499,11 @@ SELECT action_kind,
        cancel_payload,
        updated_at_utc
 FROM hyperliquid_submissions
-WHERE md = ?
-`, mdHex).Scan(&actionKind, &createPayload, &modifyPayloads, &cancelPayload, &updatedAtUTC)
+WHERE order_id = ?
+`, oidHex).Scan(&actionKind, &createPayload, &modifyPayloads, &cancelPayload, &updatedAtUTC)
 
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, nil, fmt.Errorf("fetch submission for %s: %w", mdHex, err)
+			return nil, nil, fmt.Errorf("fetch submission for %s: %w", oidHex, err)
 		}
 
 		var submission interface{}
@@ -510,7 +513,7 @@ WHERE md = ?
 				if len(createPayload) > 0 {
 					var decoded hyperliquid.CreateOrderRequest
 					if err := json.Unmarshal(createPayload, &decoded); err != nil {
-						return nil, nil, fmt.Errorf("decode create submission for %s: %w", mdHex, err)
+						return nil, nil, fmt.Errorf("decode create submission for %s: %w", oidHex, err)
 					}
 					submission = &decoded
 				}
@@ -518,7 +521,7 @@ WHERE md = ?
 				if len(modifyPayloads) > 0 {
 					var decoded []hyperliquid.ModifyOrderRequest
 					if err := json.Unmarshal(modifyPayloads, &decoded); err != nil {
-						return nil, nil, fmt.Errorf("decode modify submission for %s: %w", mdHex, err)
+						return nil, nil, fmt.Errorf("decode modify submission for %s: %w", oidHex, err)
 					}
 					if len(decoded) > 0 {
 						last := decoded[len(decoded)-1]
@@ -529,7 +532,7 @@ WHERE md = ?
 				if len(cancelPayload) > 0 {
 					var decoded hyperliquid.CancelOrderRequestByCloid
 					if err := json.Unmarshal(cancelPayload, &decoded); err != nil {
-						return nil, nil, fmt.Errorf("decode cancel submission for %s: %w", mdHex, err)
+						return nil, nil, fmt.Errorf("decode cancel submission for %s: %w", oidHex, err)
 					}
 					submission = &decoded
 				}
@@ -541,46 +544,46 @@ WHERE md = ?
 			}
 		}
 
-		statusRow, err := s.queries.FetchLatestHyperliquidStatus(ctx, mdHex)
+		statusRow, err := s.queries.FetchLatestHyperliquidStatus(ctx, oidHex)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, nil, fmt.Errorf("fetch latest status for %s: %w", mdHex, err)
+			return nil, nil, fmt.Errorf("fetch latest status for %s: %w", oidHex, err)
 		}
 		var latestStatus *hyperliquid.WsOrder
 		if err == nil && len(statusRow) > 0 {
 			var decoded hyperliquid.WsOrder
 			if err := json.Unmarshal(statusRow, &decoded); err != nil {
-				return nil, nil, fmt.Errorf("decode latest status for %s: %w", mdHex, err)
+				return nil, nil, fmt.Errorf("decode latest status for %s: %w", oidHex, err)
 			}
 			statusCopy := decoded
 			latestStatus = &statusCopy
 		}
 
 		if opts.IncludeLog {
-			logRows, err := s.queries.ListThreeCommasBotEventLogsForMetadata(ctx, sqlcgen.ListThreeCommasBotEventLogsForMetadataParams{
-				Metadata:     mdHex,
+			logRows, err := s.queries.ListThreeCommasBotEventLogsForOrderId(ctx, sqlcgen.ListThreeCommasBotEventLogsForOrderIdParams{
+				OrderID:      oidHex,
 				ObservedFrom: logFrom,
 				ObservedTo:   logTo,
 			})
 			if err != nil {
-				return nil, nil, fmt.Errorf("list bot event log for %s: %w", mdHex, err)
+				return nil, nil, fmt.Errorf("list bot event log for %s: %w", oidHex, err)
 			}
 
-			statusRows, err := s.queries.ListHyperliquidStatusesForMetadata(ctx, sqlcgen.ListHyperliquidStatusesForMetadataParams{
-				Metadata:     mdHex,
+			statusRows, err := s.queries.ListHyperliquidStatusesForOrderId(ctx, sqlcgen.ListHyperliquidStatusesForOrderIdParams{
+				OrderID:      oidHex,
 				ObservedFrom: logFrom,
 				ObservedTo:   logTo,
 			})
 			if err != nil {
-				return nil, nil, fmt.Errorf("list status history for %s: %w", mdHex, err)
+				return nil, nil, fmt.Errorf("list status history for %s: %w", oidHex, err)
 			}
 
-			auditRows, err := s.queries.ListScaledOrderAuditsForMetadata(ctx, sqlcgen.ListScaledOrderAuditsForMetadataParams{
-				Metadata:     mdHex,
+			auditRows, err := s.queries.ListScaledOrderAuditsForOrderId(ctx, sqlcgen.ListScaledOrderAuditsForOrderIdParams{
+				OrderID:      oidHex,
 				ObservedFrom: logFrom,
 				ObservedTo:   logTo,
 			})
 			if err != nil {
-				return nil, nil, fmt.Errorf("list scaled order audits for %s: %w", mdHex, err)
+				return nil, nil, fmt.Errorf("list scaled order audits for %s: %w", oidHex, err)
 			}
 
 			entries := make([]api.OrderLogItem, 0, len(logRows)+len(statusRows)+len(auditRows)+1)
@@ -588,12 +591,12 @@ WHERE md = ?
 			for _, logRow := range logRows {
 				var evt tc.BotEvent
 				if err := json.Unmarshal(logRow.Payload, &evt); err != nil {
-					return nil, nil, fmt.Errorf("decode log bot event for %s: %w", mdHex, err)
+					return nil, nil, fmt.Errorf("decode log bot event for %s: %w", oidHex, err)
 				}
 				evtCopy := evt
 				entries = append(entries, api.OrderLogItem{
 					Type:       api.ThreeCommasEvent,
-					Metadata:   metadataCopy,
+					OrderId:    oidCopy,
 					ObservedAt: time.UnixMilli(logRow.ObservedAtUtc).UTC(),
 					BotEvent:   &evtCopy,
 				})
@@ -602,12 +605,12 @@ WHERE md = ?
 			for _, statusRow := range statusRows {
 				var decoded hyperliquid.WsOrder
 				if err := json.Unmarshal(statusRow.Status, &decoded); err != nil {
-					return nil, nil, fmt.Errorf("decode status history for %s: %w", mdHex, err)
+					return nil, nil, fmt.Errorf("decode status history for %s: %w", oidHex, err)
 				}
 				statusCopy := decoded
 				entries = append(entries, api.OrderLogItem{
 					Type:       api.HyperliquidStatus,
-					Metadata:   metadataCopy,
+					OrderId:    oidCopy,
 					ObservedAt: time.UnixMilli(statusRow.RecordedAtUtc).UTC(),
 					Status:     &statusCopy,
 				})
@@ -617,12 +620,12 @@ WHERE md = ?
 			for _, auditRow := range auditRows {
 				audit, err := convertScaledOrder(auditRow)
 				if err != nil {
-					return nil, nil, fmt.Errorf("decode scaled order audit for %s: %w", mdHex, err)
+					return nil, nil, fmt.Errorf("decode scaled order audit for %s: %w", oidHex, err)
 				}
 				actor := audit.MultiplierUpdatedBy
 				entries = append(entries, api.OrderLogItem{
 					Type:        api.ScaledOrderAuditEntry,
-					Metadata:    metadataCopy,
+					OrderId:     oidCopy,
 					ObservedAt:  audit.CreatedAt,
 					ScaledAudit: toAPIScaledOrderAudit(audit),
 					Actor:       &actor,
@@ -632,7 +635,7 @@ WHERE md = ?
 			if submission != nil && updatedAtUTC.Valid {
 				entries = append(entries, api.OrderLogItem{
 					Type:       api.HyperliquidSubmission,
-					Metadata:   metadataCopy,
+					OrderId:    oidCopy,
 					ObservedAt: time.UnixMilli(updatedAtUTC.Int64).UTC(),
 					Submission: submission,
 				})

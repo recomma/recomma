@@ -53,13 +53,13 @@ export type HyperliquidOrderStatus = components['schemas']['HyperliquidOrderStat
 export type HyperliquidBestBidOffer = components['schemas']['HyperliquidBestBidOffer'];
 export type HyperliquidPriceLevel = components['schemas']['HyperliquidPriceLevel'];
 
-export type CancelOrderByMetadataRequest =
-  components['schemas']['CancelOrderByMetadataRequest'];
-export type CancelOrderByMetadataResponse =
-  components['schemas']['CancelOrderByMetadataResponse'];
+export type CancelOrderByOrderIdRequest =
+  components['schemas']['CancelOrderByOrderIdRequest'];
+export type CancelOrderByOrderIdResponse =
+  components['schemas']['CancelOrderByOrderIdResponse'];
 
 export type OrderFilterState = {
-  metadata?: string;
+  order_id?: string;
   bot_id?: string;
   deal_id?: string;
   bot_event_id?: string;

@@ -70,8 +70,8 @@ export function FilterBar({ filters, onFiltersChange }: FilterBarProps) {
                 <label className="text-xs text-gray-600 block mb-1.5">Client Order ID</label>
                 <Input
                   placeholder="0x..."
-                  value={filters.metadata || ''}
-                  onChange={(e) => updateFilter('metadata', e.target.value)}
+                  value={filters.order_id || ''}
+                  onChange={(e) => updateFilter('order_id', e.target.value)}
                   className="h-9 text-sm"
                 />
               </div>

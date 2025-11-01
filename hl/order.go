@@ -3,14 +3,14 @@ package hl
 import (
 	"fmt"
 
-	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/orderid"
 	"github.com/sonirico/go-hyperliquid"
 )
 
 // orderResultToWsOrder converts an order status query result into the WsOrder
 // format used by websocket updates. Returns nil when the result does not
 // contain a valid order payload (e.g. unknown CLOID).
-func orderResultToWsOrder(md metadata.Metadata, result *hyperliquid.OrderQueryResult) (*hyperliquid.WsOrder, error) {
+func orderResultToWsOrder(oid orderid.OrderId, result *hyperliquid.OrderQueryResult) (*hyperliquid.WsOrder, error) {
 	if result == nil {
 		return nil, fmt.Errorf("order query result is nil")
 	}
@@ -35,7 +35,7 @@ func orderResultToWsOrder(md metadata.Metadata, result *hyperliquid.OrderQueryRe
 	}
 
 	if wsOrder.Order.Cloid == nil {
-		cloid := md.Hex()
+		cloid := oid.Hex()
 		wsOrder.Order.Cloid = &cloid
 	}
 

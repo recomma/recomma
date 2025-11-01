@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/recomma/recomma/internal/vault"
-	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 )
 
@@ -47,11 +47,11 @@ func (s *orderScalerStubStore) ListOrderScalers(context.Context, ListOrderScaler
 	return nil, nil, nil
 }
 
-func (s *orderScalerStubStore) LoadHyperliquidSubmission(context.Context, metadata.Metadata) (recomma.Action, bool, error) {
+func (s *orderScalerStubStore) LoadHyperliquidSubmission(context.Context, orderid.OrderId) (recomma.Action, bool, error) {
 	return recomma.Action{}, false, nil
 }
 
-func (s *orderScalerStubStore) LoadHyperliquidStatus(context.Context, metadata.Metadata) (*hyperliquid.WsOrder, bool, error) {
+func (s *orderScalerStubStore) LoadHyperliquidStatus(context.Context, orderid.OrderId) (*hyperliquid.WsOrder, bool, error) {
 	return nil, false, nil
 }
 
@@ -64,7 +64,7 @@ func (s *orderScalerStubStore) UpsertDefaultOrderScaler(ctx context.Context, mul
 	s.defaultState.UpdatedBy = updatedBy
 	s.defaultState.UpdatedAt = time.Now().UTC()
 	s.defaultState.Notes = notes
-	s.publishEvent(metadata.Metadata{}, updatedBy)
+	s.publishEvent(orderid.OrderId{}, updatedBy)
 	return s.defaultState, nil
 }
 
@@ -88,22 +88,22 @@ func (s *orderScalerStubStore) UpsertBotOrderScalerOverride(ctx context.Context,
 		UpdatedBy:     updatedBy,
 	}
 	s.overrides[botID] = &override
-	s.publishEvent(metadata.Metadata{BotID: botID}, updatedBy)
+	s.publishEvent(orderid.OrderId{BotID: botID}, updatedBy)
 	return override, nil
 }
 
 func (s *orderScalerStubStore) DeleteBotOrderScalerOverride(ctx context.Context, botID uint32, updatedBy string) error {
 	delete(s.overrides, botID)
-	s.publishEvent(metadata.Metadata{BotID: botID}, updatedBy)
+	s.publishEvent(orderid.OrderId{BotID: botID}, updatedBy)
 	return nil
 }
 
-func (s *orderScalerStubStore) ResolveEffectiveOrderScalerConfig(ctx context.Context, md metadata.Metadata) (EffectiveOrderScaler, error) {
-	override, ok := s.overrides[md.BotID]
-	mdCopy := md
+func (s *orderScalerStubStore) ResolveEffectiveOrderScalerConfig(ctx context.Context, oid orderid.OrderId) (EffectiveOrderScaler, error) {
+	override, ok := s.overrides[oid.BotID]
+	oidCopy := oid
 	effective := EffectiveOrderScaler{
 		Default:    s.defaultState,
-		Metadata:   mdCopy.Hex(),
+		OrderId:    oidCopy.Hex(),
 		Multiplier: s.defaultState.Multiplier,
 		Source:     Default,
 	}
@@ -118,14 +118,14 @@ func (s *orderScalerStubStore) ResolveEffectiveOrderScalerConfig(ctx context.Con
 	return effective, nil
 }
 
-func (s *orderScalerStubStore) publishEvent(md metadata.Metadata, actor string) {
+func (s *orderScalerStubStore) publishEvent(oid orderid.OrderId, actor string) {
 	if s.stream == nil {
 		return
 	}
-	effective, _ := s.ResolveEffectiveOrderScalerConfig(context.Background(), md)
+	effective, _ := s.ResolveEffectiveOrderScalerConfig(context.Background(), oid)
 	event := StreamEvent{
 		Type:         OrderScalerConfigEntry,
-		Metadata:     md,
+		OrderId:      oid,
 		ObservedAt:   time.Now().UTC(),
 		ScalerConfig: &effective,
 		Actor:        &actor,
@@ -280,16 +280,16 @@ func TestMakeOrderLogEntryClampsEffectiveMultiplier(t *testing.T) {
 	handler, _, cleanup := newOrderScalerTestHarness(t)
 	t.Cleanup(cleanup)
 
-	md := metadata.Metadata{BotID: 7}
-	metaHex := md.Hex()
+	oid := orderid.OrderId{BotID: 7}
+	metaHex := oid.Hex()
 	effective := EffectiveOrderScaler{
-		Metadata:   metaHex,
+		OrderId:    metaHex,
 		Multiplier: 3.25,
 		Source:     Default,
 		Default:    OrderScalerState{Multiplier: 3.25},
 	}
 
-	entry, ok := handler.makeOrderLogEntry(context.Background(), md, time.Now().UTC(), OrderScalerConfigEntry, nil, nil, nil, &effective, nil, nil, nil, nil)
+	entry, ok := handler.makeOrderLogEntry(context.Background(), oid, time.Now().UTC(), OrderScalerConfigEntry, nil, nil, nil, &effective, nil, nil, nil, nil)
 	require.True(t, ok)
 
 	logEntry, err := entry.AsOrderScalerConfigLogEntry()

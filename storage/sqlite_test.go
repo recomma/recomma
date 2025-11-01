@@ -12,7 +12,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/oapi-codegen/nullable"
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
-	"github.com/recomma/recomma/metadata"
+	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
 	"github.com/stretchr/testify/require"
@@ -46,12 +46,12 @@ func TestStorageThreeCommasRoundTrip(t *testing.T) {
 
 	cases := []struct {
 		name     string
-		md       metadata.Metadata
+		oid      orderid.OrderId
 		botevent tc.BotEvent
 	}{
 		{
 			name: "basic-roundtrip",
-			md: metadata.Metadata{
+			oid: orderid.OrderId{
 				BotID:      42,
 				DealID:     7,
 				BotEventID: 3,
@@ -78,8 +78,8 @@ func TestStorageThreeCommasRoundTrip(t *testing.T) {
 			},
 		},
 		{
-			name: "different-metadata",
-			md: metadata.Metadata{
+			name: "different-oid",
+			oid: orderid.OrderId{
 				BotID:      99,
 				DealID:     1001,
 				BotEventID: 222,
@@ -112,15 +112,15 @@ func TestStorageThreeCommasRoundTrip(t *testing.T) {
 			store := newTestStorage(t)
 			ctx := context.Background()
 
-			has, err := store.HasMetadata(ctx, tcases.md)
+			has, err := store.HasOrderId(ctx, tcases.oid)
 			if err != nil {
-				t.Fatalf("HasMetadata before insert: %v", err)
+				t.Fatalf("HasOrderId before insert: %v", err)
 			}
 			if has {
-				t.Fatalf("expected HasMetadata to be false before insert")
+				t.Fatalf("expected HasOrderId to be false before insert")
 			}
 
-			inserted, err := store.RecordThreeCommasBotEvent(ctx, tcases.md, tcases.botevent)
+			inserted, err := store.RecordThreeCommasBotEvent(ctx, tcases.oid, tcases.botevent)
 			if err != nil {
 				t.Fatalf("RecordThreeCommasOrder: %v", err)
 			}
@@ -128,15 +128,15 @@ func TestStorageThreeCommasRoundTrip(t *testing.T) {
 				t.Fatalf("RecordThreeCommasOrder: expected insert to be new")
 			}
 
-			has, err = store.HasMetadata(ctx, tcases.md)
+			has, err = store.HasOrderId(ctx, tcases.oid)
 			if err != nil {
-				t.Fatalf("HasMetadata after insert: %v", err)
+				t.Fatalf("HasOrderId after insert: %v", err)
 			}
 			if !has {
-				t.Fatalf("expected HasMetadata to be true after insert")
+				t.Fatalf("expected HasOrderId to be true after insert")
 			}
 
-			botevent, err := store.LoadThreeCommasBotEvent(ctx, tcases.md)
+			botevent, err := store.LoadThreeCommasBotEvent(ctx, tcases.oid)
 			if err != nil {
 				t.Fatalf("LoadThreeCommas: %v", err)
 			}
@@ -148,8 +148,8 @@ func TestStorageThreeCommasRoundTrip(t *testing.T) {
 				t.Fatalf("mismatch after roundtrip (-want +got):\n%s", diff)
 			}
 
-			// ensure the same metadata can be queried again
-			botevent, err = store.LoadThreeCommasBotEvent(ctx, tcases.md)
+			// ensure the same OrderId can be queried again
+			botevent, err = store.LoadThreeCommasBotEvent(ctx, tcases.oid)
 			if err != nil || botevent == nil {
 				t.Fatalf("LoadThreeCommas second read failed: %v", err)
 			}
@@ -161,13 +161,13 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	store := newTestStorage(t)
 	ctx := context.Background()
 
-	md := metadata.Metadata{
+	oid := orderid.OrderId{
 		BotID:      7,
 		DealID:     77,
 		BotEventID: 777,
 	}
 
-	cloid := md.Hex()
+	cloid := oid.Hex()
 	req1 := hyperliquid.CreateOrderRequest{
 		Coin:          "ETH",
 		IsBuy:         true,
@@ -175,15 +175,15 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 		Size:          1.5,
 		ReduceOnly:    false,
 		OrderType:     hyperliquid.OrderType{Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc}},
-		ClientOrderID: md.HexAsPointer(),
+		ClientOrderID: oid.HexAsPointer(),
 	}
 
-	action, found, err := store.LoadHyperliquidSubmission(ctx, md)
+	action, found, err := store.LoadHyperliquidSubmission(ctx, oid)
 	if err != nil {
 		t.Fatalf("LoadHyperliquidSubmission empty: %v", err)
 	}
 	if found {
-		t.Fatalf("expected no submission for fresh metadata")
+		t.Fatalf("expected no submission for fresh orderid")
 	}
 	if action.Type != recomma.ActionNone {
 		t.Fatalf("expected ActionNone for empty submission, got %v", action.Type)
@@ -193,11 +193,11 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	}
 
 	// we are not testing events here, so we just set a fake event row id
-	if err := store.RecordHyperliquidOrderRequest(ctx, md, req1, 123456789); err != nil {
+	if err := store.RecordHyperliquidOrderRequest(ctx, oid, req1, 123456789); err != nil {
 		t.Fatalf("RecordHyperliquidOrderRequest: %v", err)
 	}
 
-	action, found, err = store.LoadHyperliquidSubmission(ctx, md)
+	action, found, err = store.LoadHyperliquidSubmission(ctx, oid)
 	if err != nil {
 		t.Fatalf("LoadHyperliquidSubmission after create: %v", err)
 	}
@@ -226,15 +226,15 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 			Size:          1.25,
 			ReduceOnly:    req1.ReduceOnly,
 			OrderType:     req1.OrderType,
-			ClientOrderID: md.HexAsPointer(),
+			ClientOrderID: oid.HexAsPointer(),
 		},
 	}
 
-	if err := store.AppendHyperliquidModify(ctx, md, modify1, 123456789); err != nil {
+	if err := store.AppendHyperliquidModify(ctx, oid, modify1, 123456789); err != nil {
 		t.Fatalf("AppendHyperliquidModify first: %v", err)
 	}
 
-	action, found, err = store.LoadHyperliquidSubmission(ctx, md)
+	action, found, err = store.LoadHyperliquidSubmission(ctx, oid)
 	if err != nil {
 		t.Fatalf("LoadHyperliquidSubmission after first modify: %v", err)
 	}
@@ -273,11 +273,11 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	modify2.Order.Price = 2435.55
 	modify2.Order.Size = 1.1
 
-	if err := store.AppendHyperliquidModify(ctx, md, modify2, 123456789); err != nil {
+	if err := store.AppendHyperliquidModify(ctx, oid, modify2, 123456789); err != nil {
 		t.Fatalf("AppendHyperliquidModify second: %v", err)
 	}
 
-	action, found, err = store.LoadHyperliquidSubmission(ctx, md)
+	action, found, err = store.LoadHyperliquidSubmission(ctx, oid)
 	if err != nil {
 		t.Fatalf("LoadHyperliquidSubmission after second modify: %v", err)
 	}
@@ -298,11 +298,11 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	}
 
 	cancelReq := hyperliquid.CancelOrderRequestByCloid{Coin: req1.Coin, Cloid: cloid}
-	if err := store.RecordHyperliquidCancel(ctx, md, cancelReq, 123456789); err != nil {
+	if err := store.RecordHyperliquidCancel(ctx, oid, cancelReq, 123456789); err != nil {
 		t.Fatalf("RecordHyperliquidCancel: %v", err)
 	}
 
-	action, found, err = store.LoadHyperliquidSubmission(ctx, md)
+	action, found, err = store.LoadHyperliquidSubmission(ctx, oid)
 	if err != nil {
 		t.Fatalf("LoadHyperliquidSubmission after cancel: %v", err)
 	}
@@ -331,7 +331,7 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 		t.Fatalf("create payload changed after cancel (-want +got):\n%s", diff)
 	}
 
-	reqOnly, foundReq, err := store.LoadHyperliquidRequest(ctx, md)
+	reqOnly, foundReq, err := store.LoadHyperliquidRequest(ctx, oid)
 	if err != nil {
 		t.Fatalf("LoadHyperliquidRequest helper: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 		t.Fatalf("helper create payload mismatch (-want +got):\n%s", diff)
 	}
 
-	statusOnly, foundStatus, err := store.LoadHyperliquidStatus(ctx, md)
+	statusOnly, foundStatus, err := store.LoadHyperliquidStatus(ctx, oid)
 	if err != nil {
 		t.Fatalf("LoadHyperliquidStatus before websocket insert: %v", err)
 	}
@@ -365,11 +365,11 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 		StatusTimestamp: 1700000050,
 	}
 
-	if err := store.RecordHyperliquidStatus(ctx, md, status1); err != nil {
+	if err := store.RecordHyperliquidStatus(ctx, oid, status1); err != nil {
 		t.Fatalf("RecordHyperliquidStatus first: %v", err)
 	}
 
-	statusOnly, foundStatus, err = store.LoadHyperliquidStatus(ctx, md)
+	statusOnly, foundStatus, err = store.LoadHyperliquidStatus(ctx, oid)
 	if err != nil {
 		t.Fatalf("LoadHyperliquidStatus after first insert: %v", err)
 	}
@@ -395,11 +395,11 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 		StatusTimestamp: 1700000350,
 	}
 
-	if err := store.RecordHyperliquidStatus(ctx, md, status2); err != nil {
+	if err := store.RecordHyperliquidStatus(ctx, oid, status2); err != nil {
 		t.Fatalf("RecordHyperliquidStatus second: %v", err)
 	}
 
-	statusOnly, foundStatus, err = store.LoadHyperliquidStatus(ctx, md)
+	statusOnly, foundStatus, err = store.LoadHyperliquidStatus(ctx, oid)
 	if err != nil {
 		t.Fatalf("LoadHyperliquidStatus after second insert: %v", err)
 	}
@@ -410,7 +410,7 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 		t.Fatalf("latest websocket status mismatch (-want +got):\n%s", diff)
 	}
 
-	statuses, err := store.ListHyperliquidStatuses(ctx, md)
+	statuses, err := store.ListHyperliquidStatuses(ctx, oid)
 	if err != nil {
 		t.Fatalf("ListHyperliquidStatuses: %v", err)
 	}
@@ -424,7 +424,7 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 		t.Fatalf("second websocket status mismatch (-want +got):\n%s", diff)
 	}
 
-	action, found, err = store.LoadHyperliquidSubmission(ctx, md)
+	action, found, err = store.LoadHyperliquidSubmission(ctx, oid)
 	if err != nil {
 		t.Fatalf("LoadHyperliquidSubmission final: %v", err)
 	}
@@ -439,12 +439,12 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	}
 }
 
-func TestStorageListHyperliquidMetadata(t *testing.T) {
+func TestStorageListHyperliquidOrderIds(t *testing.T) {
 	store := newTestStorage(t)
 	ctx := context.Background()
 
-	md1 := metadata.Metadata{BotID: 1, DealID: 2, BotEventID: 3}
-	md2 := metadata.Metadata{BotID: 4, DealID: 5, BotEventID: 6}
+	oid1 := orderid.OrderId{BotID: 1, DealID: 2, BotEventID: 3}
+	oid2 := orderid.OrderId{BotID: 4, DealID: 5, BotEventID: 6}
 
 	req := hyperliquid.CreateOrderRequest{
 		Coin:          "ETH",
@@ -452,29 +452,29 @@ func TestStorageListHyperliquidMetadata(t *testing.T) {
 		Price:         100,
 		Size:          1,
 		OrderType:     hyperliquid.OrderType{Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc}},
-		ClientOrderID: md1.HexAsPointer(),
+		ClientOrderID: oid1.HexAsPointer(),
 	}
 
-	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, md1, req, 0))
+	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, oid1, req, 0))
 
 	req2 := req
-	req2.ClientOrderID = md2.HexAsPointer()
-	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, md2, req2, 0))
+	req2.ClientOrderID = oid2.HexAsPointer()
+	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, oid2, req2, 0))
 
-	// Re-insert md1 with modify to ensure we don't duplicate entries.
+	// Re-insert oid1 with modify to ensure we don't duplicate entries.
 	modify := hyperliquid.ModifyOrderRequest{
-		Oid:   md1.Hex(),
+		Oid:   oid1.Hex(),
 		Order: req,
 	}
-	require.NoError(t, store.AppendHyperliquidModify(ctx, md1, modify, 0))
+	require.NoError(t, store.AppendHyperliquidModify(ctx, oid1, modify, 0))
 
-	list, err := store.ListHyperliquidMetadata(ctx)
+	list, err := store.ListHyperliquidOrderIds(ctx)
 	require.NoError(t, err)
 
 	require.Len(t, list, 2)
 
 	hexes := []string{list[0].Hex(), list[1].Hex()}
-	expected := []string{md1.Hex(), md2.Hex()}
+	expected := []string{oid1.Hex(), oid2.Hex()}
 	sort.Strings(hexes)
 	sort.Strings(expected)
 	require.Equal(t, expected, hexes)
@@ -814,9 +814,9 @@ func TestStorageListEventsForOrder(t *testing.T) {
 	dealID := uint32(1601)
 	botEventID := uint32(9)
 
-	mk := func(offset time.Duration, price float64, label string) (metadata.Metadata, tc.BotEvent) {
+	mk := func(offset time.Duration, price float64, label string) (orderid.OrderId, tc.BotEvent) {
 		ts := base.Add(offset)
-		return metadata.Metadata{
+		return orderid.OrderId{
 				BotID:      botID,
 				DealID:     dealID,
 				BotEventID: botEventID,
@@ -842,19 +842,19 @@ func TestStorageListEventsForOrder(t *testing.T) {
 			}
 	}
 
-	md1, evt1 := mk(0, 123.00, "initial revision")
-	md2, evt2 := mk(10*time.Minute, 123.45, "second revision")
-	md3, evt3 := mk(25*time.Minute, 124.10, "final revision")
+	oid1, evt1 := mk(0, 123.00, "initial revision")
+	oid2, evt2 := mk(10*time.Minute, 123.45, "second revision")
+	oid3, evt3 := mk(25*time.Minute, 124.10, "final revision")
 
 	for _, rec := range []struct {
-		md  metadata.Metadata
+		oid orderid.OrderId
 		evt tc.BotEvent
 	}{
-		{md: md2, evt: evt2},
-		{md: md1, evt: evt1},
-		{md: md3, evt: evt3},
+		{oid: oid2, evt: evt2},
+		{oid: oid1, evt: evt1},
+		{oid: oid3, evt: evt3},
 	} {
-		inserted, err := store.RecordThreeCommasBotEvent(ctx, rec.md, rec.evt)
+		inserted, err := store.RecordThreeCommasBotEvent(ctx, rec.oid, rec.evt)
 		if err != nil {
 			t.Fatalf("RecordThreeCommasBotEvent %q: %v", rec.evt.Text, err)
 		}
@@ -863,7 +863,7 @@ func TestStorageListEventsForOrder(t *testing.T) {
 		}
 	}
 
-	otherMD := metadata.Metadata{
+	otherOid := orderid.OrderId{
 		BotID:      botID,
 		DealID:     dealID + 1,
 		BotEventID: botEventID,
@@ -873,7 +873,7 @@ func TestStorageListEventsForOrder(t *testing.T) {
 		Action:    tc.BotEventActionExecute,
 		Coin:      "DOGE",
 	}
-	if inserted, err := store.RecordThreeCommasBotEvent(ctx, otherMD, otherEvt); err != nil {
+	if inserted, err := store.RecordThreeCommasBotEvent(ctx, otherOid, otherEvt); err != nil {
 		t.Fatalf("RecordThreeCommasBotEvent (other): %v", err)
 	} else if inserted == 0 {
 		t.Fatalf("RecordThreeCommasBotEvent (other): expected insert to be new")
@@ -895,7 +895,7 @@ func TestRecordThreeCommasBotEventDuplicateReturnsPreviousInsertID(t *testing.T)
 	ctx := context.Background()
 
 	base := time.Date(2024, time.February, 2, 9, 30, 0, 0, time.UTC)
-	md := metadata.Metadata{
+	oid := orderid.OrderId{
 		BotID:      123,
 		DealID:     456,
 		BotEventID: 789,
@@ -917,12 +917,12 @@ func TestRecordThreeCommasBotEventDuplicateReturnsPreviousInsertID(t *testing.T)
 		Text:          "test duplicate insert",
 	}
 
-	first, err := store.RecordThreeCommasBotEvent(ctx, md, event)
+	first, err := store.RecordThreeCommasBotEvent(ctx, oid, event)
 	require.NoError(t, err, "first insert failed")
 	t.Logf("first id: %d", first)
 	require.NotZero(t, first, "first insert unexpectedly returned zero rowid")
 
-	second, err := store.RecordThreeCommasBotEvent(ctx, md, event)
+	second, err := store.RecordThreeCommasBotEvent(ctx, oid, event)
 	require.ErrorIs(t, err, sql.ErrNoRows, "no rows expected")
 	require.Zero(t, second, "second insert returned non-zero row id")
 	require.NotEqual(t, first, second, "expected unique ids")
@@ -932,16 +932,16 @@ func TestLoadTakeProfitForDeal(t *testing.T) {
 	store := newTestStorage(t)
 	ctx := context.Background()
 
-	t.Run("missing deal returns nil metadata and event", func(t *testing.T) {
-		md, event, err := store.LoadTakeProfitForDeal(ctx, 999)
+	t.Run("missing deal returns nil oid and event", func(t *testing.T) {
+		oid, event, err := store.LoadTakeProfitForDeal(ctx, 999)
 		require.Error(t, err)
-		require.Nil(t, md)
+		require.Nil(t, oid)
 		require.Nil(t, event)
 	})
 
 	t.Run("returns latest take profit event", func(t *testing.T) {
 		base := time.Date(2024, time.January, 15, 8, 0, 0, 0, time.UTC)
-		md := metadata.Metadata{
+		oid := orderid.OrderId{
 			BotID:      321,
 			DealID:     654,
 			BotEventID: 987,
@@ -956,18 +956,18 @@ func TestLoadTakeProfitForDeal(t *testing.T) {
 			Text:          "take profit execution",
 		}
 
-		inserted, err := store.RecordThreeCommasBotEvent(ctx, md, evt)
+		inserted, err := store.RecordThreeCommasBotEvent(ctx, oid, evt)
 		require.NoError(t, err)
 		require.NotZero(t, inserted)
 
-		gotMD, gotEvent, err := store.LoadTakeProfitForDeal(ctx, md.DealID)
+		gotOid, gotEvent, err := store.LoadTakeProfitForDeal(ctx, oid.DealID)
 		require.NoError(t, err)
-		require.NotNil(t, gotMD)
+		require.NotNil(t, gotOid)
 		require.NotNil(t, gotEvent)
 
-		require.Equal(t, md.BotID, gotMD.BotID)
-		require.Equal(t, md.DealID, gotMD.DealID)
-		require.Equal(t, md.BotEventID, gotMD.BotEventID)
+		require.Equal(t, oid.BotID, gotOid.BotID)
+		require.Equal(t, oid.DealID, gotOid.DealID)
+		require.Equal(t, oid.BotEventID, gotOid.BotEventID)
 		require.Equal(t, evt.Coin, gotEvent.Coin)
 		require.Equal(t, evt.Action, gotEvent.Action)
 		require.Equal(t, tc.MarketOrderDealOrderTypeTakeProfit, gotEvent.OrderType)

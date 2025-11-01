@@ -1,39 +1,39 @@
 -- name: InsertThreeCommasBotEvent :one
 INSERT INTO threecommas_botevents (
-    md,
+    order_id,
     bot_id,
     deal_id,
     botevent_id,
     created_at_utc,
     payload
 ) VALUES (
-    sqlc.arg(md),
+    sqlc.arg(order_id),
     sqlc.arg(bot_id),
     sqlc.arg(deal_id),
     sqlc.arg(botevent_id),
     sqlc.arg(created_at_utc),
     sqlc.arg(payload)
 )
-ON CONFLICT(md, botevent_id, created_at_utc) DO NOTHING
+ON CONFLICT(order_id, botevent_id, created_at_utc) DO NOTHING
 RETURNING id;
 
 -- name: InsertThreeCommasBotEventLog :one
 INSERT INTO threecommas_botevents_log (
-    md,
+    order_id,
     bot_id,
     deal_id,
     botevent_id,
     created_at_utc,
     payload
 ) VALUES (
-    sqlc.arg(md),
+    sqlc.arg(order_id),
     sqlc.arg(bot_id),
     sqlc.arg(deal_id),
     sqlc.arg(botevent_id),
     sqlc.arg(created_at_utc),
     sqlc.arg(payload)
 )
-ON CONFLICT(md, botevent_id, created_at_utc) DO NOTHING
+ON CONFLICT(order_id, botevent_id, created_at_utc) DO NOTHING
 RETURNING id;
 
 -- name: ListThreeCommasBotEventsForOrder :many
@@ -44,26 +44,26 @@ WHERE bot_id = sqlc.arg(bot_id)
   AND botevent_id = sqlc.arg(botevent_id)
 ORDER BY created_at_utc ASC, observed_at_utc ASC, id ASC;
 
--- name: HasThreeCommasMetadata :one
+-- name: HasThreeCommasOrderId :one
 SELECT EXISTS(
-    SELECT 1 FROM threecommas_botevents WHERE md = sqlc.arg(md)
+    SELECT 1 FROM threecommas_botevents WHERE order_id = sqlc.arg(order_id)
 );
 
--- name: GetMetadataForDeal :many
-SELECT DISTINCT md
+-- name: GetOrderIdForDeal :many
+SELECT DISTINCT order_id
     FROM threecommas_botevents
     WHERE deal_id = ?;
 
 -- name: FetchThreeCommasBotEvent :one
 SELECT payload
 FROM threecommas_botevents
-WHERE md = sqlc.arg(md)
+WHERE order_id = sqlc.arg(order_id)
 ORDER BY observed_at_utc DESC, id DESC
 LIMIT 1;
 
 -- name: UpsertHyperliquidCreate :exec
 INSERT INTO hyperliquid_submissions (
-    md,
+    order_id,
     action_kind,
     create_payload,
     modify_payloads,
@@ -71,7 +71,7 @@ INSERT INTO hyperliquid_submissions (
     updated_at_utc,
     botevent_row_id
 ) VALUES (
-    sqlc.arg(md),
+    sqlc.arg(order_id),
     'create',
     json(sqlc.arg(create_payload)),
     CAST('[]' AS BLOB),
@@ -79,14 +79,14 @@ INSERT INTO hyperliquid_submissions (
     CAST(unixepoch('now','subsec') * 1000 AS INTEGER),
     sqlc.arg(botevent_row_id)
 )
-ON CONFLICT(md) DO UPDATE SET
+ON CONFLICT(order_id) DO UPDATE SET
     create_payload = excluded.create_payload,
     action_kind    = 'create',
     updated_at_utc = CAST(unixepoch('now','subsec') * 1000 AS INTEGER);
 
 -- name: AppendHyperliquidModify :exec
 INSERT INTO hyperliquid_submissions (
-    md,
+    order_id,
     action_kind,
     create_payload,
     modify_payloads,
@@ -94,7 +94,7 @@ INSERT INTO hyperliquid_submissions (
     updated_at_utc,
     botevent_row_id
 ) VALUES (
-    sqlc.arg(md),
+    sqlc.arg(order_id),
     'modify',
     NULL,
     json_array(json(sqlc.arg(modify_payload))),
@@ -102,7 +102,7 @@ INSERT INTO hyperliquid_submissions (
     CAST(unixepoch('now','subsec') * 1000 AS INTEGER),
     sqlc.arg(botevent_row_id)
 )
-ON CONFLICT(md) DO UPDATE SET
+ON CONFLICT(order_id) DO UPDATE SET
     modify_payloads = json_insert(
         COALESCE(hyperliquid_submissions.modify_payloads, CAST('[]' AS BLOB)),
         '$[#]',
@@ -113,7 +113,7 @@ ON CONFLICT(md) DO UPDATE SET
 
 -- name: UpsertHyperliquidCancel :exec
 INSERT INTO hyperliquid_submissions (
-    md,
+    order_id,
     action_kind,
     create_payload,
     modify_payloads,
@@ -121,7 +121,7 @@ INSERT INTO hyperliquid_submissions (
     updated_at_utc,
     botevent_row_id
 ) VALUES (
-    sqlc.arg(md),
+    sqlc.arg(order_id),
     'cancel',
     NULL,
     '[]',
@@ -129,18 +129,18 @@ INSERT INTO hyperliquid_submissions (
     CAST(unixepoch('now','subsec') * 1000 AS INTEGER),
     sqlc.arg(botevent_row_id)
 )
-ON CONFLICT(md) DO UPDATE SET
+ON CONFLICT(order_id) DO UPDATE SET
     cancel_payload = excluded.cancel_payload,
     action_kind    = 'cancel',
     updated_at_utc = CAST(unixepoch('now','subsec') * 1000 AS INTEGER);
 
 -- name: InsertHyperliquidStatus :exec
 INSERT INTO hyperliquid_status_history (
-    md,
+    order_id,
     status,
     recorded_at_utc
 ) VALUES (
-    sqlc.arg(md),
+    sqlc.arg(order_id),
     sqlc.arg(status),
     sqlc.arg(recorded_at_utc)
 );
@@ -148,14 +148,14 @@ INSERT INTO hyperliquid_status_history (
 -- name: FetchLatestHyperliquidStatus :one
 SELECT status
 FROM hyperliquid_status_history
-WHERE md = sqlc.arg(md)
+WHERE order_id = sqlc.arg(order_id)
 ORDER BY recorded_at_utc DESC, id DESC
 LIMIT 1;
 
 -- name: ListHyperliquidStatuses :many
 SELECT status, recorded_at_utc
 FROM hyperliquid_status_history
-WHERE md = sqlc.arg(md)
+WHERE order_id = sqlc.arg(order_id)
 ORDER BY recorded_at_utc ASC, id ASC;
 
 -- name: FetchHyperliquidSubmission :one
@@ -165,22 +165,22 @@ SELECT
     CAST(modify_payloads AS BLOB) AS modify_payloads,
     CAST(cancel_payload AS BLOB)  AS cancel_payload
 FROM hyperliquid_submissions
-WHERE md = sqlc.arg(md);
+WHERE order_id = sqlc.arg(order_id);
 
--- name: ListHyperliquidMetadata :many
-SELECT md
+-- name: ListHyperliquidOrderIds :many
+SELECT order_id
 FROM hyperliquid_submissions
-ORDER BY md ASC;
+ORDER BY order_id ASC;
 
 -- name: ListLatestHyperliquidSafetyStatuses :many
 WITH latest_status AS (
-    SELECT md, id
+    SELECT order_id, id
     FROM (
         SELECT
-            md,
+            order_id,
             id,
             ROW_NUMBER() OVER (
-                PARTITION BY md
+                PARTITION BY order_id
                 ORDER BY recorded_at_utc DESC, id DESC
             ) AS rn
         FROM hyperliquid_status_history
@@ -188,7 +188,7 @@ WITH latest_status AS (
     WHERE rn = 1
 )
 SELECT
-    b.md AS md,
+    b.order_id AS order_id,
     b.bot_id AS bot_id,
     b.deal_id AS deal_id,
     CAST(json_extract(b.payload, '$.OrderType') AS TEXT)        AS order_type,
@@ -201,7 +201,7 @@ FROM latest_status AS latest
 JOIN hyperliquid_status_history AS h
   ON h.id = latest.id
 JOIN threecommas_botevents AS b
-  ON b.md = latest.md
+  ON b.order_id = latest.order_id
 WHERE b.deal_id = sqlc.arg(deal_id)
   AND CAST(json_extract(b.payload, '$.OrderType') AS TEXT) = 'Safety'
 ORDER BY order_position ASC;
@@ -303,7 +303,7 @@ LIMIT sqlc.arg(limit);
 -- name: ListThreeCommasBotEvents :many
 SELECT
     id,
-    md,
+    order_id,
     bot_id,
     deal_id,
     botevent_id,
@@ -317,8 +317,8 @@ WHERE bot_id = COALESCE(sqlc.arg(bot_id), bot_id)
   AND observed_at_utc >= COALESCE(sqlc.arg(observed_from), observed_at_utc)
   AND observed_at_utc <= COALESCE(sqlc.arg(observed_to), observed_at_utc)
   AND (
-        sqlc.arg(metadata_prefix) IS NULL
-        OR LOWER(md) LIKE LOWER(sqlc.arg(metadata_prefix)) || '%'
+        sqlc.arg(order_id_prefix) IS NULL
+        OR LOWER(order_id) LIKE LOWER(sqlc.arg(order_id_prefix)) || '%'
       )
   AND (
         sqlc.arg(cursor_observed_at) IS NULL
@@ -331,10 +331,10 @@ WHERE bot_id = COALESCE(sqlc.arg(bot_id), bot_id)
 ORDER BY observed_at_utc DESC, id DESC
 LIMIT sqlc.arg(limit);
 
--- name: ListThreeCommasBotEventLogsForMetadata :many
+-- name: ListThreeCommasBotEventLogsForOrderId :many
 SELECT
     id,
-    md,
+    order_id,
     bot_id,
     deal_id,
     botevent_id,
@@ -342,7 +342,7 @@ SELECT
     observed_at_utc,
     payload
 FROM threecommas_botevents_log
-WHERE md = sqlc.arg(metadata)
+WHERE order_id = sqlc.arg(order_id)
   AND observed_at_utc >= COALESCE(sqlc.arg(observed_from), observed_at_utc)
   AND observed_at_utc <= COALESCE(sqlc.arg(observed_to), observed_at_utc)
 ORDER BY observed_at_utc ASC, id ASC;
@@ -350,7 +350,7 @@ ORDER BY observed_at_utc ASC, id ASC;
 -- name: ListThreeCommasBotEventLogs :many
 SELECT
     id,
-    md,
+    order_id,
     bot_id,
     deal_id,
     botevent_id,
@@ -360,20 +360,20 @@ SELECT
 FROM threecommas_botevents_log
 ORDER BY created_at_utc ASC, id ASC;
 
--- name: ListHyperliquidStatusesForMetadata :many
+-- name: ListHyperliquidStatusesForOrderId :many
 SELECT
     id,
     status,
     recorded_at_utc
 FROM hyperliquid_status_history
-WHERE md = sqlc.arg(metadata)
+WHERE order_id = sqlc.arg(order_id)
   AND recorded_at_utc >= COALESCE(sqlc.arg(observed_from), recorded_at_utc)
   AND recorded_at_utc <= COALESCE(sqlc.arg(observed_to), recorded_at_utc)
 ORDER BY recorded_at_utc ASC, id ASC;
 
--- name: ListHyperliquidSubmissionsByMetadata :many
+-- name: ListHyperliquidSubmissionsByOrderId :many
 SELECT
-    md,
+    order_id,
     action_kind,
     CAST(create_payload AS BLOB)  AS create_payload,
     CAST(modify_payloads AS BLOB) AS modify_payloads,
@@ -381,15 +381,15 @@ SELECT
     updated_at_utc,
     botevent_row_id
 FROM hyperliquid_submissions
-WHERE md IN (
-    SELECT value FROM json_each(sqlc.arg(metadata_list))
+WHERE order_id IN (
+    SELECT value FROM json_each(sqlc.arg(order_id_list))
 );
 
 -- name: ListDealIDs :many
 select deal_id from threecommas_deals;
 
 -- name: GetTPForDeal :one
-SELECT md,
+SELECT order_id,
        botevent_id,
        created_at_utc,
        payload
@@ -601,7 +601,7 @@ WHERE bot_id = sqlc.arg(bot_id);
 
 -- name: InsertScaledOrder :one
 INSERT INTO scaled_orders (
-    md,
+    order_id,
     deal_id,
     bot_id,
     original_size,
@@ -616,7 +616,7 @@ INSERT INTO scaled_orders (
     skipped,
     skip_reason
 ) VALUES (
-    sqlc.arg(md),
+    sqlc.arg(order_id),
     sqlc.arg(deal_id),
     sqlc.arg(bot_id),
     sqlc.arg(original_size),
@@ -633,10 +633,10 @@ INSERT INTO scaled_orders (
 )
 RETURNING id;
 
--- name: ListScaledOrdersByMetadata :many
+-- name: ListScaledOrdersByOrderId :many
 SELECT
     id,
-    md,
+    order_id,
     deal_id,
     bot_id,
     original_size,
@@ -651,13 +651,13 @@ SELECT
     skipped,
     skip_reason
 FROM scaled_orders
-WHERE md = sqlc.arg(md)
+WHERE order_id = sqlc.arg(order_id)
 ORDER BY created_at_utc ASC, id ASC;
 
 -- name: ListScaledOrdersByDeal :many
 SELECT
     id,
-    md,
+    order_id,
     deal_id,
     bot_id,
     original_size,
@@ -675,10 +675,10 @@ FROM scaled_orders
 WHERE deal_id = sqlc.arg(deal_id)
 ORDER BY created_at_utc ASC, id ASC;
 
--- name: ListScaledOrderAuditsForMetadata :many
+-- name: ListScaledOrderAuditsForOrderId :many
 SELECT
     id,
-    md,
+    order_id,
     deal_id,
     bot_id,
     original_size,
@@ -693,7 +693,7 @@ SELECT
     skipped,
     skip_reason
 FROM scaled_orders
-WHERE md = sqlc.arg(metadata)
+WHERE order_id = sqlc.arg(order_id)
   AND created_at_utc >= sqlc.arg(observed_from)
   AND created_at_utc <= sqlc.arg(observed_to)
 ORDER BY created_at_utc ASC, id ASC;

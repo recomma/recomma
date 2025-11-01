@@ -44,6 +44,7 @@ Each variable is trimmed before use. URL validation rejects obvious typos to avo
 == Enabling debug mode
 
 . Export the required environment variables. Store development-only credentials in a `.env.debug` file or your shell profile. Never reuse production keys.
+. The file `.env.debug` will automatically be loaded, note it must be in the same working directory as the the binary launches from.
 . Build or run the binary with the `debugmode` tag so the flag is available:
 +
 [source,bash]

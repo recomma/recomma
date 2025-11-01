@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/recomma/recomma/internal/vault"
 )
 
@@ -28,6 +29,9 @@ func Available() bool {
 
 // LoadSecretsFromEnv reads the debug secrets from the environment.
 func LoadSecretsFromEnv() (*vault.Secrets, error) {
+	// we don't care about the error, if it doesn't exist just use the env
+	godotenv.Load(".env.debug")
+
 	lookup := func(envKey string) (string, error) {
 		raw, ok := os.LookupEnv(envKey)
 		if !ok {

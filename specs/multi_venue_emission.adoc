@@ -1,0 +1,103 @@
+= Multi-Venue Emission & Wallet Fan-Out
+:toc:
+:toclevels: 3
+
+== Background
+The current recomma runtime was assembled under the assumption that every mirrored order targets a single Hyperliquid wallet.
+Secrets, storage, and the runtime bootstrap all hard-wire one emitter instance, one websocket listener, and one rate limiter.
+
+Adding support for multiple venues (for now, multiple Hyperliquid wallets; later, other DEX/CEX connectors) requires untangling
+that assumption so that each bot may target one or more venues, and each venue can encapsulate its own credential bundle while
+sharing pacing state where the upstream platform enforces account-level limits.
+
+== Goals
+* Allow operators to configure any bot with one or more venues (primary + optional fan-out) before the engine starts emitting work.
+* Persist venue definitions, wallet material, and bot-to-venue assignments through the vault and storage layers.
+* Route order work, manual actions, and fill tracking through venue-aware identifiers so submissions can coexist without collisions.
+* Share Hyperliquid rate limits across emitter instances that operate on the same on-chain account.
+* Keep the path open for future non-Hyperliquid connectors without reworking the queue/engine contract again.
+
+== Non-Goals
+* Migrating live production data. We can reshape schemas and payloads without back-compat shims because there is no prod state.
+* Delivering the UI implementation in this first iteration. The design captures the necessary surfaces but UI wiring can land later.
+* Building additional exchange adapters right now. Hyperliquid remains the only concrete venue, but the abstraction must allow more.
+
+== Current Shape
+* `recomma.OrderWork` carries an `orderid.OrderId`, action, and bot context with no venue information. The typed queue expects the struct to stay comparable.
+* `QueueEmitter` enqueues work directly, and order workers pop the job and pass it to a single `HyperLiquidEmitter` instance.
+* `HyperLiquidEmitter` owns the REST client, websocket subscription, submission status refresh, and a local rate limiter.
+* Storage tables (`hyperliquid_submissions`, `hyperliquid_status_history`, `scaled_orders`) key rows purely by `orderid.OrderId` hex today, so multiple venues would overwrite each other.
+* Fill tracker maps and SSE streams index only on `orderid.OrderId`, so downstream consumers cannot disambiguate submissions from different venues.
+* Vault payloads store a single Hyperliquid wallet and private key, so there is no place to persist additional venues or credentials.
+
+== Proposed Architecture
+
+=== Venue Abstraction
+* Introduce `type VenueID string` and embed it into a new `recomma.OrderIdentifier` struct alongside the wallet address and `orderid.OrderId` (e.g., `type OrderIdentifier struct { Venue VenueID; Wallet string; Order orderid.OrderId }`).
+* Extend `OrderWork` to include the `OrderIdentifier`. Keep the struct comparable by using fixed-size fields (strings and `orderid.OrderId`).
+* Maintain a registry `map[VenueID]recomma.Emitter` that order workers consult. `QueueEmitter` becomes a router that selects the correct emitter before enqueueing.
+
+=== Bot Assignment & Fan-Out
+* Persist bot-to-venue assignments in storage. A bot may map to multiple venues; the engine should expand each work item into one `OrderWork` per assigned venue.
+* Mark one venue as the primary for any bot that has not been explicitly assigned; operators can configure additional venues per bot via settings.
+* Ensure follow-up actions (auto-cancel, manual cancel) resolve the same set of venues based on stored assignments or submission history, so fan-out remains consistent.
+
+=== Rate Limiting
+* Extract Hyperliquid pacing state into a shared `RateGate` keyed by `(venue type, wallet address)`.
+* Inject the shared gate into any emitter instances that operate on the same Hyperliquid address so `waitTurn()` coordination survives fan-out.
+* Keep rate grouping as an internal concern; operators neither configure nor observe these gates.
+
+=== Runtime Bootstrap
+* When the vault unseals, iterate over the configured venues. For each venue:
+** Construct venue-specific clients (e.g., Hyperliquid REST + websocket) and wire them into a concrete emitter that satisfies `recomma.Emitter`.
+** Register the emitter in the dispatcher map along with its shared rate gate and wallet details.
+* Spawn websocket listeners per venue, sharing connections only when the venue allows it (e.g., reuse BBO feeds with matching URLs, but keep per-wallet trade/update subscriptions).
+
+== Data Model & Storage Changes
+* Update SQLite schema:
+** Add `venues` table describing each configured venue (type, display name, wallet, flags).
+** Replace `hyperliquid_submissions` and `hyperliquid_status_history` primary keys with `(venue_id, wallet, order_id)` and keep the existing columns otherwise.
+** Store typed request/response envelopes per row (e.g., `payload_type`, `payload_blob`) so storage and APIs can round-trip venue-specific structures without bespoke columns.
+** Mirror the new composite key into `scaled_orders` and any other tables that reference submissions by `orderid.OrderId`.
+* Regenerate `sqlc` models and queries so loaders/insertions accept the new identifiers and typed payload descriptors.
+* Extend storage helpers to accept `OrderIdentifier` structs and include `venue_id` filters in lookups, pagination, and SSE stream events.
+
+== Vault & Secrets Payload
+* Replace the single Hyperliquid wallet block with a list of venue descriptors. Each descriptor includes:
+** `id` (string), `type` (e.g., `hyperliquid`), `wallet`, `privateKey`, `primary` flag, and any per-venue options.
+* Update vault sealing/unsealing logic to validate that at least one venue is marked primary.
+* Provide helper accessors so legacy single-wallet payloads can still be consumed if necessary during development.
+
+== API & UI Surface
+* Extend the OpenAPI schema to expose venue inventory and bot-to-venue assignments.
+* Update manual order/cancel endpoints to accept an optional `venue_id`; default to the stored submission venue when omitted.
+* Emit SSE payloads with the new `OrderIdentifier` so the UI can render submissions per venue and wallet.
+* Add setup/settings wizard steps for managing venues (primary selection, additional wallets, bot assignments). Rate gates remain implementation details and are not surfaced.
+* Return typed submission/status payloads through a discriminated union (`oneOf` in OpenAPI) so clients can unmarshal venue-specific envelopes.
+
+== Fill Tracker & Telemetry
+* Re-key in-memory maps by `OrderIdentifier` so multiple venues can track independent fill progress even when order IDs match.
+* Ensure automatic take-profit cancellation emits a job per venue by looking up the stored submissions keyed by the identifier.
+* Tag logs and metrics with `venue_id` to aid debugging when multiple connectors operate simultaneously.
+
+== Pitfalls & Mitigations
+* *Queue comparability.* `OrderWork` must stay comparable for the typed queue. Using `OrderIdentifier` with `VenueID string`, `Wallet string`, and `orderid.OrderId` preserves comparability.
+* *Storage collisions.* Without the `(venue, wallet, order_id)` primary key, submissions from different venues overwrite each other. Schema updates plus sqlc regeneration prevent the collisions.
+* *Typed payload decoding.* Persisting binary blobs without a discriminator would block future connectors. Including `payload_type` (and honoring it in APIs via `oneOf`) keeps decoding deterministic.
+* *Fill tracker overlap.* Existing maps keyed only by order ID will blend venues. Re-key on `OrderIdentifier` and pass the identifier through SSE and cancel logic.
+* *Websocket scope.* The current Hyperliquid websocket follows one `userAddr`. We must spin multiple websocket clients (or multiplex subscriptions) and tag callbacks with the originating venue before persisting status updates.
+* *Rate limiter fragmentation.* Duplicating `HyperLiquidEmitter` would multiply throughput. Extract shared rate gates keyed by wallet so fan-out still honors Hyperliquid pacing.
+* *Manual controls.* Cancel endpoints and CLI tools currently fetch submissions by order ID alone. They must accept `OrderIdentifier` or `(venue, wallet, order_id)` to locate the correct row.
+
+== Open Questions
+* Do we need venue-level configuration for websocket shards or can we assume one connection per wallet?
+
+== Future Work
+* Evaluate per-venue overrides (e.g., leverage, scaling) separately once the base multi-venue infrastructure is stable.
+
+== Next Steps
+1. Finalize the schema changes and regenerate sqlc to validate the new composite keys.
+2. Introduce `OrderIdentifier` and propagate it through `recomma`, storage, queue, and emitter packages.
+3. Build the vault payload changes alongside helpers for legacy payloads.
+4. Update runtime bootstrap to spin up emitters per venue and share Hyperliquid rate gates.
+5. Extend APIs and the fill tracker to operate on the new identifiers.

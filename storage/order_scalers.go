@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/recomma/recomma/internal/api"
@@ -389,11 +390,6 @@ func (s *Storage) InsertScaledOrderAudit(ctx context.Context, params ScaledOrder
 	}
 
 	orderID := params.OrderId.Hex()
-	if params.SubmittedOrderID != nil && *params.SubmittedOrderID != "" {
-		orderID = *params.SubmittedOrderID
-	} else {
-		orderID = fmt.Sprintf("%s#%d", params.OrderId.Hex(), params.StackIndex)
-	}
 
 	insert := sqlcgen.InsertScaledOrderParams{
 		VenueID:             defaultHyperliquidVenueID,
@@ -486,7 +482,7 @@ func (s *Storage) ListScaledOrdersByOrderId(ctx context.Context, oid orderid.Ord
 		return nil, err
 	}
 
-	return convertScaledOrderRows(rows)
+	return convertScaledOrdersFromOrderRows(rows)
 }
 
 func (s *Storage) ListScaledOrdersByDeal(ctx context.Context, dealID uint32) ([]ScaledOrderAudit, error) {
@@ -501,7 +497,7 @@ func (s *Storage) ListScaledOrdersByDeal(ctx context.Context, dealID uint32) ([]
 		return nil, err
 	}
 
-	return convertScaledOrderRows(rows)
+	return convertScaledOrdersFromDealRows(rows)
 }
 
 func boolToInt(v bool) int64 {
@@ -531,10 +527,28 @@ func convertBotOrderScaler(row sqlcgen.BotOrderScaler) BotOrderScalerOverride {
 	}
 }
 
-func convertScaledOrderRows(rows []sqlcgen.ScaledOrder) ([]ScaledOrderAudit, error) {
+func convertScaledOrdersFromOrderRows(rows []sqlcgen.ListScaledOrdersByOrderIdRow) ([]ScaledOrderAudit, error) {
 	audits := make([]ScaledOrderAudit, 0, len(rows))
 	for _, row := range rows {
-		audit, err := convertScaledOrder(row)
+		audit, err := convertScaledOrder(sqlcgen.ScaledOrder{
+			VenueID:             row.VenueID,
+			Wallet:              row.Wallet,
+			OrderID:             row.OrderID,
+			DealID:              row.DealID,
+			BotID:               row.BotID,
+			OriginalSize:        row.OriginalSize,
+			ScaledSize:          row.ScaledSize,
+			Multiplier:          row.Multiplier,
+			RoundingDelta:       row.RoundingDelta,
+			StackIndex:          row.StackIndex,
+			OrderSide:           row.OrderSide,
+			MultiplierUpdatedBy: row.MultiplierUpdatedBy,
+			CreatedAtUtc:        row.CreatedAtUtc,
+			Skipped:             row.Skipped,
+			SkipReason:          row.SkipReason,
+			PayloadType:         row.PayloadType,
+			PayloadBlob:         row.PayloadBlob,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -543,10 +557,67 @@ func convertScaledOrderRows(rows []sqlcgen.ScaledOrder) ([]ScaledOrderAudit, err
 	return audits, nil
 }
 
+func convertScaledOrdersFromDealRows(rows []sqlcgen.ListScaledOrdersByDealRow) ([]ScaledOrderAudit, error) {
+	audits := make([]ScaledOrderAudit, 0, len(rows))
+	for _, row := range rows {
+		audit, err := convertScaledOrder(sqlcgen.ScaledOrder{
+			VenueID:             row.VenueID,
+			Wallet:              row.Wallet,
+			OrderID:             row.OrderID,
+			DealID:              row.DealID,
+			BotID:               row.BotID,
+			OriginalSize:        row.OriginalSize,
+			ScaledSize:          row.ScaledSize,
+			Multiplier:          row.Multiplier,
+			RoundingDelta:       row.RoundingDelta,
+			StackIndex:          row.StackIndex,
+			OrderSide:           row.OrderSide,
+			MultiplierUpdatedBy: row.MultiplierUpdatedBy,
+			CreatedAtUtc:        row.CreatedAtUtc,
+			Skipped:             row.Skipped,
+			SkipReason:          row.SkipReason,
+			PayloadType:         row.PayloadType,
+			PayloadBlob:         row.PayloadBlob,
+		})
+		if err != nil {
+			return nil, err
+		}
+		audits = append(audits, audit)
+	}
+	return audits, nil
+}
+
+func convertScaledOrderFromAuditRow(row sqlcgen.ListScaledOrderAuditsForOrderIdRow) (ScaledOrderAudit, error) {
+	return convertScaledOrder(sqlcgen.ScaledOrder{
+		VenueID:             row.VenueID,
+		Wallet:              row.Wallet,
+		OrderID:             row.OrderID,
+		DealID:              row.DealID,
+		BotID:               row.BotID,
+		OriginalSize:        row.OriginalSize,
+		ScaledSize:          row.ScaledSize,
+		Multiplier:          row.Multiplier,
+		RoundingDelta:       row.RoundingDelta,
+		StackIndex:          row.StackIndex,
+		OrderSide:           row.OrderSide,
+		MultiplierUpdatedBy: row.MultiplierUpdatedBy,
+		CreatedAtUtc:        row.CreatedAtUtc,
+		Skipped:             row.Skipped,
+		SkipReason:          row.SkipReason,
+		PayloadType:         row.PayloadType,
+		PayloadBlob:         row.PayloadBlob,
+	})
+}
+
 func convertScaledOrder(row sqlcgen.ScaledOrder) (ScaledOrderAudit, error) {
-	oid, err := orderid.FromHexString(row.OrderID)
+	originalOrderID := row.OrderID
+	trimmedOrderID := originalOrderID
+	if idx := strings.Index(trimmedOrderID, "#"); idx >= 0 {
+		trimmedOrderID = trimmedOrderID[:idx]
+	}
+	oid, err := orderid.FromHexString(trimmedOrderID)
 	if err != nil {
-		return ScaledOrderAudit{}, fmt.Errorf("decode orderid %q: %w", row.OrderID, err)
+		return ScaledOrderAudit{}, fmt.Errorf("decode orderid %q: %w", originalOrderID, err)
 	}
 
 	var submittedID *string

@@ -1288,7 +1288,27 @@ type ListScaledOrderAuditsForOrderIdParams struct {
 	ObservedTo   int64  `json:"observed_to"`
 }
 
-func (q *Queries) ListScaledOrderAuditsForOrderId(ctx context.Context, arg ListScaledOrderAuditsForOrderIdParams) ([]ScaledOrder, error) {
+type ListScaledOrderAuditsForOrderIdRow struct {
+	VenueID             string  `json:"venue_id"`
+	Wallet              string  `json:"wallet"`
+	OrderID             string  `json:"order_id"`
+	DealID              int64   `json:"deal_id"`
+	BotID               int64   `json:"bot_id"`
+	OriginalSize        float64 `json:"original_size"`
+	ScaledSize          float64 `json:"scaled_size"`
+	Multiplier          float64 `json:"multiplier"`
+	RoundingDelta       float64 `json:"rounding_delta"`
+	StackIndex          int64   `json:"stack_index"`
+	OrderSide           string  `json:"order_side"`
+	MultiplierUpdatedBy string  `json:"multiplier_updated_by"`
+	CreatedAtUtc        int64   `json:"created_at_utc"`
+	Skipped             int64   `json:"skipped"`
+	SkipReason          *string `json:"skip_reason"`
+	PayloadType         *string `json:"payload_type"`
+	PayloadBlob         []byte  `json:"payload_blob"`
+}
+
+func (q *Queries) ListScaledOrderAuditsForOrderId(ctx context.Context, arg ListScaledOrderAuditsForOrderIdParams) ([]ListScaledOrderAuditsForOrderIdRow, error) {
 	rows, err := q.db.QueryContext(ctx, listScaledOrderAuditsForOrderId,
 		arg.VenueID,
 		arg.OrderID,
@@ -1299,9 +1319,9 @@ func (q *Queries) ListScaledOrderAuditsForOrderId(ctx context.Context, arg ListS
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ScaledOrder
+	var items []ListScaledOrderAuditsForOrderIdRow
 	for rows.Next() {
-		var i ScaledOrder
+		var i ListScaledOrderAuditsForOrderIdRow
 		if err := rows.Scan(
 			&i.VenueID,
 			&i.Wallet,
@@ -1364,15 +1384,35 @@ type ListScaledOrdersByDealParams struct {
 	VenueID string `json:"venue_id"`
 }
 
-func (q *Queries) ListScaledOrdersByDeal(ctx context.Context, arg ListScaledOrdersByDealParams) ([]ScaledOrder, error) {
+type ListScaledOrdersByDealRow struct {
+	VenueID             string  `json:"venue_id"`
+	Wallet              string  `json:"wallet"`
+	OrderID             string  `json:"order_id"`
+	DealID              int64   `json:"deal_id"`
+	BotID               int64   `json:"bot_id"`
+	OriginalSize        float64 `json:"original_size"`
+	ScaledSize          float64 `json:"scaled_size"`
+	Multiplier          float64 `json:"multiplier"`
+	RoundingDelta       float64 `json:"rounding_delta"`
+	StackIndex          int64   `json:"stack_index"`
+	OrderSide           string  `json:"order_side"`
+	MultiplierUpdatedBy string  `json:"multiplier_updated_by"`
+	CreatedAtUtc        int64   `json:"created_at_utc"`
+	Skipped             int64   `json:"skipped"`
+	SkipReason          *string `json:"skip_reason"`
+	PayloadType         *string `json:"payload_type"`
+	PayloadBlob         []byte  `json:"payload_blob"`
+}
+
+func (q *Queries) ListScaledOrdersByDeal(ctx context.Context, arg ListScaledOrdersByDealParams) ([]ListScaledOrdersByDealRow, error) {
 	rows, err := q.db.QueryContext(ctx, listScaledOrdersByDeal, arg.DealID, arg.VenueID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ScaledOrder
+	var items []ListScaledOrdersByDealRow
 	for rows.Next() {
-		var i ScaledOrder
+		var i ListScaledOrdersByDealRow
 		if err := rows.Scan(
 			&i.VenueID,
 			&i.Wallet,
@@ -1435,15 +1475,35 @@ type ListScaledOrdersByOrderIdParams struct {
 	OrderID string `json:"order_id"`
 }
 
-func (q *Queries) ListScaledOrdersByOrderId(ctx context.Context, arg ListScaledOrdersByOrderIdParams) ([]ScaledOrder, error) {
+type ListScaledOrdersByOrderIdRow struct {
+	VenueID             string  `json:"venue_id"`
+	Wallet              string  `json:"wallet"`
+	OrderID             string  `json:"order_id"`
+	DealID              int64   `json:"deal_id"`
+	BotID               int64   `json:"bot_id"`
+	OriginalSize        float64 `json:"original_size"`
+	ScaledSize          float64 `json:"scaled_size"`
+	Multiplier          float64 `json:"multiplier"`
+	RoundingDelta       float64 `json:"rounding_delta"`
+	StackIndex          int64   `json:"stack_index"`
+	OrderSide           string  `json:"order_side"`
+	MultiplierUpdatedBy string  `json:"multiplier_updated_by"`
+	CreatedAtUtc        int64   `json:"created_at_utc"`
+	Skipped             int64   `json:"skipped"`
+	SkipReason          *string `json:"skip_reason"`
+	PayloadType         *string `json:"payload_type"`
+	PayloadBlob         []byte  `json:"payload_blob"`
+}
+
+func (q *Queries) ListScaledOrdersByOrderId(ctx context.Context, arg ListScaledOrdersByOrderIdParams) ([]ListScaledOrdersByOrderIdRow, error) {
 	rows, err := q.db.QueryContext(ctx, listScaledOrdersByOrderId, arg.VenueID, arg.OrderID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ScaledOrder
+	var items []ListScaledOrdersByOrderIdRow
 	for rows.Next() {
-		var i ScaledOrder
+		var i ListScaledOrdersByOrderIdRow
 		if err := rows.Scan(
 			&i.VenueID,
 			&i.Wallet,

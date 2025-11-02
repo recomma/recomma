@@ -612,7 +612,7 @@ FROM threecommas_botevents`)
 			}
 
 			for _, auditRow := range auditRows {
-				audit, err := convertScaledOrder(auditRow)
+				audit, err := convertScaledOrderFromAuditRow(auditRow)
 				if err != nil {
 					return nil, nil, fmt.Errorf("decode scaled order audit for %s: %w", oidHex, err)
 				}

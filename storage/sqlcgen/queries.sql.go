@@ -1045,7 +1045,7 @@ SELECT
 FROM hyperliquid_submissions
 WHERE venue_id = ?1
   AND order_id IN (
-    SELECT value FROM json_each(sqlc.arg(metadata_list))
+    SELECT value FROM json_each(sqlc.arg(orderid_list))
 )
 `
 
@@ -1256,7 +1256,6 @@ func (q *Queries) ListLatestTakeProfitStackSizes(ctx context.Context, arg ListLa
 
 const listScaledOrderAuditsForOrderId = `-- name: ListScaledOrderAuditsForOrderId :many
 SELECT
-    id,
     venue_id,
     wallet,
     order_id,
@@ -1304,7 +1303,6 @@ func (q *Queries) ListScaledOrderAuditsForOrderId(ctx context.Context, arg ListS
 	for rows.Next() {
 		var i ScaledOrder
 		if err := rows.Scan(
-			&i.ID,
 			&i.VenueID,
 			&i.Wallet,
 			&i.OrderID,
@@ -1338,7 +1336,6 @@ func (q *Queries) ListScaledOrderAuditsForOrderId(ctx context.Context, arg ListS
 
 const listScaledOrdersByDeal = `-- name: ListScaledOrdersByDeal :many
 SELECT
-    id,
     venue_id,
     wallet,
     order_id,
@@ -1377,7 +1374,6 @@ func (q *Queries) ListScaledOrdersByDeal(ctx context.Context, arg ListScaledOrde
 	for rows.Next() {
 		var i ScaledOrder
 		if err := rows.Scan(
-			&i.ID,
 			&i.VenueID,
 			&i.Wallet,
 			&i.OrderID,
@@ -1411,7 +1407,6 @@ func (q *Queries) ListScaledOrdersByDeal(ctx context.Context, arg ListScaledOrde
 
 const listScaledOrdersByOrderId = `-- name: ListScaledOrdersByOrderId :many
 SELECT
-    id,
     venue_id,
     wallet,
     order_id,
@@ -1450,7 +1445,6 @@ func (q *Queries) ListScaledOrdersByOrderId(ctx context.Context, arg ListScaledO
 	for rows.Next() {
 		var i ScaledOrder
 		if err := rows.Scan(
-			&i.ID,
 			&i.VenueID,
 			&i.Wallet,
 			&i.OrderID,

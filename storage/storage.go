@@ -507,7 +507,7 @@ func (s *Storage) ListHyperliquidStatuses(ctx context.Context, oid orderid.Order
 	return out, nil
 }
 
-// ListHyperliquidOrderIds returns the metadata fingerprints we have submitted to Hyperliquid.
+// ListHyperliquidOrderIds returns the composite order identifiers we have submitted to Hyperliquid.
 func (s *Storage) ListHyperliquidOrderIds(ctx context.Context) ([]orderid.OrderId, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -524,7 +524,7 @@ func (s *Storage) ListHyperliquidOrderIds(ctx context.Context) ([]orderid.OrderI
 		}
 		oid, err := orderid.FromHexString(row.OrderID)
 		if err != nil {
-			return nil, fmt.Errorf("decode metadata %q: %w", row.OrderID, err)
+			return nil, fmt.Errorf("decode orderid %q: %w", row.OrderID, err)
 		}
 		out = append(out, *oid)
 	}
@@ -532,7 +532,7 @@ func (s *Storage) ListHyperliquidOrderIds(ctx context.Context) ([]orderid.OrderI
 	return out, nil
 }
 
-// ListOrderIdsForDeal returns the distinct metadata fingerprints observed for a deal.
+// ListOrderIdsForDeal returns the distinct order identifiers observed for a deal.
 func (s *Storage) ListOrderIdsForDeal(ctx context.Context, dealID uint32) ([]orderid.OrderId, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

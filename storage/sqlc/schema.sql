@@ -171,7 +171,6 @@ CREATE TABLE IF NOT EXISTS bot_order_scalers (
 DROP TABLE IF EXISTS scaled_orders;
 
 CREATE TABLE IF NOT EXISTS scaled_orders (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
     venue_id               TEXT    NOT NULL,
     wallet                 TEXT    NOT NULL,
     order_id               TEXT    NOT NULL,
@@ -189,10 +188,10 @@ CREATE TABLE IF NOT EXISTS scaled_orders (
     skip_reason            TEXT,
     payload_type           TEXT,
     payload_blob           BLOB,
-    UNIQUE (venue_id, wallet, order_id),
+    PRIMARY KEY (venue_id, wallet, order_id),
     FOREIGN KEY(deal_id) REFERENCES threecommas_deals(deal_id) ON DELETE CASCADE,
     FOREIGN KEY(bot_id) REFERENCES threecommas_bots(bot_id) ON DELETE CASCADE,
-    FOREIGN KEY(venue_id) REFERENCES venues(id) ON DELETE CASCADE
+    FOREIGN KEY(venue_id, wallet, order_id) REFERENCES hyperliquid_submissions(venue_id, wallet, order_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_scaled_orders_order_id_created

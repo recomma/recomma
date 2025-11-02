@@ -557,7 +557,7 @@ SELECT
 FROM hyperliquid_submissions
 WHERE venue_id = sqlc.arg(venue_id)
   AND order_id IN (
-    SELECT value FROM json_each(sqlc.arg(metadata_list))
+    SELECT value FROM json_each(sqlc.arg(orderid_list))
 );
 
 -- name: ListDealIDs :many
@@ -815,7 +815,6 @@ INSERT INTO scaled_orders (
 
 -- name: ListScaledOrdersByOrderId :many
 SELECT
-    id,
     venue_id,
     wallet,
     order_id,
@@ -840,7 +839,6 @@ ORDER BY created_at_utc ASC, order_id ASC;
 
 -- name: ListScaledOrdersByDeal :many
 SELECT
-    id,
     venue_id,
     wallet,
     order_id,
@@ -865,7 +863,6 @@ ORDER BY created_at_utc ASC, order_id ASC;
 
 -- name: ListScaledOrderAuditsForOrderId :many
 SELECT
-    id,
     venue_id,
     wallet,
     order_id,

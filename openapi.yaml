@@ -1242,6 +1242,9 @@ components:
           type: string
           format: date-time
           description: When the originating 3Commas event was created.
+        venue_id:
+          type: string
+          description: Upstream venue identifier associated with the submission.
 
     ThreeCommasOrderState:
       type: object

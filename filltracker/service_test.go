@@ -528,7 +528,7 @@ func TestEnsureTakeProfitRecreatesAfterStaleSubmission(t *testing.T) {
 
 	create := adapter.ToCreateOrderRequest(coin, recomma.BotEvent{BotEvent: tpEvent}, tpOid)
 	require.True(t, create.ReduceOnly)
-	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, tpOid, create, tpRowID))
+	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, storage.DefaultHyperliquidIdentifier(tpOid), create, tpRowID))
 
 	canceled := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueCanceled, 10, 10, 37, now.Add(-7*time.Minute))
 	require.NoError(t, recordStatus(store, tpOid, canceled))
@@ -604,7 +604,7 @@ func TestReconcileTakeProfitsRecreatesAfterCancelWithMissingOrderId(t *testing.T
 
 	create := adapter.ToCreateOrderRequest(coin, recomma.BotEvent{BotEvent: tpEvent}, tpOid)
 	require.True(t, create.ReduceOnly)
-	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, tpOid, create, tpRowID))
+	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, storage.DefaultHyperliquidIdentifier(tpOid), create, tpRowID))
 
 	tpStatus := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueOpen, 8, 8, 13.2, now.Add(-12*time.Minute))
 	require.NoError(t, recordStatus(store, tpOid, tpStatus))
@@ -716,7 +716,7 @@ func recordEvent(store *storage.Storage, oid orderid.OrderId, evt tc.BotEvent) e
 }
 
 func recordStatus(store *storage.Storage, oid orderid.OrderId, status hyperliquid.WsOrder) error {
-	return store.RecordHyperliquidStatus(context.Background(), oid, status)
+	return store.RecordHyperliquidStatus(context.Background(), storage.DefaultHyperliquidIdentifier(oid), status)
 }
 
 func makeStatus(oid orderid.OrderId, coin, side string, status hyperliquid.OrderStatusValue, original, remaining, limit float64, ts time.Time) hyperliquid.WsOrder {

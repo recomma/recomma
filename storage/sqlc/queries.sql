@@ -224,7 +224,7 @@ WHERE venue_id = sqlc.arg(venue_id)
   AND wallet = sqlc.arg(wallet)
   AND order_id = sqlc.arg(order_id);
 
--- name: ListHyperliquidMetadata :many
+-- name: ListHyperliquidOrderIds :many
 SELECT
     venue_id,
     wallet,
@@ -534,7 +534,7 @@ SELECT
     recorded_at_utc
 FROM hyperliquid_status_history
 WHERE venue_id = sqlc.arg(venue_id)
-  AND order_id = sqlc.arg(metadata)
+  AND order_id = sqlc.arg(order_id)
   AND (sqlc.arg(wallet) IS NULL OR wallet = sqlc.arg(wallet))
   AND (sqlc.arg(order_id) IS NULL OR order_id = sqlc.arg(order_id))
   AND recorded_at_utc >= COALESCE(sqlc.arg(observed_from), recorded_at_utc)
@@ -557,7 +557,7 @@ SELECT
 FROM hyperliquid_submissions
 WHERE venue_id = sqlc.arg(venue_id)
   AND order_id IN (
-    SELECT value FROM json_each(sqlc.arg(metadata_list))
+    SELECT value FROM json_each(sqlc.arg(order_id_list))
 );
 
 -- name: ListDealIDs :many
@@ -882,7 +882,7 @@ SELECT
     payload_blob
 FROM scaled_orders
 WHERE venue_id = sqlc.arg(venue_id)
-  AND order_id = sqlc.arg(metadata)
+  AND order_id = sqlc.arg(order_id)
   AND created_at_utc >= sqlc.arg(observed_from)
   AND created_at_utc <= sqlc.arg(observed_to)
 ORDER BY created_at_utc ASC, order_id ASC;

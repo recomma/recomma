@@ -144,7 +144,7 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 				}
 
 				createReq := adapter.ToCreateOrderRequest(h.deal.ToCurrency, be, activeOid)
-				require.NoError(t, h.store.RecordHyperliquidOrderRequest(h.ctx, activeOid, createReq, inserted))
+				require.NoError(t, h.store.RecordHyperliquidOrderRequest(h.ctx, storage.DefaultHyperliquidIdentifier(activeOid), createReq, inserted))
 			},
 			wantActions: []recomma.ActionType{recomma.ActionCancel},
 			wantStatuses: []tc.MarketOrderStatusString{
@@ -166,7 +166,7 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 				}
 
 				createReq := adapter.ToCreateOrderRequest(h.deal.ToCurrency, be, activeOid)
-				require.NoError(t, h.store.RecordHyperliquidOrderRequest(h.ctx, activeOid, createReq, inserted))
+				require.NoError(t, h.store.RecordHyperliquidOrderRequest(h.ctx, storage.DefaultHyperliquidIdentifier(activeOid), createReq, inserted))
 			},
 			wantActions: []recomma.ActionType{recomma.ActionModify},
 			wantStatuses: []tc.MarketOrderStatusString{
@@ -241,7 +241,7 @@ func TestProcessDeal_TakeProfitSizedFromTracker(t *testing.T) {
 	)
 	_, err := h.store.RecordThreeCommasBotEvent(h.ctx, baseOid, baseEvent)
 	require.NoError(t, err)
-	require.NoError(t, h.store.RecordHyperliquidStatus(h.ctx, baseOid, makeWsStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 5, 0, 10, base.Add(time.Second))))
+	require.NoError(t, h.store.RecordHyperliquidStatus(h.ctx, storage.DefaultHyperliquidIdentifier(baseOid), makeWsStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 5, 0, 10, base.Add(time.Second))))
 
 	tracker := filltracker.New(h.store, nil)
 	require.NoError(t, tracker.Rebuild(h.ctx))

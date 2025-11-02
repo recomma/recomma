@@ -397,7 +397,7 @@ func (s *Storage) InsertScaledOrderAudit(ctx context.Context, params ScaledOrder
 	}
 
 	insert := sqlcgen.InsertScaledOrderParams{
-		VenueID:             defaultHyperliquidVenueID,
+		VenueID:             string(defaultHyperliquidVenueID),
 		Wallet:              defaultHyperliquidWallet,
 		OrderID:             orderID,
 		DealID:              int64(params.DealID),
@@ -465,7 +465,8 @@ func (s *Storage) InsertScaledOrderAudit(ctx context.Context, params ScaledOrder
 
 	s.publishStreamEventLocked(api.StreamEvent{
 		Type:             api.ScaledOrderAuditEntry,
-		OrderId:          params.OrderId,
+		OrderID:          params.OrderId,
+		VenueID:          string(defaultHyperliquidVenueID),
 		ObservedAt:       createdAt,
 		Actor:            &actor,
 		ScaledOrderAudit: toAPIScaledOrderAudit(audit),
@@ -480,7 +481,7 @@ func (s *Storage) ListScaledOrdersByOrderId(ctx context.Context, oid orderid.Ord
 	defer s.mu.Unlock()
 
 	rows, err := s.queries.ListScaledOrdersByOrderId(ctx, sqlcgen.ListScaledOrdersByOrderIdParams{
-		VenueID: defaultHyperliquidVenueID,
+		VenueID: string(defaultHyperliquidVenueID),
 		OrderID: oid.Hex(),
 	})
 	if err != nil {
@@ -496,7 +497,7 @@ func (s *Storage) ListScaledOrdersByDeal(ctx context.Context, dealID uint32) ([]
 
 	rows, err := s.queries.ListScaledOrdersByDeal(ctx, sqlcgen.ListScaledOrdersByDealParams{
 		DealID:  int64(dealID),
-		VenueID: defaultHyperliquidVenueID,
+		VenueID: string(defaultHyperliquidVenueID),
 	})
 	if err != nil {
 		return nil, err
@@ -560,7 +561,6 @@ func convertScaledOrder(row sqlcgen.ScaledOrder) (ScaledOrderAudit, error) {
 	}
 
 	return ScaledOrderAudit{
-		ID:                  row.ID,
 		OrderId:             *oid,
 		DealID:              uint32(row.DealID),
 		BotID:               uint32(row.BotID),
@@ -590,7 +590,8 @@ func (s *Storage) publishOrderScalerEventLocked(oid orderid.OrderId, effective E
 	actorCopy := actor
 	s.publishStreamEventLocked(api.StreamEvent{
 		Type:         api.OrderScalerConfigEntry,
-		OrderId:      oid,
+		OrderID:      oid,
+		VenueID:      string(defaultHyperliquidVenueID),
 		ObservedAt:   observedAt,
 		Actor:        &actorCopy,
 		ScalerConfig: cfg,

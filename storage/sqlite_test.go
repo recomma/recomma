@@ -178,7 +178,7 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 		ClientOrderID: oid.HexAsPointer(),
 	}
 
-	action, found, err := store.LoadHyperliquidSubmission(ctx, oid)
+	action, found, err := store.LoadHyperliquidSubmission(ctx, DefaultHyperliquidIdentifier(oid))
 	if err != nil {
 		t.Fatalf("LoadHyperliquidSubmission empty: %v", err)
 	}
@@ -193,11 +193,11 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	}
 
 	// we are not testing events here, so we just set a fake event row id
-	if err := store.RecordHyperliquidOrderRequest(ctx, oid, req1, 123456789); err != nil {
+	if err := store.RecordHyperliquidOrderRequest(ctx, DefaultHyperliquidIdentifier(oid), req1, 123456789); err != nil {
 		t.Fatalf("RecordHyperliquidOrderRequest: %v", err)
 	}
 
-	action, found, err = store.LoadHyperliquidSubmission(ctx, oid)
+	action, found, err = store.LoadHyperliquidSubmission(ctx, DefaultHyperliquidIdentifier(oid))
 	if err != nil {
 		t.Fatalf("LoadHyperliquidSubmission after create: %v", err)
 	}
@@ -230,11 +230,11 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 		},
 	}
 
-	if err := store.AppendHyperliquidModify(ctx, oid, modify1, 123456789); err != nil {
+	if err := store.AppendHyperliquidModify(ctx, DefaultHyperliquidIdentifier(oid), modify1, 123456789); err != nil {
 		t.Fatalf("AppendHyperliquidModify first: %v", err)
 	}
 
-	action, found, err = store.LoadHyperliquidSubmission(ctx, oid)
+	action, found, err = store.LoadHyperliquidSubmission(ctx, DefaultHyperliquidIdentifier(oid))
 	if err != nil {
 		t.Fatalf("LoadHyperliquidSubmission after first modify: %v", err)
 	}
@@ -273,11 +273,11 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	modify2.Order.Price = 2435.55
 	modify2.Order.Size = 1.1
 
-	if err := store.AppendHyperliquidModify(ctx, oid, modify2, 123456789); err != nil {
+	if err := store.AppendHyperliquidModify(ctx, DefaultHyperliquidIdentifier(oid), modify2, 123456789); err != nil {
 		t.Fatalf("AppendHyperliquidModify second: %v", err)
 	}
 
-	action, found, err = store.LoadHyperliquidSubmission(ctx, oid)
+	action, found, err = store.LoadHyperliquidSubmission(ctx, DefaultHyperliquidIdentifier(oid))
 	if err != nil {
 		t.Fatalf("LoadHyperliquidSubmission after second modify: %v", err)
 	}
@@ -298,11 +298,11 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	}
 
 	cancelReq := hyperliquid.CancelOrderRequestByCloid{Coin: req1.Coin, Cloid: cloid}
-	if err := store.RecordHyperliquidCancel(ctx, oid, cancelReq, 123456789); err != nil {
+	if err := store.RecordHyperliquidCancel(ctx, DefaultHyperliquidIdentifier(oid), cancelReq, 123456789); err != nil {
 		t.Fatalf("RecordHyperliquidCancel: %v", err)
 	}
 
-	action, found, err = store.LoadHyperliquidSubmission(ctx, oid)
+	action, found, err = store.LoadHyperliquidSubmission(ctx, DefaultHyperliquidIdentifier(oid))
 	if err != nil {
 		t.Fatalf("LoadHyperliquidSubmission after cancel: %v", err)
 	}
@@ -331,7 +331,7 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 		t.Fatalf("create payload changed after cancel (-want +got):\n%s", diff)
 	}
 
-	reqOnly, foundReq, err := store.LoadHyperliquidRequest(ctx, oid)
+	reqOnly, foundReq, err := store.LoadHyperliquidRequest(ctx, DefaultHyperliquidIdentifier(oid))
 	if err != nil {
 		t.Fatalf("LoadHyperliquidRequest helper: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 		t.Fatalf("helper create payload mismatch (-want +got):\n%s", diff)
 	}
 
-	statusOnly, foundStatus, err := store.LoadHyperliquidStatus(ctx, oid)
+	statusOnly, foundStatus, err := store.LoadHyperliquidStatus(ctx, DefaultHyperliquidIdentifier(oid))
 	if err != nil {
 		t.Fatalf("LoadHyperliquidStatus before websocket insert: %v", err)
 	}
@@ -365,11 +365,11 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 		StatusTimestamp: 1700000050,
 	}
 
-	if err := store.RecordHyperliquidStatus(ctx, oid, status1); err != nil {
+	if err := store.RecordHyperliquidStatus(ctx, DefaultHyperliquidIdentifier(oid), status1); err != nil {
 		t.Fatalf("RecordHyperliquidStatus first: %v", err)
 	}
 
-	statusOnly, foundStatus, err = store.LoadHyperliquidStatus(ctx, oid)
+	statusOnly, foundStatus, err = store.LoadHyperliquidStatus(ctx, DefaultHyperliquidIdentifier(oid))
 	if err != nil {
 		t.Fatalf("LoadHyperliquidStatus after first insert: %v", err)
 	}
@@ -395,11 +395,11 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 		StatusTimestamp: 1700000350,
 	}
 
-	if err := store.RecordHyperliquidStatus(ctx, oid, status2); err != nil {
+	if err := store.RecordHyperliquidStatus(ctx, DefaultHyperliquidIdentifier(oid), status2); err != nil {
 		t.Fatalf("RecordHyperliquidStatus second: %v", err)
 	}
 
-	statusOnly, foundStatus, err = store.LoadHyperliquidStatus(ctx, oid)
+	statusOnly, foundStatus, err = store.LoadHyperliquidStatus(ctx, DefaultHyperliquidIdentifier(oid))
 	if err != nil {
 		t.Fatalf("LoadHyperliquidStatus after second insert: %v", err)
 	}
@@ -410,7 +410,7 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 		t.Fatalf("latest websocket status mismatch (-want +got):\n%s", diff)
 	}
 
-	statuses, err := store.ListHyperliquidStatuses(ctx, oid)
+	statuses, err := store.ListHyperliquidStatuses(ctx, DefaultHyperliquidIdentifier(oid))
 	if err != nil {
 		t.Fatalf("ListHyperliquidStatuses: %v", err)
 	}
@@ -424,7 +424,7 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 		t.Fatalf("second websocket status mismatch (-want +got):\n%s", diff)
 	}
 
-	action, found, err = store.LoadHyperliquidSubmission(ctx, oid)
+	action, found, err = store.LoadHyperliquidSubmission(ctx, DefaultHyperliquidIdentifier(oid))
 	if err != nil {
 		t.Fatalf("LoadHyperliquidSubmission final: %v", err)
 	}
@@ -455,18 +455,18 @@ func TestStorageListHyperliquidOrderIds(t *testing.T) {
 		ClientOrderID: oid1.HexAsPointer(),
 	}
 
-	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, oid1, req, 0))
+	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, DefaultHyperliquidIdentifier(oid1), req, 0))
 
 	req2 := req
 	req2.ClientOrderID = oid2.HexAsPointer()
-	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, oid2, req2, 0))
+	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, DefaultHyperliquidIdentifier(oid2), req2, 0))
 
 	// Re-insert oid1 with modify to ensure we don't duplicate entries.
 	modify := hyperliquid.ModifyOrderRequest{
 		Oid:   oid1.Hex(),
 		Order: req,
 	}
-	require.NoError(t, store.AppendHyperliquidModify(ctx, oid1, modify, 0))
+	require.NoError(t, store.AppendHyperliquidModify(ctx, DefaultHyperliquidIdentifier(oid1), modify, 0))
 
 	list, err := store.ListHyperliquidOrderIds(ctx)
 	require.NoError(t, err)
@@ -478,6 +478,11 @@ func TestStorageListHyperliquidOrderIds(t *testing.T) {
 	sort.Strings(hexes)
 	sort.Strings(expected)
 	require.Equal(t, expected, hexes)
+
+	for _, ident := range list {
+		require.Equal(t, string(defaultHyperliquidVenueID), ident.Venue())
+		require.Equal(t, defaultHyperliquidWallet, ident.Wallet)
+	}
 }
 
 func ptr[T any](v T) *T {

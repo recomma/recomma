@@ -65,7 +65,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 			ClientOrderID: oid.HexAsPointer(),
 		}
 
-		if err := store.RecordHyperliquidOrderRequest(context.Background(), oid, req, inserted); err != nil {
+		if err := store.RecordHyperliquidOrderRequest(context.Background(), DefaultHyperliquidIdentifier(oid), req, inserted); err != nil {
 			t.Fatalf("RecordHyperliquidOrderRequest: %v", err)
 		}
 
@@ -74,7 +74,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 
 	recordStatus := func(t *testing.T, store *Storage, oid orderid.OrderId, status hyperliquid.WsOrder) {
 		t.Helper()
-		if err := store.RecordHyperliquidStatus(context.Background(), oid, status); err != nil {
+		if err := store.RecordHyperliquidStatus(context.Background(), DefaultHyperliquidIdentifier(oid), status); err != nil {
 			t.Fatalf("RecordHyperliquidStatus: %v", err)
 		}
 	}

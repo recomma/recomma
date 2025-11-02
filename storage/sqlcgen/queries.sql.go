@@ -873,7 +873,7 @@ func (q *Queries) ListDealIDs(ctx context.Context) ([]int64, error) {
 	return items, nil
 }
 
-const listHyperliquidMetadata = `-- name: ListHyperliquidMetadata :many
+const listHyperliquidOrderIds = `-- name: ListHyperliquidOrderIds :many
 SELECT
     venue_id,
     wallet,
@@ -884,22 +884,22 @@ WHERE venue_id = COALESCE(?1, venue_id)
 ORDER BY venue_id ASC, wallet ASC, order_id ASC
 `
 
-type ListHyperliquidMetadataRow struct {
+type ListHyperliquidOrderIdsRow struct {
 	VenueID   string `json:"venue_id"`
 	Wallet    string `json:"wallet"`
 	OrderID   string `json:"order_id"`
 	OrderID_2 string `json:"order_id_2"`
 }
 
-func (q *Queries) ListHyperliquidMetadata(ctx context.Context, venueID string) ([]ListHyperliquidMetadataRow, error) {
-	rows, err := q.db.QueryContext(ctx, listHyperliquidMetadata, venueID)
+func (q *Queries) ListHyperliquidOrderIds(ctx context.Context, venueID string) ([]ListHyperliquidOrderIdsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listHyperliquidOrderIds, venueID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListHyperliquidMetadataRow
+	var items []ListHyperliquidOrderIdsRow
 	for rows.Next() {
-		var i ListHyperliquidMetadataRow
+		var i ListHyperliquidOrderIdsRow
 		if err := rows.Scan(
 			&i.VenueID,
 			&i.Wallet,
@@ -979,17 +979,16 @@ FROM hyperliquid_status_history
 WHERE venue_id = ?1
   AND order_id = ?2
   AND (?3 IS NULL OR wallet = ?3)
-  AND (?4 IS NULL OR order_id = ?4)
-  AND recorded_at_utc >= COALESCE(?5, recorded_at_utc)
-  AND recorded_at_utc <= COALESCE(?6, recorded_at_utc)
+  AND (?2 IS NULL OR order_id = ?2)
+  AND recorded_at_utc >= COALESCE(?4, recorded_at_utc)
+  AND recorded_at_utc <= COALESCE(?5, recorded_at_utc)
 ORDER BY recorded_at_utc ASC
 `
 
 type ListHyperliquidStatusesForOrderIdParams struct {
 	VenueID      string      `json:"venue_id"`
-	Metadata     string      `json:"metadata"`
+	OrderID      string      `json:"order_id"`
 	Wallet       interface{} `json:"wallet"`
-	OrderID      interface{} `json:"order_id"`
 	ObservedFrom int64       `json:"observed_from"`
 	ObservedTo   int64       `json:"observed_to"`
 }
@@ -997,9 +996,8 @@ type ListHyperliquidStatusesForOrderIdParams struct {
 func (q *Queries) ListHyperliquidStatusesForOrderId(ctx context.Context, arg ListHyperliquidStatusesForOrderIdParams) ([]HyperliquidStatusHistory, error) {
 	rows, err := q.db.QueryContext(ctx, listHyperliquidStatusesForOrderId,
 		arg.VenueID,
-		arg.Metadata,
-		arg.Wallet,
 		arg.OrderID,
+		arg.Wallet,
 		arg.ObservedFrom,
 		arg.ObservedTo,
 	)
@@ -1047,7 +1045,7 @@ SELECT
 FROM hyperliquid_submissions
 WHERE venue_id = ?1
   AND order_id IN (
-    SELECT value FROM json_each(sqlc.arg(metadata_list))
+    SELECT value FROM json_each(sqlc.arg(order_id_list))
 )
 `
 
@@ -1285,7 +1283,7 @@ ORDER BY created_at_utc ASC, order_id ASC
 
 type ListScaledOrderAuditsForOrderIdParams struct {
 	VenueID      string `json:"venue_id"`
-	Metadata     string `json:"metadata"`
+	OrderID      string `json:"order_id"`
 	ObservedFrom int64  `json:"observed_from"`
 	ObservedTo   int64  `json:"observed_to"`
 }
@@ -1293,7 +1291,7 @@ type ListScaledOrderAuditsForOrderIdParams struct {
 func (q *Queries) ListScaledOrderAuditsForOrderId(ctx context.Context, arg ListScaledOrderAuditsForOrderIdParams) ([]ScaledOrder, error) {
 	rows, err := q.db.QueryContext(ctx, listScaledOrderAuditsForOrderId,
 		arg.VenueID,
-		arg.Metadata,
+		arg.OrderID,
 		arg.ObservedFrom,
 		arg.ObservedTo,
 	)

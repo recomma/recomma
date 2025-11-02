@@ -366,6 +366,9 @@ type OrderIdentifiers struct {
 
 	// Hex Case-insensitive hash deriving from the 3Commas OrderId payload.
 	Hex string `json:"hex"`
+
+	// VenueId Upstream venue identifier associated with the submission.
+	VenueId string `json:"venue_id,omitempty"`
 }
 
 // OrderLogEntry defines model for OrderLogEntry.

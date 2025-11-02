@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/recomma/recomma/orderid"
+	"github.com/recomma/recomma/recomma"
 	"github.com/sonirico/go-hyperliquid"
 	"github.com/stretchr/testify/require"
 )
@@ -28,21 +29,21 @@ func (f *fakeInfo) QueryOrderByCloid(_ context.Context, cloid string) (*hyperliq
 
 type fakeStatusStore struct {
 	mu      sync.Mutex
-	oids    []orderid.OrderId
+	idents  []recomma.OrderIdentifier
 	records map[string]hyperliquid.WsOrder
 }
 
-func (s *fakeStatusStore) ListHyperliquidOrderIds(context.Context) ([]orderid.OrderId, error) {
-	return append([]orderid.OrderId(nil), s.oids...), nil
+func (s *fakeStatusStore) ListHyperliquidMetadata(context.Context) ([]recomma.OrderIdentifier, error) {
+	return append([]recomma.OrderIdentifier(nil), s.idents...), nil
 }
 
-func (s *fakeStatusStore) RecordHyperliquidStatus(_ context.Context, oid orderid.OrderId, status hyperliquid.WsOrder) error {
+func (s *fakeStatusStore) RecordHyperliquidStatus(_ context.Context, ident recomma.OrderIdentifier, status hyperliquid.WsOrder) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.records == nil {
 		s.records = make(map[string]hyperliquid.WsOrder)
 	}
-	s.records[oid.Hex()] = status
+	s.records[ident.Hex()] = status
 	return nil
 }
 
@@ -76,7 +77,7 @@ func TestStatusRefresherRefresh(t *testing.T) {
 		},
 	}
 
-	store := &fakeStatusStore{oids: []orderid.OrderId{oid}}
+	store := &fakeStatusStore{idents: []recomma.OrderIdentifier{recomma.NewOrderIdentifier("hyperliquid:test", "wallet", oid)}}
 
 	refresher := NewStatusRefresher(info, store, WithStatusRefresherConcurrency(1))
 

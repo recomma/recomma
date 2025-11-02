@@ -1275,23 +1275,28 @@ SELECT
     payload_blob
 FROM scaled_orders
 WHERE venue_id = ?1
-  AND order_id = ?2
-  AND created_at_utc >= ?3
-  AND created_at_utc <= ?4
+  AND (
+        order_id = ?2
+        OR order_id LIKE ?3
+    )
+  AND created_at_utc >= ?4
+  AND created_at_utc <= ?5
 ORDER BY created_at_utc ASC, order_id ASC
 `
 
 type ListScaledOrderAuditsForOrderIdParams struct {
-	VenueID      string `json:"venue_id"`
-	OrderID      string `json:"order_id"`
-	ObservedFrom int64  `json:"observed_from"`
-	ObservedTo   int64  `json:"observed_to"`
+	VenueID       string `json:"venue_id"`
+	OrderID       string `json:"order_id"`
+	OrderIDPrefix string `json:"order_id_prefix"`
+	ObservedFrom  int64  `json:"observed_from"`
+	ObservedTo    int64  `json:"observed_to"`
 }
 
 func (q *Queries) ListScaledOrderAuditsForOrderId(ctx context.Context, arg ListScaledOrderAuditsForOrderIdParams) ([]ScaledOrder, error) {
 	rows, err := q.db.QueryContext(ctx, listScaledOrderAuditsForOrderId,
 		arg.VenueID,
 		arg.OrderID,
+		arg.OrderIDPrefix,
 		arg.ObservedFrom,
 		arg.ObservedTo,
 	)
@@ -1426,17 +1431,21 @@ SELECT
     payload_blob
 FROM scaled_orders
 WHERE venue_id = ?1
-  AND order_id = ?2
+  AND (
+        order_id = ?2
+        OR order_id LIKE ?3
+    )
 ORDER BY created_at_utc ASC, order_id ASC
 `
 
 type ListScaledOrdersByOrderIdParams struct {
-	VenueID string `json:"venue_id"`
-	OrderID string `json:"order_id"`
+	VenueID       string `json:"venue_id"`
+	OrderID       string `json:"order_id"`
+	OrderIDPrefix string `json:"order_id_prefix"`
 }
 
 func (q *Queries) ListScaledOrdersByOrderId(ctx context.Context, arg ListScaledOrdersByOrderIdParams) ([]ScaledOrder, error) {
-	rows, err := q.db.QueryContext(ctx, listScaledOrdersByOrderId, arg.VenueID, arg.OrderID)
+	rows, err := q.db.QueryContext(ctx, listScaledOrdersByOrderId, arg.VenueID, arg.OrderID, arg.OrderIDPrefix)
 	if err != nil {
 		return nil, err
 	}

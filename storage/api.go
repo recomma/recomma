@@ -571,10 +571,11 @@ FROM threecommas_botevents`)
 			}
 
 			auditRows, err := s.queries.ListScaledOrderAuditsForOrderId(ctx, sqlcgen.ListScaledOrderAuditsForOrderIdParams{
-				VenueID:      string(defaultHyperliquidVenueID),
-				OrderID:      oidHex,
-				ObservedFrom: logFrom,
-				ObservedTo:   logTo,
+				VenueID:       string(defaultHyperliquidVenueID),
+				OrderID:       oidHex,
+				OrderIDPrefix: fmt.Sprintf("%s#%%", oidHex),
+				ObservedFrom:  logFrom,
+				ObservedTo:    logTo,
 			})
 			if err != nil {
 				return nil, nil, fmt.Errorf("list scaled order audits for %s: %w", oidHex, err)

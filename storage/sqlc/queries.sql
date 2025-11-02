@@ -834,7 +834,10 @@ SELECT
     payload_blob
 FROM scaled_orders
 WHERE venue_id = sqlc.arg(venue_id)
-  AND order_id = sqlc.arg(order_id)
+  AND (
+        order_id = sqlc.arg(order_id)
+        OR order_id LIKE sqlc.arg(order_id_prefix)
+    )
 ORDER BY created_at_utc ASC, order_id ASC;
 
 -- name: ListScaledOrdersByDeal :many
@@ -882,7 +885,10 @@ SELECT
     payload_blob
 FROM scaled_orders
 WHERE venue_id = sqlc.arg(venue_id)
-  AND order_id = sqlc.arg(order_id)
+  AND (
+        order_id = sqlc.arg(order_id)
+        OR order_id LIKE sqlc.arg(order_id_prefix)
+    )
   AND created_at_utc >= sqlc.arg(observed_from)
   AND created_at_utc <= sqlc.arg(observed_to)
 ORDER BY created_at_utc ASC, order_id ASC;

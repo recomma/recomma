@@ -389,12 +389,7 @@ func (s *Storage) InsertScaledOrderAudit(ctx context.Context, params ScaledOrder
 		payloadType = &pt
 	}
 
-	orderID := params.OrderId.Hex()
-	if params.SubmittedOrderID != nil && *params.SubmittedOrderID != "" {
-		orderID = *params.SubmittedOrderID
-	} else {
-		orderID = fmt.Sprintf("%s#%d", params.OrderId.Hex(), params.StackIndex)
-	}
+	orderID := fmt.Sprintf("%s#%d", params.OrderId.Hex(), params.StackIndex)
 
 	insert := sqlcgen.InsertScaledOrderParams{
 		VenueID:             string(defaultHyperliquidVenueID),
@@ -481,8 +476,9 @@ func (s *Storage) ListScaledOrdersByOrderId(ctx context.Context, oid orderid.Ord
 	defer s.mu.Unlock()
 
 	rows, err := s.queries.ListScaledOrdersByOrderId(ctx, sqlcgen.ListScaledOrdersByOrderIdParams{
-		VenueID: string(defaultHyperliquidVenueID),
-		OrderID: oid.Hex(),
+		VenueID:       string(defaultHyperliquidVenueID),
+		OrderID:       oid.Hex(),
+		OrderIDPrefix: fmt.Sprintf("%s#%%", oid.Hex()),
 	})
 	if err != nil {
 		return nil, err

@@ -72,6 +72,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_venue_assignments_primary
     ON bot_venue_assignments(bot_id)
     WHERE is_primary = 1;
 
+DROP TABLE IF EXISTS hyperliquid_status_history;
+DROP TABLE IF EXISTS hyperliquid_submissions;
+
 CREATE TABLE IF NOT EXISTS hyperliquid_submissions (
     venue_id        TEXT NOT NULL,
     wallet          TEXT NOT NULL,
@@ -164,6 +167,8 @@ CREATE TABLE IF NOT EXISTS bot_order_scalers (
     updated_by         TEXT    NOT NULL,
     FOREIGN KEY(bot_id) REFERENCES threecommas_bots(bot_id) ON DELETE CASCADE
 );
+
+DROP TABLE IF EXISTS scaled_orders;
 
 CREATE TABLE IF NOT EXISTS scaled_orders (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,

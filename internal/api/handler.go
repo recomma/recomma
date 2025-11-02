@@ -40,8 +40,8 @@ type Store interface {
 	UpsertBotOrderScalerOverride(ctx context.Context, botID uint32, multiplier *float64, notes *string, updatedBy string) (OrderScalerOverride, error)
 	DeleteBotOrderScalerOverride(ctx context.Context, botID uint32, updatedBy string) error
 	ResolveEffectiveOrderScalerConfig(ctx context.Context, oid orderid.OrderId) (EffectiveOrderScaler, error)
-	LoadHyperliquidSubmission(ctx context.Context, oid orderid.OrderId) (recomma.Action, bool, error)
-	LoadHyperliquidStatus(ctx context.Context, oid orderid.OrderId) (*hyperliquid.WsOrder, bool, error)
+	LoadHyperliquidSubmission(ctx context.Context, ident recomma.OrderIdentifier) (recomma.Action, bool, error)
+	LoadHyperliquidStatus(ctx context.Context, ident recomma.OrderIdentifier) (*hyperliquid.WsOrder, bool, error)
 }
 
 // StreamSource publishes live order mutations for the SSE endpoint.
@@ -626,7 +626,7 @@ func (h *ApiHandler) orderRecordFromItem(ctx context.Context, row OrderItem, inc
 		return OrderRecord{}, false
 	}
 
-	identifiers := makeOrderIdentifiers(row.OrderId, row.BotEvent, row.ObservedAt)
+	identifiers := makeOrderIdentifiers(row.OrderId, row.BotEvent, row.ObservedAt, "")
 
 	record := OrderRecord{
 		OrderId:     row.OrderId.Hex(),
@@ -681,7 +681,8 @@ func (h *ApiHandler) CancelOrderByOrderId(ctx context.Context, req CancelOrderBy
 		return CancelOrderByOrderId400Response{}, nil
 	}
 
-	action, found, err := h.store.LoadHyperliquidSubmission(ctx, *oid)
+	ident := recomma.OrderIdentifier{OrderId: *oid}
+	action, found, err := h.store.LoadHyperliquidSubmission(ctx, ident)
 	if err != nil {
 		if h.logger != nil {
 			h.logger.Error("CancelOrderByOrderId load submission failed", slog.String("orderid", oid.Hex()), slog.String("error", err.Error()))
@@ -714,7 +715,7 @@ func (h *ApiHandler) CancelOrderByOrderId(ctx context.Context, req CancelOrderBy
 		return CancelOrderByOrderId404Response{}, nil
 	}
 
-	status, haveStatus, err := h.store.LoadHyperliquidStatus(ctx, *oid)
+	status, haveStatus, err := h.store.LoadHyperliquidStatus(ctx, ident)
 	if err != nil {
 		if h.logger != nil {
 			h.logger.Error("CancelOrderByOrderId load status failed", slog.String("orderid", oid.Hex()), slog.String("error", err.Error()))
@@ -942,9 +943,9 @@ func (h *ApiHandler) StreamHyperliquidPrices(ctx context.Context, req StreamHype
 
 // writeSSEFrame marshals the event payload and writes an SSE-formatted frame.
 func (h *ApiHandler) writeSSEFrame(ctx context.Context, w io.Writer, evt StreamEvent) error {
-	ident := makeOrderIdentifiers(evt.OrderId, evt.BotEvent, evt.ObservedAt)
+	ident := makeOrderIdentifiers(evt.OrderID, evt.BotEvent, evt.ObservedAt, evt.VenueID)
 
-	entry, ok := h.makeOrderLogEntry(ctx, evt.OrderId, evt.ObservedAt, evt.Type, evt.BotEvent, evt.Submission, evt.Status, evt.ScalerConfig, evt.ScaledOrderAudit, evt.Actor, &ident, evt.Sequence)
+	entry, ok := h.makeOrderLogEntry(ctx, evt.OrderID, evt.ObservedAt, evt.Type, evt.BotEvent, evt.Submission, evt.Status, evt.ScalerConfig, evt.ScaledOrderAudit, evt.Actor, &ident, evt.Sequence)
 	if !ok {
 		return nil
 	}
@@ -1212,7 +1213,8 @@ type StreamFilter struct {
 
 type StreamEvent struct {
 	Type             OrderLogEntryType
-	OrderId          orderid.OrderId
+	OrderID          orderid.OrderId
+	VenueID          string
 	ObservedAt       time.Time
 	BotEvent         *tc.BotEvent
 	Submission       interface{}
@@ -1223,7 +1225,7 @@ type StreamEvent struct {
 	Actor            *string
 }
 
-func makeOrderIdentifiers(oid orderid.OrderId, event *tc.BotEvent, fallback time.Time) OrderIdentifiers {
+func makeOrderIdentifiers(oid orderid.OrderId, event *tc.BotEvent, fallback time.Time, venueID string) OrderIdentifiers {
 	createdAt := fallback
 	if event != nil && !event.CreatedAt.IsZero() {
 		createdAt = event.CreatedAt
@@ -1234,6 +1236,7 @@ func makeOrderIdentifiers(oid orderid.OrderId, event *tc.BotEvent, fallback time
 		DealId:     int64(oid.DealID),
 		BotEventId: int64(oid.BotEventID),
 		CreatedAt:  createdAt,
+		VenueId:    venueID,
 	}
 }
 

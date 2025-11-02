@@ -47,11 +47,11 @@ func (s *orderScalerStubStore) ListOrderScalers(context.Context, ListOrderScaler
 	return nil, nil, nil
 }
 
-func (s *orderScalerStubStore) LoadHyperliquidSubmission(context.Context, orderid.OrderId) (recomma.Action, bool, error) {
+func (s *orderScalerStubStore) LoadHyperliquidSubmission(context.Context, recomma.OrderIdentifier) (recomma.Action, bool, error) {
 	return recomma.Action{}, false, nil
 }
 
-func (s *orderScalerStubStore) LoadHyperliquidStatus(context.Context, orderid.OrderId) (*hyperliquid.WsOrder, bool, error) {
+func (s *orderScalerStubStore) LoadHyperliquidStatus(context.Context, recomma.OrderIdentifier) (*hyperliquid.WsOrder, bool, error) {
 	return nil, false, nil
 }
 
@@ -125,7 +125,7 @@ func (s *orderScalerStubStore) publishEvent(oid orderid.OrderId, actor string) {
 	effective, _ := s.ResolveEffectiveOrderScalerConfig(context.Background(), oid)
 	event := StreamEvent{
 		Type:         OrderScalerConfigEntry,
-		OrderId:      oid,
+		OrderID:      oid,
 		ObservedAt:   time.Now().UTC(),
 		ScalerConfig: &effective,
 		Actor:        &actor,

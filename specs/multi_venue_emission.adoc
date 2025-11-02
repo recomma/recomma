@@ -88,6 +88,7 @@ sharing pacing state where the upstream platform enforces account-level limits.
 * *Websocket scope.* The current Hyperliquid websocket follows one `userAddr`. We must spin multiple websocket clients (or multiplex subscriptions) and tag callbacks with the originating venue before persisting status updates.
 * *Rate limiter fragmentation.* Duplicating `HyperLiquidEmitter` would multiply throughput. Extract shared rate gates keyed by wallet so fan-out still honors Hyperliquid pacing.
 * *Manual controls.* Cancel endpoints and CLI tools currently fetch submissions by order ID alone. They must accept `OrderIdentifier` or `(venue, wallet, order_id)` to locate the correct row.
+* *Status refresher dispatch.* `StatusRefresher.Refresh` still queries Hyperliquid with a single client per refresh cycle and only the raw order hex. The refactor must partition identifiers by `venue_id`/wallet and send them through the correct venue client so status updates continue to propagate when multiple venues are configured.
 
 == Open Questions
 * Do we need venue-level configuration for websocket shards or can we assume one connection per wallet?

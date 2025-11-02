@@ -1275,43 +1275,28 @@ SELECT
     payload_blob
 FROM scaled_orders
 WHERE venue_id = ?1
-  AND order_id = ?2
-  AND created_at_utc >= ?3
-  AND created_at_utc <= ?4
+  AND (
+        order_id = ?2
+        OR order_id LIKE ?3
+    )
+  AND created_at_utc >= ?4
+  AND created_at_utc <= ?5
 ORDER BY created_at_utc ASC, order_id ASC
 `
 
 type ListScaledOrderAuditsForOrderIdParams struct {
-	VenueID      string `json:"venue_id"`
-	OrderID      string `json:"order_id"`
-	ObservedFrom int64  `json:"observed_from"`
-	ObservedTo   int64  `json:"observed_to"`
+	VenueID       string `json:"venue_id"`
+	OrderID       string `json:"order_id"`
+	OrderIDPrefix string `json:"order_id_prefix"`
+	ObservedFrom  int64  `json:"observed_from"`
+	ObservedTo    int64  `json:"observed_to"`
 }
 
-type ListScaledOrderAuditsForOrderIdRow struct {
-	VenueID             string  `json:"venue_id"`
-	Wallet              string  `json:"wallet"`
-	OrderID             string  `json:"order_id"`
-	DealID              int64   `json:"deal_id"`
-	BotID               int64   `json:"bot_id"`
-	OriginalSize        float64 `json:"original_size"`
-	ScaledSize          float64 `json:"scaled_size"`
-	Multiplier          float64 `json:"multiplier"`
-	RoundingDelta       float64 `json:"rounding_delta"`
-	StackIndex          int64   `json:"stack_index"`
-	OrderSide           string  `json:"order_side"`
-	MultiplierUpdatedBy string  `json:"multiplier_updated_by"`
-	CreatedAtUtc        int64   `json:"created_at_utc"`
-	Skipped             int64   `json:"skipped"`
-	SkipReason          *string `json:"skip_reason"`
-	PayloadType         *string `json:"payload_type"`
-	PayloadBlob         []byte  `json:"payload_blob"`
-}
-
-func (q *Queries) ListScaledOrderAuditsForOrderId(ctx context.Context, arg ListScaledOrderAuditsForOrderIdParams) ([]ListScaledOrderAuditsForOrderIdRow, error) {
+func (q *Queries) ListScaledOrderAuditsForOrderId(ctx context.Context, arg ListScaledOrderAuditsForOrderIdParams) ([]ScaledOrder, error) {
 	rows, err := q.db.QueryContext(ctx, listScaledOrderAuditsForOrderId,
 		arg.VenueID,
 		arg.OrderID,
+		arg.OrderIDPrefix,
 		arg.ObservedFrom,
 		arg.ObservedTo,
 	)
@@ -1319,9 +1304,9 @@ func (q *Queries) ListScaledOrderAuditsForOrderId(ctx context.Context, arg ListS
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListScaledOrderAuditsForOrderIdRow
+	var items []ScaledOrder
 	for rows.Next() {
-		var i ListScaledOrderAuditsForOrderIdRow
+		var i ScaledOrder
 		if err := rows.Scan(
 			&i.VenueID,
 			&i.Wallet,
@@ -1384,35 +1369,15 @@ type ListScaledOrdersByDealParams struct {
 	VenueID string `json:"venue_id"`
 }
 
-type ListScaledOrdersByDealRow struct {
-	VenueID             string  `json:"venue_id"`
-	Wallet              string  `json:"wallet"`
-	OrderID             string  `json:"order_id"`
-	DealID              int64   `json:"deal_id"`
-	BotID               int64   `json:"bot_id"`
-	OriginalSize        float64 `json:"original_size"`
-	ScaledSize          float64 `json:"scaled_size"`
-	Multiplier          float64 `json:"multiplier"`
-	RoundingDelta       float64 `json:"rounding_delta"`
-	StackIndex          int64   `json:"stack_index"`
-	OrderSide           string  `json:"order_side"`
-	MultiplierUpdatedBy string  `json:"multiplier_updated_by"`
-	CreatedAtUtc        int64   `json:"created_at_utc"`
-	Skipped             int64   `json:"skipped"`
-	SkipReason          *string `json:"skip_reason"`
-	PayloadType         *string `json:"payload_type"`
-	PayloadBlob         []byte  `json:"payload_blob"`
-}
-
-func (q *Queries) ListScaledOrdersByDeal(ctx context.Context, arg ListScaledOrdersByDealParams) ([]ListScaledOrdersByDealRow, error) {
+func (q *Queries) ListScaledOrdersByDeal(ctx context.Context, arg ListScaledOrdersByDealParams) ([]ScaledOrder, error) {
 	rows, err := q.db.QueryContext(ctx, listScaledOrdersByDeal, arg.DealID, arg.VenueID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListScaledOrdersByDealRow
+	var items []ScaledOrder
 	for rows.Next() {
-		var i ListScaledOrdersByDealRow
+		var i ScaledOrder
 		if err := rows.Scan(
 			&i.VenueID,
 			&i.Wallet,
@@ -1466,44 +1431,28 @@ SELECT
     payload_blob
 FROM scaled_orders
 WHERE venue_id = ?1
-  AND order_id = ?2
+  AND (
+        order_id = ?2
+        OR order_id LIKE ?3
+    )
 ORDER BY created_at_utc ASC, order_id ASC
 `
 
 type ListScaledOrdersByOrderIdParams struct {
-	VenueID string `json:"venue_id"`
-	OrderID string `json:"order_id"`
+	VenueID       string `json:"venue_id"`
+	OrderID       string `json:"order_id"`
+	OrderIDPrefix string `json:"order_id_prefix"`
 }
 
-type ListScaledOrdersByOrderIdRow struct {
-	VenueID             string  `json:"venue_id"`
-	Wallet              string  `json:"wallet"`
-	OrderID             string  `json:"order_id"`
-	DealID              int64   `json:"deal_id"`
-	BotID               int64   `json:"bot_id"`
-	OriginalSize        float64 `json:"original_size"`
-	ScaledSize          float64 `json:"scaled_size"`
-	Multiplier          float64 `json:"multiplier"`
-	RoundingDelta       float64 `json:"rounding_delta"`
-	StackIndex          int64   `json:"stack_index"`
-	OrderSide           string  `json:"order_side"`
-	MultiplierUpdatedBy string  `json:"multiplier_updated_by"`
-	CreatedAtUtc        int64   `json:"created_at_utc"`
-	Skipped             int64   `json:"skipped"`
-	SkipReason          *string `json:"skip_reason"`
-	PayloadType         *string `json:"payload_type"`
-	PayloadBlob         []byte  `json:"payload_blob"`
-}
-
-func (q *Queries) ListScaledOrdersByOrderId(ctx context.Context, arg ListScaledOrdersByOrderIdParams) ([]ListScaledOrdersByOrderIdRow, error) {
-	rows, err := q.db.QueryContext(ctx, listScaledOrdersByOrderId, arg.VenueID, arg.OrderID)
+func (q *Queries) ListScaledOrdersByOrderId(ctx context.Context, arg ListScaledOrdersByOrderIdParams) ([]ScaledOrder, error) {
+	rows, err := q.db.QueryContext(ctx, listScaledOrdersByOrderId, arg.VenueID, arg.OrderID, arg.OrderIDPrefix)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListScaledOrdersByOrderIdRow
+	var items []ScaledOrder
 	for rows.Next() {
-		var i ListScaledOrdersByOrderIdRow
+		var i ScaledOrder
 		if err := rows.Scan(
 			&i.VenueID,
 			&i.Wallet,

@@ -351,7 +351,7 @@ func (s *Service) emitOrderWork(
 }
 
 func (s *Service) shouldSkipSubmission(ctx context.Context, oid orderid.OrderId, desiredSize float64, requireReduceOnly bool) bool {
-	action, found, err := s.store.LoadHyperliquidSubmission(ctx, oid)
+	action, found, err := s.store.LoadHyperliquidSubmission(ctx, storage.DefaultHyperliquidIdentifier(oid))
 	if err != nil {
 		s.logger.Warn("load hyperliquid submission failed", slog.String("cloid", oid.Hex()), slog.String("error", err.Error()))
 		return false
@@ -364,7 +364,7 @@ func (s *Service) shouldSkipSubmission(ctx context.Context, oid orderid.OrderId,
 		return false
 	}
 
-	status, haveStatus, err := s.store.LoadHyperliquidStatus(ctx, oid)
+	status, haveStatus, err := s.store.LoadHyperliquidStatus(ctx, storage.DefaultHyperliquidIdentifier(oid))
 	if err != nil {
 		s.logger.Warn("load hyperliquid status failed", slog.String("cloid", oid.Hex()), slog.String("error", err.Error()))
 		return false
@@ -506,7 +506,7 @@ func (s *Service) reloadDeal(ctx context.Context, dealID uint32) error {
 		if err != nil {
 			return err
 		}
-		status, found, err := s.store.LoadHyperliquidStatus(ctx, oid)
+		status, found, err := s.store.LoadHyperliquidStatus(ctx, storage.DefaultHyperliquidIdentifier(oid))
 		if err != nil {
 			return err
 		}

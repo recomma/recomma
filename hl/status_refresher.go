@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/recomma/recomma/orderid"
+	"github.com/recomma/recomma/recomma"
 	"github.com/sonirico/go-hyperliquid"
 	"golang.org/x/sync/errgroup"
 )
@@ -19,8 +20,8 @@ type orderStatusClient interface {
 }
 
 type statusStore interface {
-	ListHyperliquidOrderIds(ctx context.Context) ([]orderid.OrderId, error)
-	RecordHyperliquidStatus(ctx context.Context, oid orderid.OrderId, status hyperliquid.WsOrder) error
+	ListHyperliquidOrderIds(ctx context.Context) ([]recomma.OrderIdentifier, error)
+	RecordHyperliquidStatus(ctx context.Context, ident recomma.OrderIdentifier, status hyperliquid.WsOrder) error
 }
 
 type statusTracker interface {
@@ -108,11 +109,11 @@ func (r *StatusRefresher) Refresh(ctx context.Context) error {
 		return errors.New("status refresher requires storage")
 	}
 
-	oids, err := r.store.ListHyperliquidOrderIds(ctx)
+	idents, err := r.store.ListHyperliquidOrderIds(ctx)
 	if err != nil {
 		return fmt.Errorf("list hyperliquid orderids: %w", err)
 	}
-	if len(oids) == 0 {
+	if len(idents) == 0 {
 		return nil
 	}
 
@@ -124,8 +125,8 @@ func (r *StatusRefresher) Refresh(ctx context.Context) error {
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(r.maxConcurrency)
 
-	for _, oid := range oids {
-		oid := oid
+	for _, ident := range idents {
+		ident := ident
 		g.Go(func() error {
 			callCtx := gctx
 			if r.timeout > 0 {
@@ -133,7 +134,7 @@ func (r *StatusRefresher) Refresh(ctx context.Context) error {
 				callCtx, cancel = context.WithTimeout(gctx, r.timeout)
 				defer cancel()
 			}
-			ok, refreshErr := r.refreshOne(callCtx, oid)
+			ok, refreshErr := r.refreshOne(callCtx, ident)
 			if refreshErr != nil {
 				errsMu.Lock()
 				errs = append(errs, refreshErr)
@@ -151,7 +152,7 @@ func (r *StatusRefresher) Refresh(ctx context.Context) error {
 
 	if r.logger != nil {
 		r.logger.Info("refreshed hyperliquid statuses",
-			slog.Int("oids", len(oids)),
+			slog.Int("metadata", len(idents)),
 			slog.Int("updated", int(updated.Load())),
 			slog.Duration("elapsed", time.Since(start)))
 	}
@@ -162,41 +163,41 @@ func (r *StatusRefresher) Refresh(ctx context.Context) error {
 	return nil
 }
 
-func (r *StatusRefresher) refreshOne(ctx context.Context, oid orderid.OrderId) (bool, error) {
-	result, err := r.client.QueryOrderByCloid(ctx, oid.Hex())
+func (r *StatusRefresher) refreshOne(ctx context.Context, ident recomma.OrderIdentifier) (bool, error) {
+	result, err := r.client.QueryOrderByCloid(ctx, ident.Hex())
 	if err != nil {
 		if r.logger != nil {
 			r.logger.Warn("failed to query order status",
-				slog.String("orderid", oid.Hex()),
+				slog.String("oid", ident.Hex()),
 				slog.String("error", err.Error()))
 		}
-		return false, fmt.Errorf("query order %s: %w", oid.Hex(), err)
+		return false, fmt.Errorf("query order %s: %w", ident.Hex(), err)
 	}
 	if result == nil {
-		return false, fmt.Errorf("query order %s returned nil result", oid.Hex())
+		return false, fmt.Errorf("query order %s returned nil result", ident.Hex())
 	}
 
-	wsOrder, err := orderResultToWsOrder(oid, result)
+	wsOrder, err := orderResultToWsOrder(ident.OrderId, result)
 	if err != nil {
-		return false, fmt.Errorf("convert order %s: %w", oid.Hex(), err)
+		return false, fmt.Errorf("convert order %s: %w", ident.Hex(), err)
 	}
 	if wsOrder == nil {
 		if r.logger != nil {
 			r.logger.Debug("order status unavailable",
-				slog.String("orderid", oid.Hex()),
+				slog.String("oid", ident.Hex()),
 				slog.String("query_status", string(result.Status)))
 		}
 		return false, nil
 	}
 
-	if err := r.store.RecordHyperliquidStatus(ctx, oid, *wsOrder); err != nil {
-		return false, fmt.Errorf("record status %s: %w", oid.Hex(), err)
+	if err := r.store.RecordHyperliquidStatus(ctx, ident, *wsOrder); err != nil {
+		return false, fmt.Errorf("record status %s: %w", ident.Hex(), err)
 	}
 
 	if r.tracker != nil {
-		if err := r.tracker.UpdateStatus(ctx, oid, *wsOrder); err != nil && r.logger != nil {
+		if err := r.tracker.UpdateStatus(ctx, ident.OrderId, *wsOrder); err != nil && r.logger != nil {
 			r.logger.Warn("fill tracker update failed",
-				slog.String("orderid", oid.Hex()),
+				slog.String("oid", ident.Hex()),
 				slog.String("error", err.Error()))
 		}
 	}

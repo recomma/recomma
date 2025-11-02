@@ -179,9 +179,9 @@ func TestOrderScalerConfigEvents(t *testing.T) {
 		if evt.Type != api.OrderScalerConfigEntry {
 			continue
 		}
-		if evt.OrderId.BotID == 0 {
+		if evt.OrderID.BotID == 0 {
 			defaultEvt = evt
-		} else if evt.OrderId.BotID == botID {
+		} else if evt.OrderID.BotID == botID {
 			overrideEvt = evt
 		}
 	}

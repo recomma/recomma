@@ -389,10 +389,10 @@ func (s *Storage) InsertScaledOrderAudit(ctx context.Context, params ScaledOrder
 		payloadType = &pt
 	}
 
-	orderID := params.OrderId.Hex()
+	orderID := fmt.Sprintf("%s#%d", params.OrderId.Hex(), params.StackIndex)
 
 	insert := sqlcgen.InsertScaledOrderParams{
-		VenueID:             defaultHyperliquidVenueID,
+		VenueID:             string(defaultHyperliquidVenueID),
 		Wallet:              defaultHyperliquidWallet,
 		OrderID:             orderID,
 		DealID:              int64(params.DealID),
@@ -460,7 +460,8 @@ func (s *Storage) InsertScaledOrderAudit(ctx context.Context, params ScaledOrder
 
 	s.publishStreamEventLocked(api.StreamEvent{
 		Type:             api.ScaledOrderAuditEntry,
-		OrderId:          params.OrderId,
+		OrderID:          params.OrderId,
+		VenueID:          string(defaultHyperliquidVenueID),
 		ObservedAt:       createdAt,
 		Actor:            &actor,
 		ScaledOrderAudit: toAPIScaledOrderAudit(audit),
@@ -475,8 +476,9 @@ func (s *Storage) ListScaledOrdersByOrderId(ctx context.Context, oid orderid.Ord
 	defer s.mu.Unlock()
 
 	rows, err := s.queries.ListScaledOrdersByOrderId(ctx, sqlcgen.ListScaledOrdersByOrderIdParams{
-		VenueID: defaultHyperliquidVenueID,
-		OrderID: oid.Hex(),
+		VenueID:       string(defaultHyperliquidVenueID),
+		OrderID:       oid.Hex(),
+		OrderIDPrefix: fmt.Sprintf("%s#%%", oid.Hex()),
 	})
 	if err != nil {
 		return nil, err
@@ -491,7 +493,7 @@ func (s *Storage) ListScaledOrdersByDeal(ctx context.Context, dealID uint32) ([]
 
 	rows, err := s.queries.ListScaledOrdersByDeal(ctx, sqlcgen.ListScaledOrdersByDealParams{
 		DealID:  int64(dealID),
-		VenueID: defaultHyperliquidVenueID,
+		VenueID: string(defaultHyperliquidVenueID),
 	})
 	if err != nil {
 		return nil, err
@@ -527,7 +529,7 @@ func convertBotOrderScaler(row sqlcgen.BotOrderScaler) BotOrderScalerOverride {
 	}
 }
 
-func convertScaledOrdersFromOrderRows(rows []sqlcgen.ListScaledOrdersByOrderIdRow) ([]ScaledOrderAudit, error) {
+func convertScaledOrdersFromOrderRows(rows []sqlcgen.ScaledOrder) ([]ScaledOrderAudit, error) {
 	audits := make([]ScaledOrderAudit, 0, len(rows))
 	for _, row := range rows {
 		audit, err := convertScaledOrder(sqlcgen.ScaledOrder{
@@ -557,7 +559,7 @@ func convertScaledOrdersFromOrderRows(rows []sqlcgen.ListScaledOrdersByOrderIdRo
 	return audits, nil
 }
 
-func convertScaledOrdersFromDealRows(rows []sqlcgen.ListScaledOrdersByDealRow) ([]ScaledOrderAudit, error) {
+func convertScaledOrdersFromDealRows(rows []sqlcgen.ScaledOrder) ([]ScaledOrderAudit, error) {
 	audits := make([]ScaledOrderAudit, 0, len(rows))
 	for _, row := range rows {
 		audit, err := convertScaledOrder(sqlcgen.ScaledOrder{
@@ -587,7 +589,7 @@ func convertScaledOrdersFromDealRows(rows []sqlcgen.ListScaledOrdersByDealRow) (
 	return audits, nil
 }
 
-func convertScaledOrderFromAuditRow(row sqlcgen.ListScaledOrderAuditsForOrderIdRow) (ScaledOrderAudit, error) {
+func convertScaledOrderFromAuditRow(row sqlcgen.ScaledOrder) (ScaledOrderAudit, error) {
 	return convertScaledOrder(sqlcgen.ScaledOrder{
 		VenueID:             row.VenueID,
 		Wallet:              row.Wallet,
@@ -659,7 +661,8 @@ func (s *Storage) publishOrderScalerEventLocked(oid orderid.OrderId, effective E
 	actorCopy := actor
 	s.publishStreamEventLocked(api.StreamEvent{
 		Type:         api.OrderScalerConfigEntry,
-		OrderId:      oid,
+		OrderID:      oid,
+		VenueID:      string(defaultHyperliquidVenueID),
 		ObservedAt:   observedAt,
 		Actor:        &actorCopy,
 		ScalerConfig: cfg,

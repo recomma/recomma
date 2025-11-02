@@ -320,7 +320,7 @@ func (e *Engine) reduceOrderEvents(
 	prev := previousDistinct(events)
 
 	// Did we already create anything for this CLOID on Hyperliquid?
-	submitted, haveSubmission, err := e.store.LoadHyperliquidSubmission(ctx, oid)
+	submitted, haveSubmission, err := e.store.LoadHyperliquidSubmission(ctx, storage.DefaultHyperliquidIdentifier(oid))
 	if err != nil {
 		return recomma.Action{}, nil, false, fmt.Errorf("load submission: %w", err)
 	}

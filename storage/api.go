@@ -483,7 +483,7 @@ FROM threecommas_botevents`)
 		oidCopy := items[indexes[0]].OrderId
 
 		submissionRow, err := s.queries.FetchHyperliquidSubmission(ctx, sqlcgen.FetchHyperliquidSubmissionParams{
-			VenueID: defaultHyperliquidVenueID,
+			VenueID: string(defaultHyperliquidVenueID),
 			Wallet:  defaultHyperliquidWallet,
 			OrderID: oidHex,
 		})
@@ -532,7 +532,7 @@ FROM threecommas_botevents`)
 		}
 
 		statusRow, err := s.queries.FetchLatestHyperliquidStatus(ctx, sqlcgen.FetchLatestHyperliquidStatusParams{
-			VenueID: defaultHyperliquidVenueID,
+			VenueID: string(defaultHyperliquidVenueID),
 			Wallet:  defaultHyperliquidWallet,
 			OrderID: oidHex,
 		})
@@ -560,7 +560,7 @@ FROM threecommas_botevents`)
 			}
 
 			statusRows, err := s.queries.ListHyperliquidStatusesForOrderId(ctx, sqlcgen.ListHyperliquidStatusesForOrderIdParams{
-				VenueID:      defaultHyperliquidVenueID,
+				VenueID:      string(defaultHyperliquidVenueID),
 				OrderID:      oidHex,
 				Wallet:       nil,
 				ObservedFrom: logFrom,
@@ -571,10 +571,11 @@ FROM threecommas_botevents`)
 			}
 
 			auditRows, err := s.queries.ListScaledOrderAuditsForOrderId(ctx, sqlcgen.ListScaledOrderAuditsForOrderIdParams{
-				VenueID:      defaultHyperliquidVenueID,
-				OrderID:      oidHex,
-				ObservedFrom: logFrom,
-				ObservedTo:   logTo,
+				VenueID:       string(defaultHyperliquidVenueID),
+				OrderID:       oidHex,
+				OrderIDPrefix: fmt.Sprintf("%s#%%", oidHex),
+				ObservedFrom:  logFrom,
+				ObservedTo:    logTo,
 			})
 			if err != nil {
 				return nil, nil, fmt.Errorf("list scaled order audits for %s: %w", oidHex, err)

@@ -11,40 +11,63 @@ import (
 
 const appendHyperliquidModify = `-- name: AppendHyperliquidModify :exec
 INSERT INTO hyperliquid_submissions (
+    venue_id,
+    wallet,
     order_id,
     action_kind,
     create_payload,
     modify_payloads,
     cancel_payload,
+    payload_type,
+    payload_blob,
     updated_at_utc,
     botevent_row_id
 ) VALUES (
     ?1,
+    ?2,
+    ?3,
     'modify',
     NULL,
-    json_array(json(?2)),
+    json_array(json(?4)),
     NULL,
+    ?5,
+    ?6,
     CAST(unixepoch('now','subsec') * 1000 AS INTEGER),
-    ?3
+    ?7
 )
-ON CONFLICT(order_id) DO UPDATE SET
+ON CONFLICT(venue_id, wallet, order_id) DO UPDATE SET
+    order_id = excluded.order_id,
     modify_payloads = json_insert(
         COALESCE(hyperliquid_submissions.modify_payloads, CAST('[]' AS BLOB)),
         '$[#]',
         json(json_extract(excluded.modify_payloads, '$[0]'))
     ),
     action_kind    = 'modify',
+    payload_type   = excluded.payload_type,
+    payload_blob   = excluded.payload_blob,
     updated_at_utc = CAST(unixepoch('now','subsec') * 1000 AS INTEGER)
 `
 
 type AppendHyperliquidModifyParams struct {
+	VenueID       string      `json:"venue_id"`
+	Wallet        string      `json:"wallet"`
 	OrderID       string      `json:"order_id"`
 	ModifyPayload interface{} `json:"modify_payload"`
+	PayloadType   string      `json:"payload_type"`
+	PayloadBlob   []byte      `json:"payload_blob"`
 	BoteventRowID int64       `json:"botevent_row_id"`
 }
 
 func (q *Queries) AppendHyperliquidModify(ctx context.Context, arg AppendHyperliquidModifyParams) error {
-	_, err := q.db.ExecContext(ctx, appendHyperliquidModify, arg.OrderID, arg.ModifyPayload, arg.BoteventRowID)
+	_, err := q.db.ExecContext(ctx, appendHyperliquidModify,
+		arg.VenueID,
+		arg.Wallet,
+		arg.OrderID,
+		arg.ModifyPayload,
+		arg.PayloadType,
+		arg.PayloadBlob,
+		arg.BoteventRowID,
+	)
 	return err
 }
 
@@ -55,6 +78,22 @@ WHERE bot_id = ?1
 
 func (q *Queries) DeleteBotOrderScaler(ctx context.Context, botID int64) error {
 	_, err := q.db.ExecContext(ctx, deleteBotOrderScaler, botID)
+	return err
+}
+
+const deleteBotVenueAssignment = `-- name: DeleteBotVenueAssignment :exec
+DELETE FROM bot_venue_assignments
+WHERE bot_id = ?1
+  AND venue_id = ?2
+`
+
+type DeleteBotVenueAssignmentParams struct {
+	BotID   int64  `json:"bot_id"`
+	VenueID string `json:"venue_id"`
+}
+
+func (q *Queries) DeleteBotVenueAssignment(ctx context.Context, arg DeleteBotVenueAssignmentParams) error {
+	_, err := q.db.ExecContext(ctx, deleteBotVenueAssignment, arg.BotID, arg.VenueID)
 	return err
 }
 
@@ -75,6 +114,16 @@ WHERE id = ?1
 
 func (q *Queries) DeleteVaultUserByID(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, deleteVaultUserByID, id)
+	return err
+}
+
+const deleteVenue = `-- name: DeleteVenue :exec
+DELETE FROM venues
+WHERE id = ?1
+`
+
+func (q *Queries) DeleteVenue(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, deleteVenue, id)
 	return err
 }
 
@@ -141,46 +190,85 @@ func (q *Queries) FetchDeal(ctx context.Context, dealID int64) ([]byte, error) {
 
 const fetchHyperliquidSubmission = `-- name: FetchHyperliquidSubmission :one
 SELECT
+    order_id,
     action_kind,
     CAST(create_payload AS BLOB)  AS create_payload,
     CAST(modify_payloads AS BLOB) AS modify_payloads,
-    CAST(cancel_payload AS BLOB)  AS cancel_payload
+    CAST(cancel_payload AS BLOB)  AS cancel_payload,
+    payload_type,
+    payload_blob,
+    updated_at_utc,
+    botevent_row_id
 FROM hyperliquid_submissions
-WHERE order_id = ?1
+WHERE venue_id = ?1
+  AND wallet = ?2
+  AND order_id = ?3
 `
 
+type FetchHyperliquidSubmissionParams struct {
+	VenueID string `json:"venue_id"`
+	Wallet  string `json:"wallet"`
+	OrderID string `json:"order_id"`
+}
+
 type FetchHyperliquidSubmissionRow struct {
+	OrderID        string `json:"order_id"`
 	ActionKind     string `json:"action_kind"`
 	CreatePayload  []byte `json:"create_payload"`
 	ModifyPayloads []byte `json:"modify_payloads"`
 	CancelPayload  []byte `json:"cancel_payload"`
+	PayloadType    string `json:"payload_type"`
+	PayloadBlob    []byte `json:"payload_blob"`
+	UpdatedAtUtc   int64  `json:"updated_at_utc"`
+	BoteventRowID  int64  `json:"botevent_row_id"`
 }
 
-func (q *Queries) FetchHyperliquidSubmission(ctx context.Context, orderID string) (FetchHyperliquidSubmissionRow, error) {
-	row := q.db.QueryRowContext(ctx, fetchHyperliquidSubmission, orderID)
+func (q *Queries) FetchHyperliquidSubmission(ctx context.Context, arg FetchHyperliquidSubmissionParams) (FetchHyperliquidSubmissionRow, error) {
+	row := q.db.QueryRowContext(ctx, fetchHyperliquidSubmission, arg.VenueID, arg.Wallet, arg.OrderID)
 	var i FetchHyperliquidSubmissionRow
 	err := row.Scan(
+		&i.OrderID,
 		&i.ActionKind,
 		&i.CreatePayload,
 		&i.ModifyPayloads,
 		&i.CancelPayload,
+		&i.PayloadType,
+		&i.PayloadBlob,
+		&i.UpdatedAtUtc,
+		&i.BoteventRowID,
 	)
 	return i, err
 }
 
 const fetchLatestHyperliquidStatus = `-- name: FetchLatestHyperliquidStatus :one
-SELECT status
+SELECT
+    payload_type,
+    payload_blob
 FROM hyperliquid_status_history
-WHERE order_id = ?1
-ORDER BY recorded_at_utc DESC, id DESC
+WHERE venue_id = ?1
+  AND wallet = ?2
+  AND order_id = ?3
+  AND order_id = ?3
+ORDER BY recorded_at_utc DESC
 LIMIT 1
 `
 
-func (q *Queries) FetchLatestHyperliquidStatus(ctx context.Context, orderID string) ([]byte, error) {
-	row := q.db.QueryRowContext(ctx, fetchLatestHyperliquidStatus, orderID)
-	var status []byte
-	err := row.Scan(&status)
-	return status, err
+type FetchLatestHyperliquidStatusParams struct {
+	VenueID string `json:"venue_id"`
+	Wallet  string `json:"wallet"`
+	OrderID string `json:"order_id"`
+}
+
+type FetchLatestHyperliquidStatusRow struct {
+	PayloadType string `json:"payload_type"`
+	PayloadBlob []byte `json:"payload_blob"`
+}
+
+func (q *Queries) FetchLatestHyperliquidStatus(ctx context.Context, arg FetchLatestHyperliquidStatusParams) (FetchLatestHyperliquidStatusRow, error) {
+	row := q.db.QueryRowContext(ctx, fetchLatestHyperliquidStatus, arg.VenueID, arg.Wallet, arg.OrderID)
+	var i FetchLatestHyperliquidStatusRow
+	err := row.Scan(&i.PayloadType, &i.PayloadBlob)
+	return i, err
 }
 
 const fetchThreeCommasBotEvent = `-- name: FetchThreeCommasBotEvent :one
@@ -264,6 +352,21 @@ func (q *Queries) GetOrderScaler(ctx context.Context) (OrderScaler, error) {
 		&i.Notes,
 	)
 	return i, err
+}
+
+const getPrimaryVenueForBot = `-- name: GetPrimaryVenueForBot :one
+SELECT venue_id
+FROM bot_venue_assignments
+WHERE bot_id = ?1
+  AND is_primary = 1
+LIMIT 1
+`
+
+func (q *Queries) GetPrimaryVenueForBot(ctx context.Context, botID int64) (string, error) {
+	row := q.db.QueryRowContext(ctx, getPrimaryVenueForBot, botID)
+	var venue_id string
+	err := row.Scan(&venue_id)
+	return venue_id, err
 }
 
 const getTPForDeal = `-- name: GetTPForDeal :one
@@ -380,6 +483,38 @@ func (q *Queries) GetVaultUserByUsername(ctx context.Context, username string) (
 	return i, err
 }
 
+const getVenue = `-- name: GetVenue :one
+SELECT
+    id,
+    type,
+    display_name,
+    wallet,
+    CAST(flags AS BLOB) AS flags
+FROM venues
+WHERE id = ?1
+`
+
+type GetVenueRow struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	DisplayName string `json:"display_name"`
+	Wallet      string `json:"wallet"`
+	Flags       []byte `json:"flags"`
+}
+
+func (q *Queries) GetVenue(ctx context.Context, id string) (GetVenueRow, error) {
+	row := q.db.QueryRowContext(ctx, getVenue, id)
+	var i GetVenueRow
+	err := row.Scan(
+		&i.ID,
+		&i.Type,
+		&i.DisplayName,
+		&i.Wallet,
+		&i.Flags,
+	)
+	return i, err
+}
+
 const getWebauthnCredentialByID = `-- name: GetWebauthnCredentialByID :one
 SELECT
     id,
@@ -430,29 +565,47 @@ func (q *Queries) HasThreeCommasOrderId(ctx context.Context, orderID string) (in
 
 const insertHyperliquidStatus = `-- name: InsertHyperliquidStatus :exec
 INSERT INTO hyperliquid_status_history (
+    venue_id,
+    wallet,
     order_id,
-    status,
+    payload_type,
+    payload_blob,
     recorded_at_utc
 ) VALUES (
     ?1,
     ?2,
-    ?3
+    ?3,
+    ?4,
+    ?5,
+    ?6
 )
 `
 
 type InsertHyperliquidStatusParams struct {
+	VenueID       string `json:"venue_id"`
+	Wallet        string `json:"wallet"`
 	OrderID       string `json:"order_id"`
-	Status        []byte `json:"status"`
+	PayloadType   string `json:"payload_type"`
+	PayloadBlob   []byte `json:"payload_blob"`
 	RecordedAtUtc int64  `json:"recorded_at_utc"`
 }
 
 func (q *Queries) InsertHyperliquidStatus(ctx context.Context, arg InsertHyperliquidStatusParams) error {
-	_, err := q.db.ExecContext(ctx, insertHyperliquidStatus, arg.OrderID, arg.Status, arg.RecordedAtUtc)
+	_, err := q.db.ExecContext(ctx, insertHyperliquidStatus,
+		arg.VenueID,
+		arg.Wallet,
+		arg.OrderID,
+		arg.PayloadType,
+		arg.PayloadBlob,
+		arg.RecordedAtUtc,
+	)
 	return err
 }
 
-const insertScaledOrder = `-- name: InsertScaledOrder :one
+const insertScaledOrder = `-- name: InsertScaledOrder :exec
 INSERT INTO scaled_orders (
+    venue_id,
+    wallet,
     order_id,
     deal_id,
     bot_id,
@@ -464,9 +617,10 @@ INSERT INTO scaled_orders (
     order_side,
     multiplier_updated_by,
     created_at_utc,
-    submitted_order_id,
     skipped,
-    skip_reason
+    skip_reason,
+    payload_type,
+    payload_blob
 ) VALUES (
     ?1,
     ?2,
@@ -481,12 +635,16 @@ INSERT INTO scaled_orders (
     ?11,
     ?12,
     ?13,
-    ?14
+    ?14,
+    ?15,
+    ?16,
+    ?17
 )
-RETURNING id
 `
 
 type InsertScaledOrderParams struct {
+	VenueID             string  `json:"venue_id"`
+	Wallet              string  `json:"wallet"`
 	OrderID             string  `json:"order_id"`
 	DealID              int64   `json:"deal_id"`
 	BotID               int64   `json:"bot_id"`
@@ -498,13 +656,16 @@ type InsertScaledOrderParams struct {
 	OrderSide           string  `json:"order_side"`
 	MultiplierUpdatedBy string  `json:"multiplier_updated_by"`
 	CreatedAtUtc        int64   `json:"created_at_utc"`
-	SubmittedOrderID    *string `json:"submitted_order_id"`
 	Skipped             int64   `json:"skipped"`
 	SkipReason          *string `json:"skip_reason"`
+	PayloadType         *string `json:"payload_type"`
+	PayloadBlob         []byte  `json:"payload_blob"`
 }
 
-func (q *Queries) InsertScaledOrder(ctx context.Context, arg InsertScaledOrderParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, insertScaledOrder,
+func (q *Queries) InsertScaledOrder(ctx context.Context, arg InsertScaledOrderParams) error {
+	_, err := q.db.ExecContext(ctx, insertScaledOrder,
+		arg.VenueID,
+		arg.Wallet,
 		arg.OrderID,
 		arg.DealID,
 		arg.BotID,
@@ -516,13 +677,12 @@ func (q *Queries) InsertScaledOrder(ctx context.Context, arg InsertScaledOrderPa
 		arg.OrderSide,
 		arg.MultiplierUpdatedBy,
 		arg.CreatedAtUtc,
-		arg.SubmittedOrderID,
 		arg.Skipped,
 		arg.SkipReason,
+		arg.PayloadType,
+		arg.PayloadBlob,
 	)
-	var id int64
-	err := row.Scan(&id)
-	return id, err
+	return err
 }
 
 const insertThreeCommasBotEvent = `-- name: InsertThreeCommasBotEvent :one
@@ -647,6 +807,45 @@ func (q *Queries) ListBotOrderScalers(ctx context.Context) ([]BotOrderScaler, er
 	return items, nil
 }
 
+const listBotVenueAssignments = `-- name: ListBotVenueAssignments :many
+SELECT
+    bot_id,
+    venue_id,
+    is_primary,
+    assigned_at_utc
+FROM bot_venue_assignments
+WHERE bot_id = ?1
+ORDER BY venue_id ASC
+`
+
+func (q *Queries) ListBotVenueAssignments(ctx context.Context, botID int64) ([]BotVenueAssignment, error) {
+	rows, err := q.db.QueryContext(ctx, listBotVenueAssignments, botID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BotVenueAssignment
+	for rows.Next() {
+		var i BotVenueAssignment
+		if err := rows.Scan(
+			&i.BotID,
+			&i.VenueID,
+			&i.IsPrimary,
+			&i.AssignedAtUtc,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDealIDs = `-- name: ListDealIDs :many
 select deal_id from threecommas_deals
 `
@@ -674,25 +873,42 @@ func (q *Queries) ListDealIDs(ctx context.Context) ([]int64, error) {
 	return items, nil
 }
 
-const listHyperliquidOrderIds = `-- name: ListHyperliquidOrderIds :many
-SELECT order_id
+const listHyperliquidMetadata = `-- name: ListHyperliquidMetadata :many
+SELECT
+    venue_id,
+    wallet,
+    order_id,
+    order_id
 FROM hyperliquid_submissions
-ORDER BY order_id ASC
+WHERE venue_id = COALESCE(?1, venue_id)
+ORDER BY venue_id ASC, wallet ASC, order_id ASC
 `
 
-func (q *Queries) ListHyperliquidOrderIds(ctx context.Context) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, listHyperliquidOrderIds)
+type ListHyperliquidMetadataRow struct {
+	VenueID   string `json:"venue_id"`
+	Wallet    string `json:"wallet"`
+	OrderID   string `json:"order_id"`
+	OrderID_2 string `json:"order_id_2"`
+}
+
+func (q *Queries) ListHyperliquidMetadata(ctx context.Context, venueID string) ([]ListHyperliquidMetadataRow, error) {
+	rows, err := q.db.QueryContext(ctx, listHyperliquidMetadata, venueID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []string
+	var items []ListHyperliquidMetadataRow
 	for rows.Next() {
-		var order_id string
-		if err := rows.Scan(&order_id); err != nil {
+		var i ListHyperliquidMetadataRow
+		if err := rows.Scan(
+			&i.VenueID,
+			&i.Wallet,
+			&i.OrderID,
+			&i.OrderID_2,
+		); err != nil {
 			return nil, err
 		}
-		items = append(items, order_id)
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -704,19 +920,32 @@ func (q *Queries) ListHyperliquidOrderIds(ctx context.Context) ([]string, error)
 }
 
 const listHyperliquidStatuses = `-- name: ListHyperliquidStatuses :many
-SELECT status, recorded_at_utc
+SELECT
+    payload_type,
+    payload_blob,
+    recorded_at_utc
 FROM hyperliquid_status_history
-WHERE order_id = ?1
-ORDER BY recorded_at_utc ASC, id ASC
+WHERE venue_id = ?1
+  AND wallet = ?2
+  AND order_id = ?3
+  AND order_id = ?3
+ORDER BY recorded_at_utc ASC
 `
 
+type ListHyperliquidStatusesParams struct {
+	VenueID string `json:"venue_id"`
+	Wallet  string `json:"wallet"`
+	OrderID string `json:"order_id"`
+}
+
 type ListHyperliquidStatusesRow struct {
-	Status        []byte `json:"status"`
+	PayloadType   string `json:"payload_type"`
+	PayloadBlob   []byte `json:"payload_blob"`
 	RecordedAtUtc int64  `json:"recorded_at_utc"`
 }
 
-func (q *Queries) ListHyperliquidStatuses(ctx context.Context, orderID string) ([]ListHyperliquidStatusesRow, error) {
-	rows, err := q.db.QueryContext(ctx, listHyperliquidStatuses, orderID)
+func (q *Queries) ListHyperliquidStatuses(ctx context.Context, arg ListHyperliquidStatusesParams) ([]ListHyperliquidStatusesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listHyperliquidStatuses, arg.VenueID, arg.Wallet, arg.OrderID)
 	if err != nil {
 		return nil, err
 	}
@@ -724,7 +953,7 @@ func (q *Queries) ListHyperliquidStatuses(ctx context.Context, orderID string) (
 	var items []ListHyperliquidStatusesRow
 	for rows.Next() {
 		var i ListHyperliquidStatusesRow
-		if err := rows.Scan(&i.Status, &i.RecordedAtUtc); err != nil {
+		if err := rows.Scan(&i.PayloadType, &i.PayloadBlob, &i.RecordedAtUtc); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -740,38 +969,55 @@ func (q *Queries) ListHyperliquidStatuses(ctx context.Context, orderID string) (
 
 const listHyperliquidStatusesForOrderId = `-- name: ListHyperliquidStatusesForOrderId :many
 SELECT
-    id,
-    status,
+    venue_id,
+    wallet,
+    order_id,
+    payload_type,
+    payload_blob,
     recorded_at_utc
 FROM hyperliquid_status_history
-WHERE order_id = ?1
-  AND recorded_at_utc >= COALESCE(?2, recorded_at_utc)
-  AND recorded_at_utc <= COALESCE(?3, recorded_at_utc)
-ORDER BY recorded_at_utc ASC, id ASC
+WHERE venue_id = ?1
+  AND order_id = ?2
+  AND (?3 IS NULL OR wallet = ?3)
+  AND (?4 IS NULL OR order_id = ?4)
+  AND recorded_at_utc >= COALESCE(?5, recorded_at_utc)
+  AND recorded_at_utc <= COALESCE(?6, recorded_at_utc)
+ORDER BY recorded_at_utc ASC
 `
 
 type ListHyperliquidStatusesForOrderIdParams struct {
-	OrderID      string `json:"order_id"`
-	ObservedFrom int64  `json:"observed_from"`
-	ObservedTo   int64  `json:"observed_to"`
+	VenueID      string      `json:"venue_id"`
+	Metadata     string      `json:"metadata"`
+	Wallet       interface{} `json:"wallet"`
+	OrderID      interface{} `json:"order_id"`
+	ObservedFrom int64       `json:"observed_from"`
+	ObservedTo   int64       `json:"observed_to"`
 }
 
-type ListHyperliquidStatusesForOrderIdRow struct {
-	ID            int64  `json:"id"`
-	Status        []byte `json:"status"`
-	RecordedAtUtc int64  `json:"recorded_at_utc"`
-}
-
-func (q *Queries) ListHyperliquidStatusesForOrderId(ctx context.Context, arg ListHyperliquidStatusesForOrderIdParams) ([]ListHyperliquidStatusesForOrderIdRow, error) {
-	rows, err := q.db.QueryContext(ctx, listHyperliquidStatusesForOrderId, arg.OrderID, arg.ObservedFrom, arg.ObservedTo)
+func (q *Queries) ListHyperliquidStatusesForOrderId(ctx context.Context, arg ListHyperliquidStatusesForOrderIdParams) ([]HyperliquidStatusHistory, error) {
+	rows, err := q.db.QueryContext(ctx, listHyperliquidStatusesForOrderId,
+		arg.VenueID,
+		arg.Metadata,
+		arg.Wallet,
+		arg.OrderID,
+		arg.ObservedFrom,
+		arg.ObservedTo,
+	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListHyperliquidStatusesForOrderIdRow
+	var items []HyperliquidStatusHistory
 	for rows.Next() {
-		var i ListHyperliquidStatusesForOrderIdRow
-		if err := rows.Scan(&i.ID, &i.Status, &i.RecordedAtUtc); err != nil {
+		var i HyperliquidStatusHistory
+		if err := rows.Scan(
+			&i.VenueID,
+			&i.Wallet,
+			&i.OrderID,
+			&i.PayloadType,
+			&i.PayloadBlob,
+			&i.RecordedAtUtc,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -787,20 +1033,27 @@ func (q *Queries) ListHyperliquidStatusesForOrderId(ctx context.Context, arg Lis
 
 const listHyperliquidSubmissionsByOrderId = `-- name: ListHyperliquidSubmissionsByOrderId :many
 SELECT
+    venue_id,
+    wallet,
     order_id,
     action_kind,
     CAST(create_payload AS BLOB)  AS create_payload,
     CAST(modify_payloads AS BLOB) AS modify_payloads,
     CAST(cancel_payload AS BLOB)  AS cancel_payload,
     updated_at_utc,
-    botevent_row_id
+    botevent_row_id,
+    payload_type,
+    payload_blob
 FROM hyperliquid_submissions
-WHERE order_id IN (
-    SELECT value FROM json_each(sqlc.arg(order_id_list))
+WHERE venue_id = ?1
+  AND order_id IN (
+    SELECT value FROM json_each(sqlc.arg(metadata_list))
 )
 `
 
 type ListHyperliquidSubmissionsByOrderIdRow struct {
+	VenueID        string `json:"venue_id"`
+	Wallet         string `json:"wallet"`
 	OrderID        string `json:"order_id"`
 	ActionKind     string `json:"action_kind"`
 	CreatePayload  []byte `json:"create_payload"`
@@ -808,10 +1061,12 @@ type ListHyperliquidSubmissionsByOrderIdRow struct {
 	CancelPayload  []byte `json:"cancel_payload"`
 	UpdatedAtUtc   int64  `json:"updated_at_utc"`
 	BoteventRowID  int64  `json:"botevent_row_id"`
+	PayloadType    string `json:"payload_type"`
+	PayloadBlob    []byte `json:"payload_blob"`
 }
 
-func (q *Queries) ListHyperliquidSubmissionsByOrderId(ctx context.Context) ([]ListHyperliquidSubmissionsByOrderIdRow, error) {
-	rows, err := q.db.QueryContext(ctx, listHyperliquidSubmissionsByOrderId)
+func (q *Queries) ListHyperliquidSubmissionsByOrderId(ctx context.Context, venueID string) ([]ListHyperliquidSubmissionsByOrderIdRow, error) {
+	rows, err := q.db.QueryContext(ctx, listHyperliquidSubmissionsByOrderId, venueID)
 	if err != nil {
 		return nil, err
 	}
@@ -820,6 +1075,8 @@ func (q *Queries) ListHyperliquidSubmissionsByOrderId(ctx context.Context) ([]Li
 	for rows.Next() {
 		var i ListHyperliquidSubmissionsByOrderIdRow
 		if err := rows.Scan(
+			&i.VenueID,
+			&i.Wallet,
 			&i.OrderID,
 			&i.ActionKind,
 			&i.CreatePayload,
@@ -827,6 +1084,8 @@ func (q *Queries) ListHyperliquidSubmissionsByOrderId(ctx context.Context) ([]Li
 			&i.CancelPayload,
 			&i.UpdatedAtUtc,
 			&i.BoteventRowID,
+			&i.PayloadType,
+			&i.PayloadBlob,
 		); err != nil {
 			return nil, err
 		}
@@ -842,19 +1101,20 @@ func (q *Queries) ListHyperliquidSubmissionsByOrderId(ctx context.Context) ([]Li
 }
 
 const listLatestHyperliquidSafetyStatuses = `-- name: ListLatestHyperliquidSafetyStatuses :many
-WITH latest_status AS (
-    SELECT order_id, id
-    FROM (
-        SELECT
-            order_id,
-            id,
-            ROW_NUMBER() OVER (
-                PARTITION BY order_id
-                ORDER BY recorded_at_utc DESC, id DESC
-            ) AS rn
-        FROM hyperliquid_status_history
-    )
-    WHERE rn = 1
+WITH ranked_status AS (
+    SELECT
+        venue_id,
+        wallet,
+        order_id,
+        order_id,
+        payload_type,
+        payload_blob,
+        recorded_at_utc,
+        ROW_NUMBER() OVER (
+            PARTITION BY venue_id, wallet, order_id
+            ORDER BY recorded_at_utc DESC
+        ) AS rn
+    FROM hyperliquid_status_history
 )
 SELECT
     b.order_id AS order_id,
@@ -863,18 +1123,31 @@ SELECT
     CAST(json_extract(b.payload, '$.OrderType') AS TEXT)        AS order_type,
     CAST(json_extract(b.payload, '$.OrderPosition') AS INTEGER) AS order_position,
     CAST(json_extract(b.payload, '$.OrderSize') AS INTEGER)        AS order_size,
-    CAST(json_extract(h.status, '$.status') AS TEXT)            AS hl_status,
-    CAST(json_extract(h.status, '$.statusTimestamp') AS INTEGER) AS hl_status_timestamp,
-    h.recorded_at_utc AS recorded_at_utc
-FROM latest_status AS latest
-JOIN hyperliquid_status_history AS h
-  ON h.id = latest.id
+    latest.payload_type AS payload_type,
+    latest.payload_blob AS payload_blob,
+    CAST(json_extract(latest.payload_blob, '$.status') AS TEXT)            AS hl_status,
+    CAST(json_extract(latest.payload_blob, '$.statusTimestamp') AS INTEGER) AS hl_status_timestamp,
+    latest.recorded_at_utc AS recorded_at_utc
+FROM ranked_status AS latest
+JOIN hyperliquid_submissions AS s
+  ON s.venue_id = latest.venue_id
+ AND s.wallet = latest.wallet
+ AND s.order_id = latest.order_id
 JOIN threecommas_botevents AS b
-  ON b.order_id = latest.order_id
-WHERE b.deal_id = ?1
+  ON b.id = s.botevent_row_id
+WHERE latest.rn = 1
+  AND s.venue_id = ?1
+  AND b.deal_id = ?2
   AND CAST(json_extract(b.payload, '$.OrderType') AS TEXT) = 'Safety'
+  AND (?3 IS NULL OR latest.wallet = ?3)
 ORDER BY order_position ASC
 `
+
+type ListLatestHyperliquidSafetyStatusesParams struct {
+	VenueID string      `json:"venue_id"`
+	DealID  int64       `json:"deal_id"`
+	Wallet  interface{} `json:"wallet"`
+}
 
 type ListLatestHyperliquidSafetyStatusesRow struct {
 	OrderID           string `json:"order_id"`
@@ -883,13 +1156,15 @@ type ListLatestHyperliquidSafetyStatusesRow struct {
 	OrderType         string `json:"order_type"`
 	OrderPosition     int64  `json:"order_position"`
 	OrderSize         int64  `json:"order_size"`
+	PayloadType       string `json:"payload_type"`
+	PayloadBlob       []byte `json:"payload_blob"`
 	HlStatus          string `json:"hl_status"`
 	HlStatusTimestamp int64  `json:"hl_status_timestamp"`
 	RecordedAtUtc     int64  `json:"recorded_at_utc"`
 }
 
-func (q *Queries) ListLatestHyperliquidSafetyStatuses(ctx context.Context, dealID int64) ([]ListLatestHyperliquidSafetyStatusesRow, error) {
-	rows, err := q.db.QueryContext(ctx, listLatestHyperliquidSafetyStatuses, dealID)
+func (q *Queries) ListLatestHyperliquidSafetyStatuses(ctx context.Context, arg ListLatestHyperliquidSafetyStatusesParams) ([]ListLatestHyperliquidSafetyStatusesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listLatestHyperliquidSafetyStatuses, arg.VenueID, arg.DealID, arg.Wallet)
 	if err != nil {
 		return nil, err
 	}
@@ -904,6 +1179,8 @@ func (q *Queries) ListLatestHyperliquidSafetyStatuses(ctx context.Context, dealI
 			&i.OrderType,
 			&i.OrderPosition,
 			&i.OrderSize,
+			&i.PayloadType,
+			&i.PayloadBlob,
 			&i.HlStatus,
 			&i.HlStatusTimestamp,
 			&i.RecordedAtUtc,
@@ -981,7 +1258,8 @@ func (q *Queries) ListLatestTakeProfitStackSizes(ctx context.Context, arg ListLa
 
 const listScaledOrderAuditsForOrderId = `-- name: ListScaledOrderAuditsForOrderId :many
 SELECT
-    id,
+    venue_id,
+    wallet,
     order_id,
     deal_id,
     bot_id,
@@ -993,24 +1271,32 @@ SELECT
     order_side,
     multiplier_updated_by,
     created_at_utc,
-    submitted_order_id,
     skipped,
-    skip_reason
+    skip_reason,
+    payload_type,
+    payload_blob
 FROM scaled_orders
-WHERE order_id = ?1
-  AND created_at_utc >= ?2
-  AND created_at_utc <= ?3
-ORDER BY created_at_utc ASC, id ASC
+WHERE venue_id = ?1
+  AND order_id = ?2
+  AND created_at_utc >= ?3
+  AND created_at_utc <= ?4
+ORDER BY created_at_utc ASC, order_id ASC
 `
 
 type ListScaledOrderAuditsForOrderIdParams struct {
-	OrderID      string `json:"order_id"`
+	VenueID      string `json:"venue_id"`
+	Metadata     string `json:"metadata"`
 	ObservedFrom int64  `json:"observed_from"`
 	ObservedTo   int64  `json:"observed_to"`
 }
 
 func (q *Queries) ListScaledOrderAuditsForOrderId(ctx context.Context, arg ListScaledOrderAuditsForOrderIdParams) ([]ScaledOrder, error) {
-	rows, err := q.db.QueryContext(ctx, listScaledOrderAuditsForOrderId, arg.OrderID, arg.ObservedFrom, arg.ObservedTo)
+	rows, err := q.db.QueryContext(ctx, listScaledOrderAuditsForOrderId,
+		arg.VenueID,
+		arg.Metadata,
+		arg.ObservedFrom,
+		arg.ObservedTo,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1019,7 +1305,8 @@ func (q *Queries) ListScaledOrderAuditsForOrderId(ctx context.Context, arg ListS
 	for rows.Next() {
 		var i ScaledOrder
 		if err := rows.Scan(
-			&i.ID,
+			&i.VenueID,
+			&i.Wallet,
 			&i.OrderID,
 			&i.DealID,
 			&i.BotID,
@@ -1031,9 +1318,10 @@ func (q *Queries) ListScaledOrderAuditsForOrderId(ctx context.Context, arg ListS
 			&i.OrderSide,
 			&i.MultiplierUpdatedBy,
 			&i.CreatedAtUtc,
-			&i.SubmittedOrderID,
 			&i.Skipped,
 			&i.SkipReason,
+			&i.PayloadType,
+			&i.PayloadBlob,
 		); err != nil {
 			return nil, err
 		}
@@ -1050,7 +1338,8 @@ func (q *Queries) ListScaledOrderAuditsForOrderId(ctx context.Context, arg ListS
 
 const listScaledOrdersByDeal = `-- name: ListScaledOrdersByDeal :many
 SELECT
-    id,
+    venue_id,
+    wallet,
     order_id,
     deal_id,
     bot_id,
@@ -1062,16 +1351,23 @@ SELECT
     order_side,
     multiplier_updated_by,
     created_at_utc,
-    submitted_order_id,
     skipped,
-    skip_reason
+    skip_reason,
+    payload_type,
+    payload_blob
 FROM scaled_orders
 WHERE deal_id = ?1
-ORDER BY created_at_utc ASC, id ASC
+  AND venue_id = ?2
+ORDER BY created_at_utc ASC, order_id ASC
 `
 
-func (q *Queries) ListScaledOrdersByDeal(ctx context.Context, dealID int64) ([]ScaledOrder, error) {
-	rows, err := q.db.QueryContext(ctx, listScaledOrdersByDeal, dealID)
+type ListScaledOrdersByDealParams struct {
+	DealID  int64  `json:"deal_id"`
+	VenueID string `json:"venue_id"`
+}
+
+func (q *Queries) ListScaledOrdersByDeal(ctx context.Context, arg ListScaledOrdersByDealParams) ([]ScaledOrder, error) {
+	rows, err := q.db.QueryContext(ctx, listScaledOrdersByDeal, arg.DealID, arg.VenueID)
 	if err != nil {
 		return nil, err
 	}
@@ -1080,7 +1376,8 @@ func (q *Queries) ListScaledOrdersByDeal(ctx context.Context, dealID int64) ([]S
 	for rows.Next() {
 		var i ScaledOrder
 		if err := rows.Scan(
-			&i.ID,
+			&i.VenueID,
+			&i.Wallet,
 			&i.OrderID,
 			&i.DealID,
 			&i.BotID,
@@ -1092,9 +1389,10 @@ func (q *Queries) ListScaledOrdersByDeal(ctx context.Context, dealID int64) ([]S
 			&i.OrderSide,
 			&i.MultiplierUpdatedBy,
 			&i.CreatedAtUtc,
-			&i.SubmittedOrderID,
 			&i.Skipped,
 			&i.SkipReason,
+			&i.PayloadType,
+			&i.PayloadBlob,
 		); err != nil {
 			return nil, err
 		}
@@ -1111,7 +1409,8 @@ func (q *Queries) ListScaledOrdersByDeal(ctx context.Context, dealID int64) ([]S
 
 const listScaledOrdersByOrderId = `-- name: ListScaledOrdersByOrderId :many
 SELECT
-    id,
+    venue_id,
+    wallet,
     order_id,
     deal_id,
     bot_id,
@@ -1123,16 +1422,23 @@ SELECT
     order_side,
     multiplier_updated_by,
     created_at_utc,
-    submitted_order_id,
     skipped,
-    skip_reason
+    skip_reason,
+    payload_type,
+    payload_blob
 FROM scaled_orders
-WHERE order_id = ?1
-ORDER BY created_at_utc ASC, id ASC
+WHERE venue_id = ?1
+  AND order_id = ?2
+ORDER BY created_at_utc ASC, order_id ASC
 `
 
-func (q *Queries) ListScaledOrdersByOrderId(ctx context.Context, orderID string) ([]ScaledOrder, error) {
-	rows, err := q.db.QueryContext(ctx, listScaledOrdersByOrderId, orderID)
+type ListScaledOrdersByOrderIdParams struct {
+	VenueID string `json:"venue_id"`
+	OrderID string `json:"order_id"`
+}
+
+func (q *Queries) ListScaledOrdersByOrderId(ctx context.Context, arg ListScaledOrdersByOrderIdParams) ([]ScaledOrder, error) {
+	rows, err := q.db.QueryContext(ctx, listScaledOrdersByOrderId, arg.VenueID, arg.OrderID)
 	if err != nil {
 		return nil, err
 	}
@@ -1141,7 +1447,8 @@ func (q *Queries) ListScaledOrdersByOrderId(ctx context.Context, orderID string)
 	for rows.Next() {
 		var i ScaledOrder
 		if err := rows.Scan(
-			&i.ID,
+			&i.VenueID,
+			&i.Wallet,
 			&i.OrderID,
 			&i.DealID,
 			&i.BotID,
@@ -1153,9 +1460,10 @@ func (q *Queries) ListScaledOrdersByOrderId(ctx context.Context, orderID string)
 			&i.OrderSide,
 			&i.MultiplierUpdatedBy,
 			&i.CreatedAtUtc,
-			&i.SubmittedOrderID,
 			&i.Skipped,
 			&i.SkipReason,
+			&i.PayloadType,
+			&i.PayloadBlob,
 		); err != nil {
 			return nil, err
 		}
@@ -1541,6 +1849,93 @@ func (q *Queries) ListThreeCommasDeals(ctx context.Context, arg ListThreeCommasD
 	return items, nil
 }
 
+const listVenueAssignments = `-- name: ListVenueAssignments :many
+SELECT
+    bot_id,
+    venue_id,
+    is_primary,
+    assigned_at_utc
+FROM bot_venue_assignments
+WHERE venue_id = ?1
+ORDER BY bot_id ASC
+`
+
+func (q *Queries) ListVenueAssignments(ctx context.Context, venueID string) ([]BotVenueAssignment, error) {
+	rows, err := q.db.QueryContext(ctx, listVenueAssignments, venueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BotVenueAssignment
+	for rows.Next() {
+		var i BotVenueAssignment
+		if err := rows.Scan(
+			&i.BotID,
+			&i.VenueID,
+			&i.IsPrimary,
+			&i.AssignedAtUtc,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVenues = `-- name: ListVenues :many
+SELECT
+    id,
+    type,
+    display_name,
+    wallet,
+    CAST(flags AS BLOB) AS flags
+FROM venues
+ORDER BY id ASC
+`
+
+type ListVenuesRow struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	DisplayName string `json:"display_name"`
+	Wallet      string `json:"wallet"`
+	Flags       []byte `json:"flags"`
+}
+
+func (q *Queries) ListVenues(ctx context.Context) ([]ListVenuesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listVenues)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListVenuesRow
+	for rows.Next() {
+		var i ListVenuesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.DisplayName,
+			&i.Wallet,
+			&i.Flags,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWebauthnCredentialsByUser = `-- name: ListWebauthnCredentialsByUser :many
 SELECT
     id,
@@ -1671,6 +2066,34 @@ func (q *Queries) UpsertBotOrderScaler(ctx context.Context, arg UpsertBotOrderSc
 	return err
 }
 
+const upsertBotVenueAssignment = `-- name: UpsertBotVenueAssignment :exec
+
+INSERT INTO bot_venue_assignments (
+    bot_id,
+    venue_id,
+    is_primary
+) VALUES (
+    ?1,
+    ?2,
+    ?3
+)
+ON CONFLICT(bot_id, venue_id) DO UPDATE SET
+    is_primary      = excluded.is_primary,
+    assigned_at_utc = CAST(unixepoch('now','subsec') * 1000 AS INTEGER)
+`
+
+type UpsertBotVenueAssignmentParams struct {
+	BotID     int64  `json:"bot_id"`
+	VenueID   string `json:"venue_id"`
+	IsPrimary int64  `json:"is_primary"`
+}
+
+// Bot-to-venue assignments
+func (q *Queries) UpsertBotVenueAssignment(ctx context.Context, arg UpsertBotVenueAssignmentParams) error {
+	_, err := q.db.ExecContext(ctx, upsertBotVenueAssignment, arg.BotID, arg.VenueID, arg.IsPrimary)
+	return err
+}
+
 const upsertDeal = `-- name: UpsertDeal :exec
 INSERT INTO threecommas_deals (
     deal_id,
@@ -1713,71 +2136,117 @@ func (q *Queries) UpsertDeal(ctx context.Context, arg UpsertDealParams) error {
 
 const upsertHyperliquidCancel = `-- name: UpsertHyperliquidCancel :exec
 INSERT INTO hyperliquid_submissions (
+    venue_id,
+    wallet,
     order_id,
     action_kind,
     create_payload,
     modify_payloads,
     cancel_payload,
+    payload_type,
+    payload_blob,
     updated_at_utc,
     botevent_row_id
 ) VALUES (
     ?1,
+    ?2,
+    ?3,
     'cancel',
     NULL,
     '[]',
-    json(?2),
+    json(?4),
+    ?5,
+    ?6,
     CAST(unixepoch('now','subsec') * 1000 AS INTEGER),
-    ?3
+    ?7
 )
-ON CONFLICT(order_id) DO UPDATE SET
+ON CONFLICT(venue_id, wallet, order_id) DO UPDATE SET
+    order_id             = excluded.order_id,
     cancel_payload = excluded.cancel_payload,
     action_kind    = 'cancel',
+    payload_type   = excluded.payload_type,
+    payload_blob   = excluded.payload_blob,
     updated_at_utc = CAST(unixepoch('now','subsec') * 1000 AS INTEGER)
 `
 
 type UpsertHyperliquidCancelParams struct {
+	VenueID       string      `json:"venue_id"`
+	Wallet        string      `json:"wallet"`
 	OrderID       string      `json:"order_id"`
 	CancelPayload interface{} `json:"cancel_payload"`
+	PayloadType   string      `json:"payload_type"`
+	PayloadBlob   []byte      `json:"payload_blob"`
 	BoteventRowID int64       `json:"botevent_row_id"`
 }
 
 func (q *Queries) UpsertHyperliquidCancel(ctx context.Context, arg UpsertHyperliquidCancelParams) error {
-	_, err := q.db.ExecContext(ctx, upsertHyperliquidCancel, arg.OrderID, arg.CancelPayload, arg.BoteventRowID)
+	_, err := q.db.ExecContext(ctx, upsertHyperliquidCancel,
+		arg.VenueID,
+		arg.Wallet,
+		arg.OrderID,
+		arg.CancelPayload,
+		arg.PayloadType,
+		arg.PayloadBlob,
+		arg.BoteventRowID,
+	)
 	return err
 }
 
 const upsertHyperliquidCreate = `-- name: UpsertHyperliquidCreate :exec
 INSERT INTO hyperliquid_submissions (
+    venue_id,
+    wallet,
     order_id,
     action_kind,
     create_payload,
     modify_payloads,
     cancel_payload,
+    payload_type,
+    payload_blob,
     updated_at_utc,
     botevent_row_id
 ) VALUES (
     ?1,
+    ?2,
+    ?3,
     'create',
-    json(?2),
+    json(?4),
     CAST('[]' AS BLOB),
     NULL,
+    ?5,
+    ?6,
     CAST(unixepoch('now','subsec') * 1000 AS INTEGER),
-    ?3
+    ?7
 )
-ON CONFLICT(order_id) DO UPDATE SET
+ON CONFLICT(venue_id, wallet, order_id) DO UPDATE SET
+    order_id             = excluded.order_id,
     create_payload = excluded.create_payload,
     action_kind    = 'create',
+    payload_type   = excluded.payload_type,
+    payload_blob   = excluded.payload_blob,
     updated_at_utc = CAST(unixepoch('now','subsec') * 1000 AS INTEGER)
 `
 
 type UpsertHyperliquidCreateParams struct {
+	VenueID       string      `json:"venue_id"`
+	Wallet        string      `json:"wallet"`
 	OrderID       string      `json:"order_id"`
 	CreatePayload interface{} `json:"create_payload"`
+	PayloadType   string      `json:"payload_type"`
+	PayloadBlob   []byte      `json:"payload_blob"`
 	BoteventRowID int64       `json:"botevent_row_id"`
 }
 
 func (q *Queries) UpsertHyperliquidCreate(ctx context.Context, arg UpsertHyperliquidCreateParams) error {
-	_, err := q.db.ExecContext(ctx, upsertHyperliquidCreate, arg.OrderID, arg.CreatePayload, arg.BoteventRowID)
+	_, err := q.db.ExecContext(ctx, upsertHyperliquidCreate,
+		arg.VenueID,
+		arg.Wallet,
+		arg.OrderID,
+		arg.CreatePayload,
+		arg.PayloadType,
+		arg.PayloadBlob,
+		arg.BoteventRowID,
+	)
 	return err
 }
 
@@ -1857,6 +2326,48 @@ func (q *Queries) UpsertVaultPayload(ctx context.Context, arg UpsertVaultPayload
 		arg.AssociatedData,
 		arg.PrfParams,
 		arg.UpdatedAtUtc,
+	)
+	return err
+}
+
+const upsertVenue = `-- name: UpsertVenue :exec
+
+INSERT INTO venues (
+    id,
+    type,
+    display_name,
+    wallet,
+    flags
+) VALUES (
+    ?1,
+    ?2,
+    ?3,
+    ?4,
+    json(?5)
+)
+ON CONFLICT(id) DO UPDATE SET
+    type         = excluded.type,
+    display_name = excluded.display_name,
+    wallet       = excluded.wallet,
+    flags        = json(excluded.flags)
+`
+
+type UpsertVenueParams struct {
+	ID          string      `json:"id"`
+	Type        string      `json:"type"`
+	DisplayName string      `json:"display_name"`
+	Wallet      string      `json:"wallet"`
+	Flags       interface{} `json:"flags"`
+}
+
+// Venue inventory
+func (q *Queries) UpsertVenue(ctx context.Context, arg UpsertVenueParams) error {
+	_, err := q.db.ExecContext(ctx, upsertVenue,
+		arg.ID,
+		arg.Type,
+		arg.DisplayName,
+		arg.Wallet,
+		arg.Flags,
 	)
 	return err
 }

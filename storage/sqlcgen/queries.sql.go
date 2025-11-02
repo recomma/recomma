@@ -873,7 +873,7 @@ func (q *Queries) ListDealIDs(ctx context.Context) ([]int64, error) {
 	return items, nil
 }
 
-const listHyperliquidMetadata = `-- name: ListHyperliquidMetadata :many
+const listHyperliquidOrderIds = `-- name: ListHyperliquidOrderIds :many
 SELECT
     venue_id,
     wallet,
@@ -884,22 +884,22 @@ WHERE venue_id = COALESCE(?1, venue_id)
 ORDER BY venue_id ASC, wallet ASC, order_id ASC
 `
 
-type ListHyperliquidMetadataRow struct {
+type ListHyperliquidOrderIdsRow struct {
 	VenueID   string `json:"venue_id"`
 	Wallet    string `json:"wallet"`
 	OrderID   string `json:"order_id"`
 	OrderID_2 string `json:"order_id_2"`
 }
 
-func (q *Queries) ListHyperliquidMetadata(ctx context.Context, venueID string) ([]ListHyperliquidMetadataRow, error) {
-	rows, err := q.db.QueryContext(ctx, listHyperliquidMetadata, venueID)
+func (q *Queries) ListHyperliquidOrderIds(ctx context.Context, venueID string) ([]ListHyperliquidOrderIdsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listHyperliquidOrderIds, venueID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListHyperliquidMetadataRow
+	var items []ListHyperliquidOrderIdsRow
 	for rows.Next() {
-		var i ListHyperliquidMetadataRow
+		var i ListHyperliquidOrderIdsRow
 		if err := rows.Scan(
 			&i.VenueID,
 			&i.Wallet,

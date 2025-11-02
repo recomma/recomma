@@ -224,7 +224,7 @@ WHERE venue_id = sqlc.arg(venue_id)
   AND wallet = sqlc.arg(wallet)
   AND order_id = sqlc.arg(order_id);
 
--- name: ListHyperliquidMetadata :many
+-- name: ListHyperliquidOrderIds :many
 SELECT
     venue_id,
     wallet,

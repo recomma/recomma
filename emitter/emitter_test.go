@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -228,9 +227,12 @@ func parseLogs(t *testing.T, raw string) []logEntry {
 
 func newTestStore(t *testing.T) *storage.Storage {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "emitter.db")
-	store, err := storage.New(path)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = store.Close() })
+	store, err := storage.New(":memory:")
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
 	return store
 }

@@ -507,12 +507,12 @@ func (s *Storage) ListHyperliquidStatuses(ctx context.Context, oid orderid.Order
 	return out, nil
 }
 
-// ListHyperliquidOrderIds returns the OrderId fingerprints we have submitted to Hyperliquid.
+// ListHyperliquidOrderIds returns the metadata fingerprints we have submitted to Hyperliquid.
 func (s *Storage) ListHyperliquidOrderIds(ctx context.Context) ([]orderid.OrderId, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rows, err := s.queries.ListHyperliquidMetadata(ctx, defaultHyperliquidVenueID)
+	rows, err := s.queries.ListHyperliquidOrderIds(ctx, defaultHyperliquidVenueID)
 	if err != nil {
 		return nil, err
 	}
@@ -532,7 +532,7 @@ func (s *Storage) ListHyperliquidOrderIds(ctx context.Context) ([]orderid.OrderI
 	return out, nil
 }
 
-// ListOrderIdsForDeal returns the distinct OrderId fingerprints observed for a deal.
+// ListOrderIdsForDeal returns the distinct metadata fingerprints observed for a deal.
 func (s *Storage) ListOrderIdsForDeal(ctx context.Context, dealID uint32) ([]orderid.OrderId, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

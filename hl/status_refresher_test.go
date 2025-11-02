@@ -28,12 +28,12 @@ func (f *fakeInfo) QueryOrderByCloid(_ context.Context, cloid string) (*hyperliq
 
 type fakeStatusStore struct {
 	mu      sync.Mutex
-	oids    []orderid.OrderId
+	mds     []orderid.OrderId
 	records map[string]hyperliquid.WsOrder
 }
 
 func (s *fakeStatusStore) ListHyperliquidOrderIds(context.Context) ([]orderid.OrderId, error) {
-	return append([]orderid.OrderId(nil), s.oids...), nil
+	return append([]orderid.OrderId(nil), s.mds...), nil
 }
 
 func (s *fakeStatusStore) RecordHyperliquidStatus(_ context.Context, oid orderid.OrderId, status hyperliquid.WsOrder) error {
@@ -76,7 +76,7 @@ func TestStatusRefresherRefresh(t *testing.T) {
 		},
 	}
 
-	store := &fakeStatusStore{oids: []orderid.OrderId{oid}}
+	store := &fakeStatusStore{mds: []orderid.OrderId{oid}}
 
 	refresher := NewStatusRefresher(info, store, WithStatusRefresherConcurrency(1))
 

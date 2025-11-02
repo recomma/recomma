@@ -979,17 +979,16 @@ FROM hyperliquid_status_history
 WHERE venue_id = ?1
   AND order_id = ?2
   AND (?3 IS NULL OR wallet = ?3)
-  AND (?4 IS NULL OR order_id = ?4)
-  AND recorded_at_utc >= COALESCE(?5, recorded_at_utc)
-  AND recorded_at_utc <= COALESCE(?6, recorded_at_utc)
+  AND (?2 IS NULL OR order_id = ?2)
+  AND recorded_at_utc >= COALESCE(?4, recorded_at_utc)
+  AND recorded_at_utc <= COALESCE(?5, recorded_at_utc)
 ORDER BY recorded_at_utc ASC
 `
 
 type ListHyperliquidStatusesForOrderIdParams struct {
 	VenueID      string      `json:"venue_id"`
-	Metadata     string      `json:"metadata"`
+	OrderID      string      `json:"order_id"`
 	Wallet       interface{} `json:"wallet"`
-	OrderID      interface{} `json:"order_id"`
 	ObservedFrom int64       `json:"observed_from"`
 	ObservedTo   int64       `json:"observed_to"`
 }
@@ -997,9 +996,8 @@ type ListHyperliquidStatusesForOrderIdParams struct {
 func (q *Queries) ListHyperliquidStatusesForOrderId(ctx context.Context, arg ListHyperliquidStatusesForOrderIdParams) ([]HyperliquidStatusHistory, error) {
 	rows, err := q.db.QueryContext(ctx, listHyperliquidStatusesForOrderId,
 		arg.VenueID,
-		arg.Metadata,
-		arg.Wallet,
 		arg.OrderID,
+		arg.Wallet,
 		arg.ObservedFrom,
 		arg.ObservedTo,
 	)
@@ -1258,6 +1256,7 @@ func (q *Queries) ListLatestTakeProfitStackSizes(ctx context.Context, arg ListLa
 
 const listScaledOrderAuditsForOrderId = `-- name: ListScaledOrderAuditsForOrderId :many
 SELECT
+    id,
     venue_id,
     wallet,
     order_id,
@@ -1285,7 +1284,7 @@ ORDER BY created_at_utc ASC, order_id ASC
 
 type ListScaledOrderAuditsForOrderIdParams struct {
 	VenueID      string `json:"venue_id"`
-	Metadata     string `json:"metadata"`
+	OrderID      string `json:"order_id"`
 	ObservedFrom int64  `json:"observed_from"`
 	ObservedTo   int64  `json:"observed_to"`
 }
@@ -1293,7 +1292,7 @@ type ListScaledOrderAuditsForOrderIdParams struct {
 func (q *Queries) ListScaledOrderAuditsForOrderId(ctx context.Context, arg ListScaledOrderAuditsForOrderIdParams) ([]ScaledOrder, error) {
 	rows, err := q.db.QueryContext(ctx, listScaledOrderAuditsForOrderId,
 		arg.VenueID,
-		arg.Metadata,
+		arg.OrderID,
 		arg.ObservedFrom,
 		arg.ObservedTo,
 	)
@@ -1305,6 +1304,7 @@ func (q *Queries) ListScaledOrderAuditsForOrderId(ctx context.Context, arg ListS
 	for rows.Next() {
 		var i ScaledOrder
 		if err := rows.Scan(
+			&i.ID,
 			&i.VenueID,
 			&i.Wallet,
 			&i.OrderID,
@@ -1338,6 +1338,7 @@ func (q *Queries) ListScaledOrderAuditsForOrderId(ctx context.Context, arg ListS
 
 const listScaledOrdersByDeal = `-- name: ListScaledOrdersByDeal :many
 SELECT
+    id,
     venue_id,
     wallet,
     order_id,
@@ -1376,6 +1377,7 @@ func (q *Queries) ListScaledOrdersByDeal(ctx context.Context, arg ListScaledOrde
 	for rows.Next() {
 		var i ScaledOrder
 		if err := rows.Scan(
+			&i.ID,
 			&i.VenueID,
 			&i.Wallet,
 			&i.OrderID,
@@ -1409,6 +1411,7 @@ func (q *Queries) ListScaledOrdersByDeal(ctx context.Context, arg ListScaledOrde
 
 const listScaledOrdersByOrderId = `-- name: ListScaledOrdersByOrderId :many
 SELECT
+    id,
     venue_id,
     wallet,
     order_id,
@@ -1447,6 +1450,7 @@ func (q *Queries) ListScaledOrdersByOrderId(ctx context.Context, arg ListScaledO
 	for rows.Next() {
 		var i ScaledOrder
 		if err := rows.Scan(
+			&i.ID,
 			&i.VenueID,
 			&i.Wallet,
 			&i.OrderID,

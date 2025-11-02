@@ -56,6 +56,7 @@ type OrderScaler struct {
 }
 
 type ScaledOrder struct {
+	ID                  int64   `json:"id"`
 	VenueID             string  `json:"venue_id"`
 	Wallet              string  `json:"wallet"`
 	OrderID             string  `json:"order_id"`

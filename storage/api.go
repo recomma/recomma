@@ -482,45 +482,32 @@ FROM threecommas_botevents`)
 		}
 		oidCopy := items[indexes[0]].OrderId
 
-		var (
-			actionKind     sql.NullString
-			createPayload  []byte
-			modifyPayloads []byte
-			cancelPayload  []byte
-			updatedAtUTC   sql.NullInt64
-		)
-
-		// TODO: remove hardcoded query!
-
-		err := s.db.QueryRowContext(ctx, `
-SELECT action_kind,
-       create_payload,
-       modify_payloads,
-       cancel_payload,
-       updated_at_utc
-FROM hyperliquid_submissions
-WHERE order_id = ?
-`, oidHex).Scan(&actionKind, &createPayload, &modifyPayloads, &cancelPayload, &updatedAtUTC)
-
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, nil, fmt.Errorf("fetch submission for %s: %w", oidHex, err)
-		}
-
+		submissionRow, err := s.queries.FetchHyperliquidSubmission(ctx, sqlcgen.FetchHyperliquidSubmissionParams{
+			VenueID: defaultHyperliquidVenueID,
+			Wallet:  defaultHyperliquidWallet,
+			OrderID: oidHex,
+		})
 		var submission interface{}
-		if err == nil && actionKind.Valid {
-			switch actionKind.String {
+		updatedAtUTC := sql.NullInt64{}
+		if err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				return nil, nil, fmt.Errorf("fetch submission for %s: %w", oidHex, err)
+			}
+		} else {
+			updatedAtUTC = sql.NullInt64{Int64: submissionRow.UpdatedAtUtc, Valid: true}
+			switch submissionRow.ActionKind {
 			case "create":
-				if len(createPayload) > 0 {
+				if len(submissionRow.CreatePayload) > 0 {
 					var decoded hyperliquid.CreateOrderRequest
-					if err := json.Unmarshal(createPayload, &decoded); err != nil {
+					if err := json.Unmarshal(submissionRow.CreatePayload, &decoded); err != nil {
 						return nil, nil, fmt.Errorf("decode create submission for %s: %w", oidHex, err)
 					}
 					submission = &decoded
 				}
 			case "modify":
-				if len(modifyPayloads) > 0 {
+				if len(submissionRow.ModifyPayloads) > 0 {
 					var decoded []hyperliquid.ModifyOrderRequest
-					if err := json.Unmarshal(modifyPayloads, &decoded); err != nil {
+					if err := json.Unmarshal(submissionRow.ModifyPayloads, &decoded); err != nil {
 						return nil, nil, fmt.Errorf("decode modify submission for %s: %w", oidHex, err)
 					}
 					if len(decoded) > 0 {
@@ -529,9 +516,9 @@ WHERE order_id = ?
 					}
 				}
 			case "cancel":
-				if len(cancelPayload) > 0 {
+				if len(submissionRow.CancelPayload) > 0 {
 					var decoded hyperliquid.CancelOrderRequestByCloid
-					if err := json.Unmarshal(cancelPayload, &decoded); err != nil {
+					if err := json.Unmarshal(submissionRow.CancelPayload, &decoded); err != nil {
 						return nil, nil, fmt.Errorf("decode cancel submission for %s: %w", oidHex, err)
 					}
 					submission = &decoded
@@ -544,14 +531,18 @@ WHERE order_id = ?
 			}
 		}
 
-		statusRow, err := s.queries.FetchLatestHyperliquidStatus(ctx, oidHex)
+		statusRow, err := s.queries.FetchLatestHyperliquidStatus(ctx, sqlcgen.FetchLatestHyperliquidStatusParams{
+			VenueID: defaultHyperliquidVenueID,
+			Wallet:  defaultHyperliquidWallet,
+			OrderID: oidHex,
+		})
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, nil, fmt.Errorf("fetch latest status for %s: %w", oidHex, err)
 		}
 		var latestStatus *hyperliquid.WsOrder
-		if err == nil && len(statusRow) > 0 {
+		if err == nil && len(statusRow.PayloadBlob) > 0 {
 			var decoded hyperliquid.WsOrder
-			if err := json.Unmarshal(statusRow, &decoded); err != nil {
+			if err := json.Unmarshal(statusRow.PayloadBlob, &decoded); err != nil {
 				return nil, nil, fmt.Errorf("decode latest status for %s: %w", oidHex, err)
 			}
 			statusCopy := decoded
@@ -569,7 +560,9 @@ WHERE order_id = ?
 			}
 
 			statusRows, err := s.queries.ListHyperliquidStatusesForOrderId(ctx, sqlcgen.ListHyperliquidStatusesForOrderIdParams{
+				VenueID:      defaultHyperliquidVenueID,
 				OrderID:      oidHex,
+				Wallet:       nil,
 				ObservedFrom: logFrom,
 				ObservedTo:   logTo,
 			})
@@ -578,6 +571,7 @@ WHERE order_id = ?
 			}
 
 			auditRows, err := s.queries.ListScaledOrderAuditsForOrderId(ctx, sqlcgen.ListScaledOrderAuditsForOrderIdParams{
+				VenueID:      defaultHyperliquidVenueID,
 				OrderID:      oidHex,
 				ObservedFrom: logFrom,
 				ObservedTo:   logTo,
@@ -604,7 +598,7 @@ WHERE order_id = ?
 
 			for _, statusRow := range statusRows {
 				var decoded hyperliquid.WsOrder
-				if err := json.Unmarshal(statusRow.Status, &decoded); err != nil {
+				if err := json.Unmarshal(statusRow.PayloadBlob, &decoded); err != nil {
 					return nil, nil, fmt.Errorf("decode status history for %s: %w", oidHex, err)
 				}
 				statusCopy := decoded

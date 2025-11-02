@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,18 @@ import (
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage/sqlcgen"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
+)
+
+const (
+	defaultHyperliquidVenueID   = "hyperliquid:default"
+	defaultHyperliquidVenueType = "hyperliquid"
+	defaultHyperliquidName      = "Default Hyperliquid Venue"
+	defaultHyperliquidWallet    = "default"
+
+	hyperliquidCreatePayloadType = "hyperliquid.create.v1"
+	hyperliquidModifyPayloadType = "hyperliquid.modify.v1"
+	hyperliquidCancelPayloadType = "hyperliquid.cancel.v1"
+	hyperliquidStatusPayloadType = "hyperliquid.status.v1"
 )
 
 //go:embed sqlc/schema.sql
@@ -81,6 +94,11 @@ func New(path string, opts ...StorageOption) (*Storage, error) {
 		opt(s)
 	}
 
+	if err := s.ensureDefaultVenue(ctx); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("ensure default venue: %w", err)
+	}
+
 	return s, nil
 }
 
@@ -88,6 +106,29 @@ func (s *Storage) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.db.Close()
+}
+
+func (s *Storage) ensureDefaultVenue(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	flags := json.RawMessage(`{}`)
+	params := sqlcgen.UpsertVenueParams{
+		ID:          defaultHyperliquidVenueID,
+		Type:        defaultHyperliquidVenueType,
+		DisplayName: defaultHyperliquidName,
+		Wallet:      defaultHyperliquidWallet,
+		Flags:       flags,
+	}
+
+	return s.queries.UpsertVenue(ctx, params)
+}
+
+func isUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
 // RecordThreeCommasBotEvent records the threecommas botevents that we acted upon
@@ -258,8 +299,12 @@ func (s *Storage) RecordHyperliquidOrderRequest(ctx context.Context, oid orderid
 	defer s.mu.Unlock()
 
 	params := sqlcgen.UpsertHyperliquidCreateParams{
+		VenueID:       defaultHyperliquidVenueID,
+		Wallet:        defaultHyperliquidWallet,
 		OrderID:       oid.Hex(),
 		CreatePayload: raw,
+		PayloadType:   hyperliquidCreatePayloadType,
+		PayloadBlob:   raw,
 		BoteventRowID: boteventRowId,
 	}
 
@@ -281,8 +326,12 @@ func (s *Storage) AppendHyperliquidModify(ctx context.Context, oid orderid.Order
 	defer s.mu.Unlock()
 
 	params := sqlcgen.AppendHyperliquidModifyParams{
+		VenueID:       defaultHyperliquidVenueID,
+		Wallet:        defaultHyperliquidWallet,
 		OrderID:       oid.Hex(),
 		ModifyPayload: raw,
+		PayloadType:   hyperliquidModifyPayloadType,
+		PayloadBlob:   raw,
 		BoteventRowID: boteventRowId,
 	}
 
@@ -304,8 +353,12 @@ func (s *Storage) RecordHyperliquidCancel(ctx context.Context, oid orderid.Order
 	defer s.mu.Unlock()
 
 	params := sqlcgen.UpsertHyperliquidCancelParams{
+		VenueID:       defaultHyperliquidVenueID,
+		Wallet:        defaultHyperliquidWallet,
 		OrderID:       oid.Hex(),
 		CancelPayload: raw,
+		PayloadType:   hyperliquidCancelPayloadType,
+		PayloadBlob:   raw,
 		BoteventRowID: boteventRowId,
 	}
 
@@ -326,14 +379,31 @@ func (s *Storage) RecordHyperliquidStatus(ctx context.Context, oid orderid.Order
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	params := sqlcgen.InsertHyperliquidStatusParams{
-		OrderID:       oid.Hex(),
-		Status:        raw,
-		RecordedAtUtc: time.Now().UTC().UnixMilli(),
-	}
+	baseRecorded := time.Now().UTC().UnixMilli()
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		params := sqlcgen.InsertHyperliquidStatusParams{
+			VenueID:       defaultHyperliquidVenueID,
+			Wallet:        defaultHyperliquidWallet,
+			OrderID:       oid.Hex(),
+			PayloadType:   hyperliquidStatusPayloadType,
+			PayloadBlob:   raw,
+			RecordedAtUtc: baseRecorded + int64(attempt),
+		}
 
-	if err := s.queries.InsertHyperliquidStatus(ctx, params); err != nil {
-		return err
+		if err := s.queries.InsertHyperliquidStatus(ctx, params); err != nil {
+			lastErr = err
+			if isUniqueConstraintError(err) {
+				continue
+			}
+			return err
+		}
+
+		lastErr = nil
+		break
+	}
+	if lastErr != nil {
+		return lastErr
 	}
 
 	copy := status
@@ -347,7 +417,11 @@ func (s *Storage) RecordHyperliquidStatus(ctx context.Context, oid orderid.Order
 }
 
 func (s *Storage) loadLatestHyperliquidStatusLocked(ctx context.Context, oid orderid.OrderId) (*hyperliquid.WsOrder, bool, error) {
-	payload, err := s.queries.FetchLatestHyperliquidStatus(ctx, oid.Hex())
+	row, err := s.queries.FetchLatestHyperliquidStatus(ctx, sqlcgen.FetchLatestHyperliquidStatusParams{
+		VenueID: defaultHyperliquidVenueID,
+		Wallet:  defaultHyperliquidWallet,
+		OrderID: oid.Hex(),
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -356,7 +430,7 @@ func (s *Storage) loadLatestHyperliquidStatusLocked(ctx context.Context, oid ord
 	}
 
 	var decoded hyperliquid.WsOrder
-	if err := json.Unmarshal(payload, &decoded); err != nil {
+	if err := json.Unmarshal(row.PayloadBlob, &decoded); err != nil {
 		return nil, false, err
 	}
 
@@ -412,7 +486,11 @@ func (s *Storage) ListHyperliquidStatuses(ctx context.Context, oid orderid.Order
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rows, err := s.queries.ListHyperliquidStatuses(ctx, oid.Hex())
+	rows, err := s.queries.ListHyperliquidStatuses(ctx, sqlcgen.ListHyperliquidStatusesParams{
+		VenueID: defaultHyperliquidVenueID,
+		Wallet:  defaultHyperliquidWallet,
+		OrderID: oid.Hex(),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -420,7 +498,7 @@ func (s *Storage) ListHyperliquidStatuses(ctx context.Context, oid orderid.Order
 	out := make([]hyperliquid.WsOrder, 0, len(rows))
 	for _, row := range rows {
 		var decoded hyperliquid.WsOrder
-		if err := json.Unmarshal(row.Status, &decoded); err != nil {
+		if err := json.Unmarshal(row.PayloadBlob, &decoded); err != nil {
 			return nil, err
 		}
 		out = append(out, decoded)
@@ -429,24 +507,24 @@ func (s *Storage) ListHyperliquidStatuses(ctx context.Context, oid orderid.Order
 	return out, nil
 }
 
-// ListHyperliquidOrderIds returns the OrderId fingerprints we have submitted to Hyperliquid.
+// ListHyperliquidOrderIds returns the composite order identifiers we have submitted to Hyperliquid.
 func (s *Storage) ListHyperliquidOrderIds(ctx context.Context) ([]orderid.OrderId, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rows, err := s.queries.ListHyperliquidOrderIds(ctx)
+	rows, err := s.queries.ListHyperliquidOrderIds(ctx, defaultHyperliquidVenueID)
 	if err != nil {
 		return nil, err
 	}
 
 	out := make([]orderid.OrderId, 0, len(rows))
-	for _, hex := range rows {
-		if hex == "" {
+	for _, row := range rows {
+		if row.OrderID == "" {
 			continue
 		}
-		oid, err := orderid.FromHexString(hex)
+		oid, err := orderid.FromHexString(row.OrderID)
 		if err != nil {
-			return nil, fmt.Errorf("decode orderid %q: %w", hex, err)
+			return nil, fmt.Errorf("decode orderid %q: %w", row.OrderID, err)
 		}
 		out = append(out, *oid)
 	}
@@ -454,7 +532,7 @@ func (s *Storage) ListHyperliquidOrderIds(ctx context.Context) ([]orderid.OrderI
 	return out, nil
 }
 
-// ListOrderIdsForDeal returns the distinct OrderId fingerprints observed for a deal.
+// ListOrderIdsForDeal returns the distinct order identifiers observed for a deal.
 func (s *Storage) ListOrderIdsForDeal(ctx context.Context, dealID uint32) ([]orderid.OrderId, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -497,7 +575,11 @@ func (s *Storage) ListLatestHyperliquidSafetyStatuses(ctx context.Context, dealI
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rows, err := s.queries.ListLatestHyperliquidSafetyStatuses(ctx, int64(dealID))
+	rows, err := s.queries.ListLatestHyperliquidSafetyStatuses(ctx, sqlcgen.ListLatestHyperliquidSafetyStatusesParams{
+		VenueID: defaultHyperliquidVenueID,
+		DealID:  int64(dealID),
+		Wallet:  nil,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -572,7 +654,11 @@ func (s *Storage) LoadHyperliquidSubmission(ctx context.Context, oid orderid.Ord
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	row, err := s.queries.FetchHyperliquidSubmission(ctx, oid.Hex())
+	row, err := s.queries.FetchHyperliquidSubmission(ctx, sqlcgen.FetchHyperliquidSubmissionParams{
+		VenueID: defaultHyperliquidVenueID,
+		Wallet:  defaultHyperliquidWallet,
+		OrderID: oid.Hex(),
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return recomma.Action{}, false, nil
 	}

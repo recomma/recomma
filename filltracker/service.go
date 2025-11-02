@@ -67,7 +67,7 @@ func (s *Service) Rebuild(ctx context.Context) error {
 	return nil
 }
 
-// UpdateStatus ingests a fresh Hyperliquid status update for an OrderId.
+// UpdateStatus ingests a fresh Hyperliquid status update for a metadata fingerprint.
 func (s *Service) UpdateStatus(ctx context.Context, oid orderid.OrderId, status hyperliquid.WsOrder) error {
 	event, err := s.store.LoadThreeCommasBotEvent(ctx, oid)
 	if err != nil {
@@ -278,11 +278,11 @@ func (s *Service) ensureTakeProfit(
 	submitter recomma.Emitter,
 	snapshot DealSnapshot,
 	desiredQty float64,
-	preferredOrderId *orderid.OrderId,
+	preferredOid *orderid.OrderId,
 	preferredEvent *tc.BotEvent,
 	force bool,
 ) {
-	oid, evt, ok := s.lookupTakeProfitContext(ctx, snapshot, preferredOrderId, preferredEvent)
+	oid, evt, ok := s.lookupTakeProfitContext(ctx, snapshot, preferredOid, preferredEvent)
 	if !ok {
 		s.logger.Warn("take profit reconciliation skipped: no metadata", slog.Uint64("deal_id", uint64(snapshot.DealID)))
 		return
@@ -417,12 +417,12 @@ func isLiveHyperliquidStatus(status *hyperliquid.WsOrder) bool {
 func (s *Service) lookupTakeProfitContext(
 	ctx context.Context,
 	snapshot DealSnapshot,
-	preferredOrderId *orderid.OrderId,
+	preferredOid *orderid.OrderId,
 	preferredEvent *tc.BotEvent,
 ) (orderid.OrderId, *tc.BotEvent, bool) {
 	var oid *orderid.OrderId
-	if preferredOrderId != nil {
-		clone := *preferredOrderId
+	if preferredOid != nil {
+		clone := *preferredOid
 		oid = &clone
 	}
 

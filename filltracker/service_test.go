@@ -3,7 +3,6 @@ package filltracker
 import (
 	"context"
 	"io"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
@@ -683,11 +682,13 @@ func (s *stubEmitter) Actions() []recomma.OrderWork {
 
 func newTestStore(t *testing.T) *storage.Storage {
 	t.Helper()
-
-	path := filepath.Join(t.TempDir(), "tracker.db")
-	store, err := storage.New(path)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = store.Close() })
+	store, err := storage.New(":memory:")
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
 	return store
 }
 

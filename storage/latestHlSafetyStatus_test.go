@@ -50,8 +50,23 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 			Text:          "test safety order",
 		}
 
-		if _, err := store.RecordThreeCommasBotEvent(context.Background(), oid, botevent); err != nil {
+		inserted, err := store.RecordThreeCommasBotEvent(context.Background(), oid, botevent)
+		if err != nil {
 			t.Fatalf("RecordThreeCommasBotEvent: %v", err)
+		}
+
+		req := hyperliquid.CreateOrderRequest{
+			Coin:          botevent.Coin,
+			IsBuy:         botevent.Type == tc.BUY,
+			Price:         botevent.Price,
+			Size:          botevent.Size,
+			ReduceOnly:    false,
+			OrderType:     hyperliquid.OrderType{Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc}},
+			ClientOrderID: oid.HexAsPointer(),
+		}
+
+		if err := store.RecordHyperliquidOrderRequest(context.Background(), oid, req, inserted); err != nil {
+			t.Fatalf("RecordHyperliquidOrderRequest: %v", err)
 		}
 
 		return normalizeOrderId(t, oid)

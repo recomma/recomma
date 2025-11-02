@@ -581,7 +581,7 @@ func (s *Storage) ListHyperliquidOrderIds(ctx context.Context) ([]recomma.OrderI
 	return identifiers, nil
 }
 
-// ListOrderIdsForDeal returns the distinct OrderId fingerprints observed for a deal.
+// ListOrderIdsForDeal returns the distinct order identifiers observed for a deal.
 func (s *Storage) ListOrderIdsForDeal(ctx context.Context, dealID uint32) ([]orderid.OrderId, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

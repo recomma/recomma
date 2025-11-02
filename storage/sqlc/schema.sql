@@ -165,6 +165,8 @@ CREATE TABLE IF NOT EXISTS bot_order_scalers (
     FOREIGN KEY(bot_id) REFERENCES threecommas_bots(bot_id) ON DELETE CASCADE
 );
 
+DROP TABLE IF EXISTS scaled_orders;
+
 CREATE TABLE IF NOT EXISTS scaled_orders (
     venue_id               TEXT    NOT NULL,
     wallet                 TEXT    NOT NULL,

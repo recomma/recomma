@@ -33,7 +33,7 @@ type fakeStatusStore struct {
 	records map[string]hyperliquid.WsOrder
 }
 
-func (s *fakeStatusStore) ListHyperliquidMetadata(context.Context) ([]recomma.OrderIdentifier, error) {
+func (s *fakeStatusStore) ListHyperliquidOrderIds(context.Context) ([]recomma.OrderIdentifier, error) {
 	return append([]recomma.OrderIdentifier(nil), s.idents...), nil
 }
 

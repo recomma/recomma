@@ -20,7 +20,7 @@ type orderStatusClient interface {
 }
 
 type statusStore interface {
-	ListHyperliquidMetadata(ctx context.Context) ([]recomma.OrderIdentifier, error)
+	ListHyperliquidOrderIds(ctx context.Context) ([]recomma.OrderIdentifier, error)
 	RecordHyperliquidStatus(ctx context.Context, ident recomma.OrderIdentifier, status hyperliquid.WsOrder) error
 }
 
@@ -109,7 +109,7 @@ func (r *StatusRefresher) Refresh(ctx context.Context) error {
 		return errors.New("status refresher requires storage")
 	}
 
-	idents, err := r.store.ListHyperliquidMetadata(ctx)
+	idents, err := r.store.ListHyperliquidOrderIds(ctx)
 	if err != nil {
 		return fmt.Errorf("list hyperliquid orderids: %w", err)
 	}

@@ -78,7 +78,7 @@ func TestStorageThreeCommasRoundTrip(t *testing.T) {
 			},
 		},
 		{
-			name: "different-oid",
+			name: "different-metadata",
 			oid: orderid.OrderId{
 				BotID:      99,
 				DealID:     1001,

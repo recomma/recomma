@@ -557,7 +557,7 @@ SELECT
 FROM hyperliquid_submissions
 WHERE venue_id = sqlc.arg(venue_id)
   AND order_id IN (
-    SELECT value FROM json_each(sqlc.arg(order_id_list))
+    SELECT value FROM json_each(sqlc.arg(orderid_list))
 );
 
 -- name: ListDealIDs :many

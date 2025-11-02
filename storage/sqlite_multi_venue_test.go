@@ -78,7 +78,7 @@ func TestStorageMultiVenueIsolation(t *testing.T) {
 	require.Len(t, betaHistory, 1)
 	require.Equal(t, hyperliquid.OrderStatusValueFilled, betaHistory[0].Status)
 
-	identifiers, err := store.ListHyperliquidMetadata(ctx)
+	identifiers, err := store.ListHyperliquidOrderIds(ctx)
 	require.NoError(t, err)
 	require.Len(t, identifiers, 2)
 

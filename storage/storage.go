@@ -133,6 +133,48 @@ func (s *Storage) EnsureDefaultVenueWallet(ctx context.Context, wallet string) e
 	return s.upsertDefaultVenueLocked(ctx, wallet)
 }
 
+// UpsertVenue registers or updates a venue record. Callers can provide an
+// explicit type/display name or rely on defaults aligned with the Hyperliquid
+// integration used throughout the engine.
+func (s *Storage) UpsertVenue(ctx context.Context, venueID recomma.VenueID, venueType, displayName, wallet string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if venueType == "" {
+		venueType = defaultHyperliquidVenueType
+	}
+	if displayName == "" {
+		displayName = string(venueID)
+	}
+
+	params := sqlcgen.UpsertVenueParams{
+		ID:          string(venueID),
+		Type:        venueType,
+		DisplayName: displayName,
+		Wallet:      wallet,
+		Flags:       json.RawMessage(`{}`),
+	}
+
+	return s.queries.UpsertVenue(ctx, params)
+}
+
+// UpsertBotVenueAssignment associates a bot with a venue. Repeated calls update
+// the primary flag while preserving the latest assignment timestamp.
+func (s *Storage) UpsertBotVenueAssignment(ctx context.Context, botID uint32, venueID recomma.VenueID, isPrimary bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	params := sqlcgen.UpsertBotVenueAssignmentParams{
+		BotID:   int64(botID),
+		VenueID: string(venueID),
+	}
+	if isPrimary {
+		params.IsPrimary = 1
+	}
+
+	return s.queries.UpsertBotVenueAssignment(ctx, params)
+}
+
 func (s *Storage) upsertDefaultVenueLocked(ctx context.Context, wallet string) error {
 	if wallet == "" {
 		wallet = defaultHyperliquidWallet

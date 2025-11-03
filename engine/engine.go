@@ -269,20 +269,29 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 		if err != nil {
 			return fmt.Errorf("reduce order %d: %w", oid.BotEventID, err)
 		}
+
+		assignments, err := e.store.ListVenuesForBot(ctx, oid.BotID)
+		if err != nil {
+			orderLogger.Warn("could not load bot venues", slog.String("error", err.Error()))
+			assignments = nil
+		}
+
+		missingTargets := missingAssignmentTargets(oid, assignments, storedIdents)
+
 		if !shouldEmit {
-			continue
+			if latestEvent == nil || latestEvent.Status != tc.Active || len(missingTargets) == 0 {
+				continue
+			}
+			req := adapter.ToCreateOrderRequest(currency, *latestEvent, oid)
+			orderLogger.Info("replaying create for venues missing submissions", slog.Int("venues", len(missingTargets)))
+			action = recomma.Action{Type: recomma.ActionCreate, Create: &req}
+			shouldEmit = true
 		}
 		if fillSnapshot != nil && latestEvent != nil {
 			action, shouldEmit = e.adjustActionWithTracker(currency, oid, *latestEvent, action, fillSnapshot, orderLogger)
 			if !shouldEmit {
 				continue
 			}
-		}
-
-		assignments, err := e.store.ListVenuesForBot(ctx, oid.BotID)
-		if err != nil {
-			orderLogger.Warn("could not load bot venues", slog.String("error", err.Error()))
-			assignments = nil
 		}
 
 		targets := resolveOrderTargets(oid, assignments, storedIdents, action.Type)
@@ -632,6 +641,43 @@ func resolveOrderTargets(
 	})
 
 	return list
+}
+
+func missingAssignmentTargets(
+	oid orderid.OrderId,
+	assignments []storage.VenueAssignment,
+	stored []recomma.OrderIdentifier,
+) []recomma.OrderIdentifier {
+	if len(assignments) == 0 {
+		return nil
+	}
+
+	seen := make(map[recomma.OrderIdentifier]struct{}, len(stored))
+	for _, ident := range stored {
+		seen[ident] = struct{}{}
+	}
+
+	missing := make([]recomma.OrderIdentifier, 0, len(assignments))
+	for _, assignment := range assignments {
+		ident := recomma.NewOrderIdentifier(assignment.VenueID, assignment.Wallet, oid)
+		if _, ok := seen[ident]; ok {
+			continue
+		}
+		missing = append(missing, ident)
+	}
+
+	slices.SortFunc(missing, compareIdentifiers)
+	return missing
+}
+
+func compareIdentifiers(a, b recomma.OrderIdentifier) int {
+	if cmp := strings.Compare(a.Venue(), b.Venue()); cmp != 0 {
+		return cmp
+	}
+	if cmp := strings.Compare(a.Wallet, b.Wallet); cmp != 0 {
+		return cmp
+	}
+	return strings.Compare(a.Hex(), b.Hex())
 }
 
 func cloneAction(action recomma.Action) recomma.Action {

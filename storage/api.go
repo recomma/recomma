@@ -477,6 +477,11 @@ FROM threecommas_botevents`)
 		byOrderId[ro.oid] = append(byOrderId[ro.oid], idx)
 	}
 
+	defaultAssignment, err := s.defaultVenueAssignmentLocked(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load default venue: %w", err)
+	}
+
 	for oidHex, indexes := range byOrderId {
 		if len(indexes) == 0 {
 			continue
@@ -490,44 +495,25 @@ FROM threecommas_botevents`)
 			selectedIdent  recomma.OrderIdentifier
 		)
 
-		// Fetch the most recent submission regardless of venue.
-		var (
-			subVenue   sql.NullString
-			subWallet  sql.NullString
-			actionKind sql.NullString
-			createRaw  []byte
-			modifyRaw  []byte
-			cancelRaw  []byte
-			updatedAt  sql.NullInt64
-		)
-		submissionErr := s.db.QueryRowContext(ctx, `
-                        SELECT venue_id, wallet, action_kind, CAST(create_payload AS BLOB) AS create_payload,
-                               CAST(modify_payloads AS BLOB) AS modify_payloads,
-                               CAST(cancel_payload AS BLOB) AS cancel_payload,
-                               updated_at_utc
-                        FROM hyperliquid_submissions
-                        WHERE order_id = ?
-                        ORDER BY updated_at_utc DESC
-                        LIMIT 1
-                `, oidHex).Scan(&subVenue, &subWallet, &actionKind, &createRaw, &modifyRaw, &cancelRaw, &updatedAt)
-		if submissionErr != nil {
-			if !errors.Is(submissionErr, sql.ErrNoRows) {
-				return nil, nil, fmt.Errorf("fetch submission for %s: %w", oidHex, submissionErr)
+		submissionRow, err := s.queries.FetchLatestHyperliquidSubmissionAnyIdentifier(ctx, oidHex)
+		if err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				return nil, nil, fmt.Errorf("fetch submission for %s: %w", oidHex, err)
 			}
 		} else {
-			switch strings.ToLower(strings.TrimSpace(actionKind.String)) {
+			switch strings.ToLower(strings.TrimSpace(submissionRow.ActionKind)) {
 			case "create":
-				if len(createRaw) > 0 {
+				if len(submissionRow.CreatePayload) > 0 {
 					var decoded hyperliquid.CreateOrderRequest
-					if err := json.Unmarshal(createRaw, &decoded); err != nil {
+					if err := json.Unmarshal(submissionRow.CreatePayload, &decoded); err != nil {
 						return nil, nil, fmt.Errorf("decode create submission for %s: %w", oidHex, err)
 					}
 					submission = &decoded
 				}
 			case "modify":
-				if len(modifyRaw) > 0 {
+				if len(submissionRow.ModifyPayloads) > 0 {
 					var decoded []hyperliquid.ModifyOrderRequest
-					if err := json.Unmarshal(modifyRaw, &decoded); err != nil {
+					if err := json.Unmarshal(submissionRow.ModifyPayloads, &decoded); err != nil {
 						return nil, nil, fmt.Errorf("decode modify submission for %s: %w", oidHex, err)
 					}
 					if len(decoded) > 0 {
@@ -535,62 +521,55 @@ FROM threecommas_botevents`)
 					}
 				}
 			case "cancel":
-				if len(cancelRaw) > 0 {
+				if len(submissionRow.CancelPayload) > 0 {
 					var decoded hyperliquid.CancelOrderRequestByCloid
-					if err := json.Unmarshal(cancelRaw, &decoded); err != nil {
+					if err := json.Unmarshal(submissionRow.CancelPayload, &decoded); err != nil {
 						return nil, nil, fmt.Errorf("decode cancel submission for %s: %w", oidHex, err)
 					}
 					submission = &decoded
 				}
 			}
 
-			if updatedAt.Valid {
-				observed := time.UnixMilli(updatedAt.Int64).UTC()
+			if submissionRow.UpdatedAtUtc > 0 {
+				observed := time.UnixMilli(submissionRow.UpdatedAtUtc).UTC()
 				submissionTime = &observed
 			}
 
-			selectedIdent = recomma.NewOrderIdentifier(recomma.VenueID(subVenue.String), subWallet.String, oidCopy)
+			selectedIdent = recomma.NewOrderIdentifier(recomma.VenueID(submissionRow.VenueID), submissionRow.Wallet, oidCopy)
 		}
 
-		// Fetch the most recent status, preferring the selected identifier.
-		var (
-			statusVenue  sql.NullString
-			statusWallet sql.NullString
-			statusBlob   []byte
-			statusTime   sql.NullInt64
-		)
-
-		fetchStatus := func(venue, wallet string) error {
-			row := s.db.QueryRowContext(ctx, `
-                                SELECT venue_id, wallet, payload_blob, recorded_at_utc
-                                FROM hyperliquid_status_history
-                                WHERE (?1 != '' AND venue_id = ?1 AND wallet = ?2 AND order_id = ?3)
-                                   OR (?1 = '' AND order_id = ?3)
-                                ORDER BY recorded_at_utc DESC
-                                LIMIT 1
-                        `, venue, wallet, oidHex)
-			return row.Scan(&statusVenue, &statusWallet, &statusBlob, &statusTime)
+		if selectedIdent == (recomma.OrderIdentifier{}) {
+			selectedIdent = recomma.NewOrderIdentifier(recomma.VenueID(defaultAssignment.VenueID), defaultAssignment.Wallet, oidCopy)
 		}
 
-		statusErr := fetchStatus(selectedIdent.Venue(), selectedIdent.Wallet)
-		if statusErr != nil {
-			if errors.Is(statusErr, sql.ErrNoRows) {
-				statusErr = fetchStatus("", "")
-			}
-			if statusErr != nil && !errors.Is(statusErr, sql.ErrNoRows) {
-				return nil, nil, fmt.Errorf("fetch latest status for %s: %w", oidHex, statusErr)
-			}
+		statusRow, err := s.queries.FetchLatestHyperliquidStatus(ctx, sqlcgen.FetchLatestHyperliquidStatusParams{
+			VenueID: selectedIdent.Venue(),
+			Wallet:  selectedIdent.Wallet,
+			OrderID: oidHex,
+		})
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, fmt.Errorf("fetch latest status for %s: %w", oidHex, err)
 		}
-
-		if statusErr == nil && len(statusBlob) > 0 {
+		if err == nil && len(statusRow.PayloadBlob) > 0 {
 			var decoded hyperliquid.WsOrder
-			if err := json.Unmarshal(statusBlob, &decoded); err != nil {
+			if err := json.Unmarshal(statusRow.PayloadBlob, &decoded); err != nil {
 				return nil, nil, fmt.Errorf("decode latest status for %s: %w", oidHex, err)
 			}
 			statusCopy := decoded
 			latestStatus = &statusCopy
-			if selectedIdent == (recomma.OrderIdentifier{}) {
-				selectedIdent = recomma.NewOrderIdentifier(recomma.VenueID(statusVenue.String), statusWallet.String, oidCopy)
+		} else if errors.Is(err, sql.ErrNoRows) {
+			fallbackRow, fallbackErr := s.queries.FetchLatestHyperliquidStatusAnyIdentifier(ctx, oidHex)
+			if fallbackErr != nil && !errors.Is(fallbackErr, sql.ErrNoRows) {
+				return nil, nil, fmt.Errorf("fetch latest status (fallback) for %s: %w", oidHex, fallbackErr)
+			}
+			if fallbackErr == nil && len(fallbackRow.PayloadBlob) > 0 {
+				var decoded hyperliquid.WsOrder
+				if err := json.Unmarshal(fallbackRow.PayloadBlob, &decoded); err != nil {
+					return nil, nil, fmt.Errorf("decode fallback status for %s: %w", oidHex, err)
+				}
+				statusCopy := decoded
+				latestStatus = &statusCopy
+				selectedIdent = recomma.NewOrderIdentifier(recomma.VenueID(fallbackRow.VenueID), fallbackRow.Wallet, oidCopy)
 			}
 		}
 

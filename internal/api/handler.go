@@ -864,6 +864,7 @@ func (h *ApiHandler) CancelOrderByOrderId(ctx context.Context, req CancelOrderBy
 		if h.logger != nil {
 			h.logger.Warn("CancelOrderByOrderId list identifiers failed", slog.String("orderid", oid.Hex()), slog.String("error", err.Error()))
 		}
+		return CancelOrderByOrderId500Response{}, nil
 	}
 	venueFilter := ""
 	if req.Params.VenueId != nil {

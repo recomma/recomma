@@ -167,6 +167,68 @@ ON CONFLICT(venue_id, wallet, order_id) DO UPDATE SET
     payload_blob   = excluded.payload_blob,
     updated_at_utc = CAST(unixepoch('now','subsec') * 1000 AS INTEGER);
 
+-- name: CloneHyperliquidSubmissionsToWallet :exec
+INSERT INTO hyperliquid_submissions (
+    venue_id,
+    wallet,
+    order_id,
+    action_kind,
+    create_payload,
+    modify_payloads,
+    cancel_payload,
+    payload_type,
+    payload_blob,
+    updated_at_utc,
+    botevent_row_id
+)
+SELECT
+    src.venue_id,
+    sqlc.arg(to_wallet) AS wallet,
+    src.order_id,
+    src.action_kind,
+    src.create_payload,
+    src.modify_payloads,
+    src.cancel_payload,
+    src.payload_type,
+    src.payload_blob,
+    src.updated_at_utc,
+    src.botevent_row_id
+FROM hyperliquid_submissions AS src
+WHERE src.venue_id = sqlc.arg(venue_id)
+  AND src.wallet = sqlc.arg(from_wallet)
+ON CONFLICT(venue_id, wallet, order_id) DO NOTHING;
+
+-- name: CloneHyperliquidStatusesToWallet :exec
+INSERT INTO hyperliquid_status_history (
+    venue_id,
+    wallet,
+    order_id,
+    payload_type,
+    payload_blob,
+    recorded_at_utc
+)
+SELECT
+    src.venue_id,
+    sqlc.arg(to_wallet) AS wallet,
+    src.order_id,
+    src.payload_type,
+    src.payload_blob,
+    src.recorded_at_utc
+FROM hyperliquid_status_history AS src
+WHERE src.venue_id = sqlc.arg(venue_id)
+  AND src.wallet = sqlc.arg(from_wallet)
+ON CONFLICT(venue_id, wallet, order_id, recorded_at_utc) DO NOTHING;
+
+-- name: DeleteHyperliquidStatusesForWallet :exec
+DELETE FROM hyperliquid_status_history
+WHERE venue_id = sqlc.arg(venue_id)
+  AND wallet = sqlc.arg(wallet);
+
+-- name: DeleteHyperliquidSubmissionsForWallet :exec
+DELETE FROM hyperliquid_submissions
+WHERE venue_id = sqlc.arg(venue_id)
+  AND wallet = sqlc.arg(wallet);
+
 -- name: InsertHyperliquidStatus :exec
 INSERT INTO hyperliquid_status_history (
     venue_id,
@@ -223,6 +285,36 @@ FROM hyperliquid_submissions
 WHERE venue_id = sqlc.arg(venue_id)
   AND wallet = sqlc.arg(wallet)
   AND order_id = sqlc.arg(order_id);
+
+-- name: FetchLatestHyperliquidSubmissionAnyIdentifier :one
+SELECT
+    venue_id,
+    wallet,
+    order_id,
+    action_kind,
+    CAST(create_payload  AS BLOB) AS create_payload,
+    CAST(modify_payloads AS BLOB) AS modify_payloads,
+    CAST(cancel_payload  AS BLOB) AS cancel_payload,
+    payload_type,
+    payload_blob,
+    updated_at_utc,
+    botevent_row_id
+FROM hyperliquid_submissions
+WHERE order_id = sqlc.arg(order_id)
+ORDER BY updated_at_utc DESC
+LIMIT 1;
+
+-- name: FetchLatestHyperliquidStatusAnyIdentifier :one
+SELECT
+    venue_id,
+    wallet,
+    payload_type,
+    payload_blob,
+    recorded_at_utc
+FROM hyperliquid_status_history
+WHERE order_id = sqlc.arg(order_id)
+ORDER BY recorded_at_utc DESC
+LIMIT 1;
 
 -- name: ListHyperliquidOrderIds :many
 SELECT

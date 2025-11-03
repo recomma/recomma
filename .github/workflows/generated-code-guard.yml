@@ -1,0 +1,63 @@
+name: Generated Code Guard
+
+on:
+  push:
+    paths:
+      - 'storage/sqlcgen/**'
+      - 'internal/api/ops.gen.go'
+  pull_request:
+    paths:
+      - 'storage/sqlcgen/**'
+      - 'internal/api/ops.gen.go'
+
+jobs:
+  verify-generated-code:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect generated file changes
+        id: changes
+        uses: tj-actions/changed-files@v45
+        with:
+          files_yaml: |
+            storage:
+              - storage/sqlcgen/**
+            api:
+              - internal/api/ops.gen.go
+
+      - name: Set up Go
+        if: steps.changes.outputs.storage_any_changed == 'true' || steps.changes.outputs.api_any_changed == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Download dependencies
+        if: steps.changes.outputs.storage_any_changed == 'true' || steps.changes.outputs.api_any_changed == 'true'
+        run: go mod download
+
+      - name: Validate storage sqlc output
+        if: steps.changes.outputs.storage_any_changed == 'true'
+        run: |
+          go generate ./gen/storage
+          if [ -n "$(git status --short -- storage/sqlcgen)" ]; then
+            echo "::error file=storage/sqlcgen::Generated storage/sqlcgen output is out of sync. Run go generate ./gen/storage."
+            git status --short -- storage/sqlcgen
+            git diff -- storage/sqlcgen
+            exit 1
+          fi
+
+      - name: Validate API ops file
+        if: steps.changes.outputs.api_any_changed == 'true'
+        run: |
+          go generate ./gen/api
+          if [ -n "$(git status --short -- internal/api/ops.gen.go)" ]; then
+            echo "::error file=internal/api/ops.gen.go::Generated API file is out of sync. Run go generate ./gen/api."
+            git status --short -- internal/api/ops.gen.go
+            git diff -- internal/api/ops.gen.go
+            exit 1
+          fi

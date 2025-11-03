@@ -55,6 +55,10 @@ func (s *orderScalerStubStore) LoadHyperliquidStatus(context.Context, recomma.Or
 	return nil, false, nil
 }
 
+func (s *orderScalerStubStore) ListSubmissionIdentifiersForOrder(context.Context, orderid.OrderId) ([]recomma.OrderIdentifier, error) {
+	return nil, nil
+}
+
 func (s *orderScalerStubStore) GetDefaultOrderScaler(context.Context) (OrderScalerState, error) {
 	return s.defaultState, nil
 }

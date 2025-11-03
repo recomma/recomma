@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	"github.com/sonirico/go-hyperliquid"
 	"golang.org/x/sync/errgroup"
@@ -25,14 +24,17 @@ type statusStore interface {
 }
 
 type statusTracker interface {
-	UpdateStatus(ctx context.Context, oid orderid.OrderId, status hyperliquid.WsOrder) error
+	UpdateStatus(ctx context.Context, ident recomma.OrderIdentifier, status hyperliquid.WsOrder) error
 }
+
+// StatusClientRegistry maps venue identifiers to Hyperliquid info clients.
+type StatusClientRegistry map[recomma.VenueID]orderStatusClient
 
 // StatusRefresher pulls the latest Hyperliquid order status for stored
 // submissions and mirrors the results into the local database. This is useful
 // on startup after downtime to catch up on statuses we missed while offline.
 type StatusRefresher struct {
-	client         orderStatusClient
+	clients        map[recomma.VenueID]orderStatusClient
 	store          statusStore
 	tracker        statusTracker
 	logger         *slog.Logger
@@ -78,9 +80,14 @@ func WithStatusRefresherTimeout(d time.Duration) StatusRefresherOption {
 
 // NewStatusRefresher constructs a new refresher. The client is typically
 // an *hl.Info instance.
-func NewStatusRefresher(client orderStatusClient, store statusStore, opts ...StatusRefresherOption) *StatusRefresher {
+func NewStatusRefresher(clients StatusClientRegistry, store statusStore, opts ...StatusRefresherOption) *StatusRefresher {
+	clientMap := make(map[recomma.VenueID]orderStatusClient)
+	for k, v := range clients {
+		clientMap[k] = v
+	}
+
 	refresher := &StatusRefresher{
-		client:         client,
+		clients:        clientMap,
 		store:          store,
 		logger:         slog.Default().WithGroup("hyperliquid").WithGroup("status-refresh"),
 		maxConcurrency: 4,
@@ -102,8 +109,8 @@ func NewStatusRefresher(client orderStatusClient, store statusStore, opts ...Sta
 // and stores the latest status. The returned error aggregates any failures that
 // occurred while refreshing; success for the remaining orders is best-effort.
 func (r *StatusRefresher) Refresh(ctx context.Context) error {
-	if r.client == nil {
-		return errors.New("status refresher requires a Hyperliquid info client")
+	if len(r.clients) == 0 {
+		return errors.New("status refresher requires at least one Hyperliquid info client")
 	}
 	if r.store == nil {
 		return errors.New("status refresher requires storage")
@@ -128,13 +135,20 @@ func (r *StatusRefresher) Refresh(ctx context.Context) error {
 	for _, ident := range idents {
 		ident := ident
 		g.Go(func() error {
+			client, ok := r.clients[ident.VenueID]
+			if !ok {
+				if r.logger != nil {
+					r.logger.Warn("no status client for venue", slog.String("venue", ident.Venue()))
+				}
+				return nil
+			}
 			callCtx := gctx
 			if r.timeout > 0 {
 				var cancel context.CancelFunc
 				callCtx, cancel = context.WithTimeout(gctx, r.timeout)
 				defer cancel()
 			}
-			ok, refreshErr := r.refreshOne(callCtx, ident)
+			ok, refreshErr := r.refreshOne(callCtx, client, ident)
 			if refreshErr != nil {
 				errsMu.Lock()
 				errs = append(errs, refreshErr)
@@ -163,8 +177,8 @@ func (r *StatusRefresher) Refresh(ctx context.Context) error {
 	return nil
 }
 
-func (r *StatusRefresher) refreshOne(ctx context.Context, ident recomma.OrderIdentifier) (bool, error) {
-	result, err := r.client.QueryOrderByCloid(ctx, ident.Hex())
+func (r *StatusRefresher) refreshOne(ctx context.Context, client orderStatusClient, ident recomma.OrderIdentifier) (bool, error) {
+	result, err := client.QueryOrderByCloid(ctx, ident.Hex())
 	if err != nil {
 		if r.logger != nil {
 			r.logger.Warn("failed to query order status",
@@ -195,7 +209,7 @@ func (r *StatusRefresher) refreshOne(ctx context.Context, ident recomma.OrderIde
 	}
 
 	if r.tracker != nil {
-		if err := r.tracker.UpdateStatus(ctx, ident.OrderId, *wsOrder); err != nil && r.logger != nil {
+		if err := r.tracker.UpdateStatus(ctx, ident, *wsOrder); err != nil && r.logger != nil {
 			r.logger.Warn("fill tracker update failed",
 				slog.String("oid", ident.Hex()),
 				slog.String("error", err.Error()))

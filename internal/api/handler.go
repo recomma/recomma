@@ -42,6 +42,7 @@ type Store interface {
 	ResolveEffectiveOrderScalerConfig(ctx context.Context, oid orderid.OrderId) (EffectiveOrderScaler, error)
 	LoadHyperliquidSubmission(ctx context.Context, ident recomma.OrderIdentifier) (recomma.Action, bool, error)
 	LoadHyperliquidStatus(ctx context.Context, ident recomma.OrderIdentifier) (*hyperliquid.WsOrder, bool, error)
+	ListSubmissionIdentifiersForOrder(ctx context.Context, oid orderid.OrderId) ([]recomma.OrderIdentifier, error)
 }
 
 // StreamSource publishes live order mutations for the SSE endpoint.
@@ -681,32 +682,79 @@ func (h *ApiHandler) CancelOrderByOrderId(ctx context.Context, req CancelOrderBy
 		return CancelOrderByOrderId400Response{}, nil
 	}
 
-	ident := recomma.OrderIdentifier{OrderId: *oid}
-	action, found, err := h.store.LoadHyperliquidSubmission(ctx, ident)
+	idents, err := h.store.ListSubmissionIdentifiersForOrder(ctx, *oid)
 	if err != nil {
 		if h.logger != nil {
-			h.logger.Error("CancelOrderByOrderId load submission failed", slog.String("orderid", oid.Hex()), slog.String("error", err.Error()))
+			h.logger.Warn("CancelOrderByOrderId list identifiers failed", slog.String("orderid", oid.Hex()), slog.String("error", err.Error()))
 		}
-		return CancelOrderByOrderId500Response{}, nil
 	}
-	if !found || (action.Create == nil && action.Modify == nil) {
+	if len(idents) == 0 {
 		if h.logger != nil {
 			h.logger.Info("CancelOrderByOrderId submission not found", slog.String("orderid", oid.Hex()))
 		}
 		return CancelOrderByOrderId404Response{}, nil
 	}
-	if action.Cancel != nil {
-		if h.logger != nil {
-			h.logger.Info("CancelOrderByOrderId cancel already recorded", slog.String("orderid", oid.Hex()))
+
+	var (
+		coin              string
+		pending           []recomma.OrderIdentifier
+		lastStatus        *hyperliquid.WsOrder
+		haveLastStatus    bool
+		anySubmission     bool
+		anyCancelRecorded bool
+		anyNotCancelable  bool
+	)
+
+	for _, ident := range idents {
+		action, found, loadErr := h.store.LoadHyperliquidSubmission(ctx, ident)
+		if loadErr != nil {
+			if h.logger != nil {
+				h.logger.Error("CancelOrderByOrderId load submission failed", slog.String("orderid", oid.Hex()), slog.String("venue", ident.Venue()), slog.String("error", loadErr.Error()))
+			}
+			return CancelOrderByOrderId500Response{}, nil
 		}
-		return CancelOrderByOrderId409Response{}, nil
+		if !found || (action.Create == nil && action.Modify == nil) {
+			continue
+		}
+		anySubmission = true
+
+		if coin == "" {
+			if action.Create != nil && strings.TrimSpace(action.Create.Coin) != "" {
+				coin = strings.ToUpper(strings.TrimSpace(action.Create.Coin))
+			} else if action.Modify != nil && strings.TrimSpace(action.Modify.Order.Coin) != "" {
+				coin = strings.ToUpper(strings.TrimSpace(action.Modify.Order.Coin))
+			}
+		}
+
+		if action.Cancel != nil {
+			anyCancelRecorded = true
+			continue
+		}
+
+		status, haveStatus, statusErr := h.store.LoadHyperliquidStatus(ctx, ident)
+		if statusErr != nil {
+			if h.logger != nil {
+				h.logger.Error("CancelOrderByOrderId load status failed", slog.String("orderid", oid.Hex()), slog.String("venue", ident.Venue()), slog.String("error", statusErr.Error()))
+			}
+			return CancelOrderByOrderId500Response{}, nil
+		}
+		if haveStatus {
+			lastStatus = status
+			haveLastStatus = true
+			if !isCancelableStatus(status) {
+				anyNotCancelable = true
+				continue
+			}
+		}
+
+		pending = append(pending, ident)
 	}
 
-	coin := ""
-	if action.Create != nil && strings.TrimSpace(action.Create.Coin) != "" {
-		coin = strings.ToUpper(strings.TrimSpace(action.Create.Coin))
-	} else if action.Modify != nil && strings.TrimSpace(action.Modify.Order.Coin) != "" {
-		coin = strings.ToUpper(strings.TrimSpace(action.Modify.Order.Coin))
+	if !anySubmission {
+		if h.logger != nil {
+			h.logger.Info("CancelOrderByOrderId submission not found", slog.String("orderid", oid.Hex()))
+		}
+		return CancelOrderByOrderId404Response{}, nil
 	}
 	if coin == "" {
 		if h.logger != nil {
@@ -714,17 +762,16 @@ func (h *ApiHandler) CancelOrderByOrderId(ctx context.Context, req CancelOrderBy
 		}
 		return CancelOrderByOrderId404Response{}, nil
 	}
-
-	status, haveStatus, err := h.store.LoadHyperliquidStatus(ctx, ident)
-	if err != nil {
+	if len(pending) == 0 {
 		if h.logger != nil {
-			h.logger.Error("CancelOrderByOrderId load status failed", slog.String("orderid", oid.Hex()), slog.String("error", err.Error()))
-		}
-		return CancelOrderByOrderId500Response{}, nil
-	}
-	if haveStatus && !isCancelableStatus(status) {
-		if h.logger != nil {
-			h.logger.Info("CancelOrderByOrderId order not cancelable", slog.String("orderid", oid.Hex()), slog.String("status", string(status.Status)))
+			switch {
+			case anyNotCancelable && haveLastStatus && lastStatus != nil:
+				h.logger.Info("CancelOrderByOrderId order not cancelable", slog.String("orderid", oid.Hex()), slog.String("status", string(lastStatus.Status)))
+			case anyCancelRecorded:
+				h.logger.Info("CancelOrderByOrderId cancel already recorded", slog.String("orderid", oid.Hex()))
+			default:
+				h.logger.Info("CancelOrderByOrderId no pending venues", slog.String("orderid", oid.Hex()))
+			}
 		}
 		return CancelOrderByOrderId409Response{}, nil
 	}
@@ -760,29 +807,32 @@ func (h *ApiHandler) CancelOrderByOrderId(ctx context.Context, req CancelOrderBy
 		return CancelOrderByOrderId202JSONResponse(resp), nil
 	}
 
-	work := recomma.OrderWork{
-		OrderId: *oid,
-		Action: recomma.Action{
-			Type:   recomma.ActionCancel,
-			Cancel: &cancelPayload,
-		},
-	}
-	if reason != "" {
-		work.Action.Reason = reason
-	}
-
-	if err := h.orders.Emit(ctx, work); err != nil {
-		if h.logger != nil {
-			h.logger.Error("CancelOrderByOrderId emit failed", slog.String("orderid", oid.Hex()), slog.String("error", err.Error()))
+	for _, ident := range pending {
+		work := recomma.OrderWork{
+			Identifier: ident,
+			OrderId:    *oid,
+			Action: recomma.Action{
+				Type:   recomma.ActionCancel,
+				Cancel: &cancelPayload,
+			},
 		}
-		return CancelOrderByOrderId500Response{}, nil
+		if reason != "" {
+			work.Action.Reason = reason
+		}
+
+		if err := h.orders.Emit(ctx, work); err != nil {
+			if h.logger != nil {
+				h.logger.Error("CancelOrderByOrderId emit failed", slog.String("orderid", oid.Hex()), slog.String("venue", ident.Venue()), slog.String("error", err.Error()))
+			}
+			return CancelOrderByOrderId500Response{}, nil
+		}
 	}
 
 	resp.Status = "queued"
 	if reason != "" {
 		resp.Message = strPtr(reason)
-	} else if haveStatus && status != nil {
-		resp.Message = strPtr(fmt.Sprintf("latest status: %s", status.Status))
+	} else if haveLastStatus && lastStatus != nil {
+		resp.Message = strPtr(fmt.Sprintf("latest status: %s", lastStatus.Status))
 	}
 
 	if h.logger != nil {

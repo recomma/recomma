@@ -30,6 +30,7 @@ import (
 	"github.com/recomma/recomma/internal/origin"
 	"github.com/recomma/recomma/internal/vault"
 	rlog "github.com/recomma/recomma/log"
+	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
 	"github.com/recomma/recomma/webui"
@@ -263,7 +264,12 @@ func main() {
 
 	fillTracker := filltracker.New(store, logger)
 
-	statusRefresher := hl.NewStatusRefresher(info, store,
+	defaultIdent := storage.DefaultHyperliquidIdentifier(orderid.OrderId{})
+	baseIdent := recomma.NewOrderIdentifier(defaultIdent.VenueID, secrets.Secrets.HYPERLIQUIDWALLET, orderid.OrderId{})
+
+	statusRefresher := hl.NewStatusRefresher(hl.StatusClientRegistry{
+		baseIdent.VenueID: info,
+	}, store,
 		hl.WithStatusRefresherLogger(logger),
 		hl.WithStatusRefresherTracker(fillTracker),
 	)
@@ -275,7 +281,7 @@ func main() {
 		logger.Warn("fill tracker rebuild failed", slog.String("error", err.Error()))
 	}
 
-	ws, err := ws.New(appCtx, store, fillTracker, secrets.Secrets.HYPERLIQUIDWALLET, secrets.Secrets.HYPERLIQUIDURL)
+	ws, err := ws.New(appCtx, store, fillTracker, baseIdent.VenueID, baseIdent.Wallet, secrets.Secrets.HYPERLIQUIDURL)
 	if err != nil {
 		fatal("Could not create Hyperliquid websocket conn", err)
 	}
@@ -317,10 +323,14 @@ func main() {
 		}),
 	)
 
+	// Register venue emitters with the dispatcher. For now the default
+	// Hyperliquid venue is the only concrete implementation.
+	engineEmitter.Register(baseIdent.VenueID, submitter)
+
 	var wg sync.WaitGroup
 	for i := 0; i < cfg.OrderWorkers; i++ {
 		wg.Add(1)
-		go runOrderWorker(workerCtx, &wg, oq, submitter)
+		go runOrderWorker(workerCtx, &wg, oq, engineEmitter)
 	}
 
 	for i := 0; i < cfg.DealWorkers; i++ {
@@ -435,7 +445,7 @@ func runOrderWorker(
 	ctx context.Context,
 	wg *sync.WaitGroup,
 	oq workqueue.TypedRateLimitingInterface[recomma.OrderWork],
-	submitter recomma.Emitter,
+	dispatcher *emitter.QueueEmitter,
 ) {
 	defer wg.Done()
 	for {
@@ -444,7 +454,7 @@ func runOrderWorker(
 			return
 		}
 		reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		processOrderItem(reqCtx, oq, submitter, w)
+		processOrderItem(reqCtx, oq, dispatcher, w)
 		cancel()
 	}
 }
@@ -452,12 +462,12 @@ func runOrderWorker(
 func processOrderItem(
 	ctx context.Context,
 	oq workqueue.TypedRateLimitingInterface[recomma.OrderWork],
-	submitter recomma.Emitter,
+	dispatcher *emitter.QueueEmitter,
 	w recomma.OrderWork,
 ) {
 	logger := rlog.LoggerFromContext(ctx).With("order-work", w)
 	defer oq.Done(w)
-	if err := submitter.Emit(ctx, w); err != nil {
+	if err := dispatcher.Dispatch(ctx, w); err != nil {
 		if errors.Is(err, recomma.ErrOrderAlreadySatisfied) {
 			logger.Debug("order already satisfied; skipping submission")
 			oq.Forget(w)
@@ -466,6 +476,11 @@ func processOrderItem(
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			// Requeue with backoff so transient timeouts or global pacing don't drop work
 			oq.AddRateLimited(w)
+			return
+		}
+		if errors.Is(err, emitter.ErrMissingOrderIdentifier) || errors.Is(err, emitter.ErrUnregisteredVenueEmitter) || errors.Is(err, emitter.ErrOrderIdentifierMismatch) {
+			logger.Error("discarding order work", slog.String("reason", err.Error()))
+			oq.Forget(w)
 			return
 		}
 

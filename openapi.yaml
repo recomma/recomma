@@ -573,6 +573,238 @@ paths:
         '500':
           description: Internal server error
 
+  /api/venues:
+    get:
+      operationId: listVenues
+      summary: List configured venues
+      description: >
+        Returns the inventory of venues available to the runtime. Each venue describes the
+        upstream connector, wallet, and optional feature flags applied when dispatching work.
+      responses:
+        '200':
+          description: Venue records ordered by venue identifier.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VenueRecord'
+                required:
+                  - items
+        '401':
+          description: Missing or invalid session.
+        '500':
+          description: Internal server error
+
+  /api/venues/{venue_id}:
+    put:
+      operationId: upsertVenue
+      summary: Create or update a venue definition
+      description: >
+        Inserts or updates a venue record. Venue identifiers are immutable and must be unique.
+        Updating a venue overwrites the display name, wallet, and flags with the supplied payload.
+      parameters:
+        - name: venue_id
+          in: path
+          required: true
+          description: Stable venue identifier.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VenueUpsertRequest'
+      responses:
+        '200':
+          description: Venue stored successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VenueRecord'
+        '400':
+          description: Invalid payload or venue identifier.
+        '401':
+          description: Missing or invalid session.
+        '500':
+          description: Internal server error
+    delete:
+      operationId: deleteVenue
+      summary: Remove a venue definition
+      description: >
+        Deletes the venue and any associated assignments. Existing submissions remain in history
+        but new work will no longer target the deleted venue.
+      parameters:
+        - name: venue_id
+          in: path
+          required: true
+          description: Stable venue identifier.
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Venue removed.
+        '400':
+          description: Invalid venue identifier.
+        '401':
+          description: Missing or invalid session.
+        '404':
+          description: Venue not found.
+        '409':
+          description: Venue cannot be removed due to existing runtime constraints.
+        '500':
+          description: Internal server error
+
+  /api/venues/{venue_id}/assignments:
+    get:
+      operationId: listVenueAssignments
+      summary: List bot assignments for a venue
+      description: >
+        Returns all bot assignments targeting the requested venue. Each entry indicates whether the
+        venue is the primary destination for the bot.
+      parameters:
+        - name: venue_id
+          in: path
+          required: true
+          description: Stable venue identifier.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Bot assignments ordered by bot identifier.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VenueAssignmentRecord'
+                required:
+                  - items
+        '400':
+          description: Invalid venue identifier.
+        '401':
+          description: Missing or invalid session.
+        '404':
+          description: Venue not found.
+        '500':
+          description: Internal server error
+
+  /api/venues/{venue_id}/assignments/{bot_id}:
+    put:
+      operationId: upsertVenueAssignment
+      summary: Assign a bot to a venue
+      description: >
+        Creates or updates the bot-to-venue assignment. Marking an assignment as primary demotes
+        any existing primary mapping for the bot.
+      parameters:
+        - name: venue_id
+          in: path
+          required: true
+          description: Stable venue identifier.
+          schema:
+            type: string
+        - name: bot_id
+          in: path
+          required: true
+          description: 3Commas bot identifier.
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VenueAssignmentUpsertRequest'
+      responses:
+        '200':
+          description: Assignment stored successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VenueAssignmentRecord'
+        '400':
+          description: Invalid bot or venue identifier.
+        '401':
+          description: Missing or invalid session.
+        '404':
+          description: Venue not found.
+        '500':
+          description: Internal server error
+    delete:
+      operationId: deleteVenueAssignment
+      summary: Remove a bot assignment from a venue
+      description: >
+        Deletes the assignment linking the bot to the venue.
+      parameters:
+        - name: venue_id
+          in: path
+          required: true
+          description: Stable venue identifier.
+          schema:
+            type: string
+        - name: bot_id
+          in: path
+          required: true
+          description: 3Commas bot identifier.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: Assignment removed.
+        '400':
+          description: Invalid bot or venue identifier.
+        '401':
+          description: Missing or invalid session.
+        '404':
+          description: Assignment not found.
+        '500':
+          description: Internal server error
+
+  /api/bots/{bot_id}/venues:
+    get:
+      operationId: listBotVenues
+      summary: List venue assignments for a bot
+      description: >
+        Returns all venue assignments configured for the supplied bot identifier. When no explicit
+        assignment exists the response contains the default Hyperliquid venue.
+      parameters:
+        - name: bot_id
+          in: path
+          required: true
+          description: 3Commas bot identifier.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Venue assignments ordered by venue identifier.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BotVenueAssignmentRecord'
+                required:
+                  - items
+        '400':
+          description: Invalid bot identifier.
+        '401':
+          description: Missing or invalid session.
+        '500':
+          description: Internal server error
+
   /api/v1/order-scaler:
     get:
       operationId: getOrderScalerConfig
@@ -731,6 +963,12 @@ paths:
           description: Order OrderId identifier (case-insensitive hex string with optional `0x` prefix).
           schema:
             type: string
+        - name: venue_id
+          in: query
+          required: false
+          description: Optional venue selector. When provided the cancel is limited to submissions recorded for this venue.
+          schema:
+            type: string
       requestBody:
         required: false
         content:
@@ -808,7 +1046,7 @@ paths:
                   UTF-8 event stream. Example frames:
                   ```
                   event: three_commas_event
-                  data: {"type":"three_commas_event","order_id":"0x1234","identifiers":{"hex":"0x1234","bot_id":16538545,"deal_id":2381631392,"bot_event_id":1917367905,"created_at":"2025-01-02T01:02:03Z"},"observed_at":"2025-01-02T03:04:05Z","event":{"created_at":"2025-01-02T01:02:03Z","action":"Placing","coin":"DOGE","type":"BUY","status":"Active","price":0.19788,"size":105,"order_type":"base","order_size":0,"order_position":0,"quote_volume":20.7774,"quote_currency":"USDT","is_market":false,"text":"Placing base order..."}}
+                  data: {"type":"three_commas_event","order_id":"0x1234","identifiers":{"hex":"0x1234","bot_id":16538545,"deal_id":2381631392,"bot_event_id":1917367905,"created_at":"2025-01-02T01:02:03Z","venue_id":"hyperliquid:primary","wallet":"0xabc"},"observed_at":"2025-01-02T03:04:05Z","event":{"created_at":"2025-01-02T01:02:03Z","action":"Placing","coin":"DOGE","type":"BUY","status":"Active","price":0.19788,"size":105,"order_type":"base","order_size":0,"order_position":0,"quote_volume":20.7774,"quote_currency":"USDT","is_market":false,"text":"Placing base order..."}}
 
                   event: order_scaler_config
                   data: {"type":"order_scaler_config","order_id":"0x1234","observed_at":"2025-01-02T03:04:05Z","config":{"order_id":"0x1234","multiplier":0.5,"source":"bot_override","default":{"multiplier":1.0,"updated_at":"2025-01-01T00:00:00Z","updated_by":"system"},"override":{"bot_id":16538545,"multiplier":0.5,"notes":"risk off","effective_from":"2025-01-02T03:04:05Z","updated_at":"2025-01-02T03:04:05Z","updated_by":"operator"}},"actor":"operator"}
@@ -1225,6 +1463,8 @@ components:
         - deal_id
         - bot_event_id
         - created_at
+        - venue_id
+        - wallet
       properties:
         hex:
           type: string
@@ -1245,6 +1485,9 @@ components:
         venue_id:
           type: string
           description: Upstream venue identifier associated with the submission.
+        wallet:
+          type: string
+          description: Wallet address tied to the venue submission.
 
     ThreeCommasOrderState:
       type: object
@@ -1330,6 +1573,10 @@ components:
     HyperliquidOrderState:
       type: object
       properties:
+        identifier:
+          $ref: '#/components/schemas/OrderIdentifiers'
+          nullable: true
+          description: Identifier describing the venue and wallet for the surfaced submission/status.
         latest_submission:
           $ref: '#/components/schemas/HyperliquidAction'
           nullable: true
@@ -1664,6 +1911,87 @@ components:
           type: integer
           format: int64
           nullable: true
+
+    VenueRecord:
+      type: object
+      required:
+        - venue_id
+        - type
+        - display_name
+        - wallet
+      properties:
+        venue_id:
+          type: string
+        type:
+          type: string
+        display_name:
+          type: string
+        wallet:
+          type: string
+        flags:
+          type: object
+          additionalProperties: true
+          description: Connector specific options encoded as JSON.
+
+    VenueUpsertRequest:
+      type: object
+      required:
+        - type
+        - display_name
+        - wallet
+      properties:
+        type:
+          type: string
+        display_name:
+          type: string
+        wallet:
+          type: string
+        flags:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Connector specific options encoded as JSON.
+
+    VenueAssignmentRecord:
+      type: object
+      required:
+        - bot_id
+        - venue_id
+        - is_primary
+        - assigned_at
+      properties:
+        bot_id:
+          type: integer
+          format: int64
+        venue_id:
+          type: string
+        is_primary:
+          type: boolean
+        assigned_at:
+          type: string
+          format: date-time
+
+    VenueAssignmentUpsertRequest:
+      type: object
+      required:
+        - is_primary
+      properties:
+        is_primary:
+          type: boolean
+
+    BotVenueAssignmentRecord:
+      type: object
+      required:
+        - venue_id
+        - wallet
+        - is_primary
+      properties:
+        venue_id:
+          type: string
+        wallet:
+          type: string
+        is_primary:
+          type: boolean
 
     OrderScalerSource:
       type: string

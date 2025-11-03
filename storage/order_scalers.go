@@ -10,6 +10,7 @@ import (
 
 	"github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/orderid"
+	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage/sqlcgen"
 )
 
@@ -458,10 +459,12 @@ func (s *Storage) InsertScaledOrderAudit(ctx context.Context, params ScaledOrder
 
 	actor := effective.Actor()
 
+	ident := ensureIdentifier(recomma.NewOrderIdentifier("", "", params.OrderId))
+	identCopy := ident
 	s.publishStreamEventLocked(api.StreamEvent{
 		Type:             api.ScaledOrderAuditEntry,
 		OrderID:          params.OrderId,
-		VenueID:          string(defaultHyperliquidVenueID),
+		Identifier:       &identCopy,
 		ObservedAt:       createdAt,
 		Actor:            &actor,
 		ScaledOrderAudit: toAPIScaledOrderAudit(audit),
@@ -659,10 +662,12 @@ func (s *Storage) publishOrderScalerEventLocked(oid orderid.OrderId, effective E
 
 	cfg := toAPIEffectiveOrderScaler(effective)
 	actorCopy := actor
+	ident := ensureIdentifier(recomma.NewOrderIdentifier("", "", oid))
+	identCopy := ident
 	s.publishStreamEventLocked(api.StreamEvent{
 		Type:         api.OrderScalerConfigEntry,
 		OrderID:      oid,
-		VenueID:      string(defaultHyperliquidVenueID),
+		Identifier:   &identCopy,
 		ObservedAt:   observedAt,
 		Actor:        &actorCopy,
 		ScalerConfig: cfg,

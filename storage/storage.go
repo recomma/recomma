@@ -285,10 +285,13 @@ func (s *Storage) RecordThreeCommasBotEvent(ctx context.Context, oid orderid.Ord
 
 	if lastInsertId != 0 {
 		clone := order
+		ident := ensureIdentifier(recomma.NewOrderIdentifier("", "", oid))
+		identCopy := ident
 		s.publishStreamEventLocked(api.StreamEvent{
-			Type:     api.ThreeCommasEvent,
-			OrderID:  oid,
-			BotEvent: &clone,
+			Type:       api.ThreeCommasEvent,
+			OrderID:    oid,
+			Identifier: &identCopy,
+			BotEvent:   &clone,
 		})
 	}
 
@@ -547,11 +550,12 @@ func (s *Storage) RecordHyperliquidStatus(ctx context.Context, ident recomma.Ord
 	}
 
 	copy := status
+	identCopy := ident
 	s.publishStreamEventLocked(api.StreamEvent{
-		Type:    api.HyperliquidStatus,
-		OrderID: ident.OrderId,
-		VenueID: ident.Venue(),
-		Status:  &copy,
+		Type:       api.HyperliquidStatus,
+		OrderID:    ident.OrderId,
+		Identifier: &identCopy,
+		Status:     &copy,
 	})
 
 	return nil
@@ -586,6 +590,7 @@ func (s *Storage) publishHyperliquidSubmissionLocked(ctx context.Context, ident 
 		return
 	}
 
+	ident = ensureIdentifier(ident)
 	var botEvent *tc.BotEvent
 	if boteventRowID > 0 {
 		if evt, err := s.fetchBotEventByRowIDLocked(ctx, boteventRowID); err == nil {
@@ -593,10 +598,11 @@ func (s *Storage) publishHyperliquidSubmissionLocked(ctx context.Context, ident 
 		}
 	}
 
+	identCopy := ident
 	s.publishStreamEventLocked(api.StreamEvent{
 		Type:       api.HyperliquidSubmission,
 		OrderID:    ident.OrderId,
-		VenueID:    ident.Venue(),
+		Identifier: &identCopy,
 		BotEvent:   botEvent,
 		Submission: submission,
 	})

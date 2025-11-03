@@ -18,6 +18,7 @@ import (
 
 	api "github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/orderid"
+	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage/sqlcgen"
 )
 
@@ -482,71 +483,123 @@ FROM threecommas_botevents`)
 		}
 		oidCopy := items[indexes[0]].OrderId
 
-		submissionRow, err := s.queries.FetchHyperliquidSubmission(ctx, sqlcgen.FetchHyperliquidSubmissionParams{
-			VenueID: string(defaultHyperliquidVenueID),
-			Wallet:  defaultHyperliquidWallet,
-			OrderID: oidHex,
-		})
-		var submission interface{}
-		updatedAtUTC := sql.NullInt64{}
-		if err != nil {
-			if !errors.Is(err, sql.ErrNoRows) {
-				return nil, nil, fmt.Errorf("fetch submission for %s: %w", oidHex, err)
+		var (
+			submission     interface{}
+			submissionTime *time.Time
+			latestStatus   *hyperliquid.WsOrder
+			selectedIdent  recomma.OrderIdentifier
+		)
+
+		// Fetch the most recent submission regardless of venue.
+		var (
+			subVenue   sql.NullString
+			subWallet  sql.NullString
+			actionKind sql.NullString
+			createRaw  []byte
+			modifyRaw  []byte
+			cancelRaw  []byte
+			updatedAt  sql.NullInt64
+		)
+		submissionErr := s.db.QueryRowContext(ctx, `
+                        SELECT venue_id, wallet, action_kind, CAST(create_payload AS BLOB) AS create_payload,
+                               CAST(modify_payloads AS BLOB) AS modify_payloads,
+                               CAST(cancel_payload AS BLOB) AS cancel_payload,
+                               updated_at_utc
+                        FROM hyperliquid_submissions
+                        WHERE order_id = ?
+                        ORDER BY updated_at_utc DESC
+                        LIMIT 1
+                `, oidHex).Scan(&subVenue, &subWallet, &actionKind, &createRaw, &modifyRaw, &cancelRaw, &updatedAt)
+		if submissionErr != nil {
+			if !errors.Is(submissionErr, sql.ErrNoRows) {
+				return nil, nil, fmt.Errorf("fetch submission for %s: %w", oidHex, submissionErr)
 			}
 		} else {
-			updatedAtUTC = sql.NullInt64{Int64: submissionRow.UpdatedAtUtc, Valid: true}
-			switch submissionRow.ActionKind {
+			switch strings.ToLower(strings.TrimSpace(actionKind.String)) {
 			case "create":
-				if len(submissionRow.CreatePayload) > 0 {
+				if len(createRaw) > 0 {
 					var decoded hyperliquid.CreateOrderRequest
-					if err := json.Unmarshal(submissionRow.CreatePayload, &decoded); err != nil {
+					if err := json.Unmarshal(createRaw, &decoded); err != nil {
 						return nil, nil, fmt.Errorf("decode create submission for %s: %w", oidHex, err)
 					}
 					submission = &decoded
 				}
 			case "modify":
-				if len(submissionRow.ModifyPayloads) > 0 {
+				if len(modifyRaw) > 0 {
 					var decoded []hyperliquid.ModifyOrderRequest
-					if err := json.Unmarshal(submissionRow.ModifyPayloads, &decoded); err != nil {
+					if err := json.Unmarshal(modifyRaw, &decoded); err != nil {
 						return nil, nil, fmt.Errorf("decode modify submission for %s: %w", oidHex, err)
 					}
 					if len(decoded) > 0 {
-						last := decoded[len(decoded)-1]
-						submission = &last
+						submission = &decoded[len(decoded)-1]
 					}
 				}
 			case "cancel":
-				if len(submissionRow.CancelPayload) > 0 {
+				if len(cancelRaw) > 0 {
 					var decoded hyperliquid.CancelOrderRequestByCloid
-					if err := json.Unmarshal(submissionRow.CancelPayload, &decoded); err != nil {
+					if err := json.Unmarshal(cancelRaw, &decoded); err != nil {
 						return nil, nil, fmt.Errorf("decode cancel submission for %s: %w", oidHex, err)
 					}
 					submission = &decoded
 				}
 			}
+
+			if updatedAt.Valid {
+				observed := time.UnixMilli(updatedAt.Int64).UTC()
+				submissionTime = &observed
+			}
+
+			selectedIdent = recomma.NewOrderIdentifier(recomma.VenueID(subVenue.String), subWallet.String, oidCopy)
 		}
-		if submission != nil {
-			for _, idx := range indexes {
-				items[idx].LatestSubmission = submission
+
+		// Fetch the most recent status, preferring the selected identifier.
+		var (
+			statusVenue  sql.NullString
+			statusWallet sql.NullString
+			statusBlob   []byte
+			statusTime   sql.NullInt64
+		)
+
+		fetchStatus := func(venue, wallet string) error {
+			row := s.db.QueryRowContext(ctx, `
+                                SELECT venue_id, wallet, payload_blob, recorded_at_utc
+                                FROM hyperliquid_status_history
+                                WHERE (?1 != '' AND venue_id = ?1 AND wallet = ?2 AND order_id = ?3)
+                                   OR (?1 = '' AND order_id = ?3)
+                                ORDER BY recorded_at_utc DESC
+                                LIMIT 1
+                        `, venue, wallet, oidHex)
+			return row.Scan(&statusVenue, &statusWallet, &statusBlob, &statusTime)
+		}
+
+		statusErr := fetchStatus(selectedIdent.Venue(), selectedIdent.Wallet)
+		if statusErr != nil {
+			if errors.Is(statusErr, sql.ErrNoRows) {
+				statusErr = fetchStatus("", "")
+			}
+			if statusErr != nil && !errors.Is(statusErr, sql.ErrNoRows) {
+				return nil, nil, fmt.Errorf("fetch latest status for %s: %w", oidHex, statusErr)
 			}
 		}
 
-		statusRow, err := s.queries.FetchLatestHyperliquidStatus(ctx, sqlcgen.FetchLatestHyperliquidStatusParams{
-			VenueID: string(defaultHyperliquidVenueID),
-			Wallet:  defaultHyperliquidWallet,
-			OrderID: oidHex,
-		})
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, nil, fmt.Errorf("fetch latest status for %s: %w", oidHex, err)
-		}
-		var latestStatus *hyperliquid.WsOrder
-		if err == nil && len(statusRow.PayloadBlob) > 0 {
+		if statusErr == nil && len(statusBlob) > 0 {
 			var decoded hyperliquid.WsOrder
-			if err := json.Unmarshal(statusRow.PayloadBlob, &decoded); err != nil {
+			if err := json.Unmarshal(statusBlob, &decoded); err != nil {
 				return nil, nil, fmt.Errorf("decode latest status for %s: %w", oidHex, err)
 			}
 			statusCopy := decoded
 			latestStatus = &statusCopy
+			if selectedIdent == (recomma.OrderIdentifier{}) {
+				selectedIdent = recomma.NewOrderIdentifier(recomma.VenueID(statusVenue.String), statusWallet.String, oidCopy)
+			}
+		}
+
+		selectedIdent = ensureIdentifier(selectedIdent)
+
+		for _, idx := range indexes {
+			if submission != nil {
+				items[idx].LatestSubmission = submission
+			}
 		}
 
 		if opts.IncludeLog {
@@ -560,9 +613,9 @@ FROM threecommas_botevents`)
 			}
 
 			statusRows, err := s.queries.ListHyperliquidStatusesForOrderId(ctx, sqlcgen.ListHyperliquidStatusesForOrderIdParams{
-				VenueID:      string(defaultHyperliquidVenueID),
+				VenueID:      selectedIdent.Venue(),
 				OrderID:      oidHex,
-				Wallet:       nil,
+				Wallet:       selectedIdent.Wallet,
 				ObservedFrom: logFrom,
 				ObservedTo:   logTo,
 			})
@@ -571,7 +624,7 @@ FROM threecommas_botevents`)
 			}
 
 			auditRows, err := s.queries.ListScaledOrderAuditsForOrderId(ctx, sqlcgen.ListScaledOrderAuditsForOrderIdParams{
-				VenueID:       string(defaultHyperliquidVenueID),
+				VenueID:       selectedIdent.Venue(),
 				OrderID:       oidHex,
 				OrderIDPrefix: fmt.Sprintf("%s#%%", oidHex),
 				ObservedFrom:  logFrom,
@@ -589,11 +642,13 @@ FROM threecommas_botevents`)
 					return nil, nil, fmt.Errorf("decode log bot event for %s: %w", oidHex, err)
 				}
 				evtCopy := evt
+				identCopy := selectedIdent
 				entries = append(entries, api.OrderLogItem{
 					Type:       api.ThreeCommasEvent,
 					OrderId:    oidCopy,
 					ObservedAt: time.UnixMilli(logRow.ObservedAtUtc).UTC(),
 					BotEvent:   &evtCopy,
+					Identifier: &identCopy,
 				})
 			}
 
@@ -603,13 +658,16 @@ FROM threecommas_botevents`)
 					return nil, nil, fmt.Errorf("decode status history for %s: %w", oidHex, err)
 				}
 				statusCopy := decoded
+				identCopy := ensureIdentifier(recomma.NewOrderIdentifier(recomma.VenueID(statusRow.VenueID), statusRow.Wallet, oidCopy))
 				entries = append(entries, api.OrderLogItem{
 					Type:       api.HyperliquidStatus,
 					OrderId:    oidCopy,
 					ObservedAt: time.UnixMilli(statusRow.RecordedAtUtc).UTC(),
 					Status:     &statusCopy,
+					Identifier: &identCopy,
 				})
 				latestStatus = &statusCopy
+				selectedIdent = identCopy
 			}
 
 			for _, auditRow := range auditRows {
@@ -618,21 +676,25 @@ FROM threecommas_botevents`)
 					return nil, nil, fmt.Errorf("decode scaled order audit for %s: %w", oidHex, err)
 				}
 				actor := audit.MultiplierUpdatedBy
+				identCopy := ensureIdentifier(recomma.NewOrderIdentifier(recomma.VenueID(auditRow.VenueID), auditRow.Wallet, oidCopy))
 				entries = append(entries, api.OrderLogItem{
 					Type:        api.ScaledOrderAuditEntry,
 					OrderId:     oidCopy,
 					ObservedAt:  audit.CreatedAt,
 					ScaledAudit: toAPIScaledOrderAudit(audit),
 					Actor:       &actor,
+					Identifier:  &identCopy,
 				})
 			}
 
-			if submission != nil && updatedAtUTC.Valid {
+			if submission != nil && submissionTime != nil {
+				identCopy := selectedIdent
 				entries = append(entries, api.OrderLogItem{
 					Type:       api.HyperliquidSubmission,
 					OrderId:    oidCopy,
-					ObservedAt: time.UnixMilli(updatedAtUTC.Int64).UTC(),
+					ObservedAt: *submissionTime,
 					Submission: submission,
+					Identifier: &identCopy,
 				})
 			}
 
@@ -652,6 +714,10 @@ FROM threecommas_botevents`)
 				statusCopy := *latestStatus
 				items[idx].LatestStatus = &statusCopy
 			}
+		}
+		for _, idx := range indexes {
+			identCopy := selectedIdent
+			items[idx].Identifier = &identCopy
 		}
 	}
 
@@ -679,4 +745,275 @@ func decodeCursor(token string) (int64, int64, error) {
 	}
 
 	return primary, secondary, nil
+}
+
+// ListVenues returns all configured venues.
+func (s *Storage) ListVenues(ctx context.Context) ([]api.VenueRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.queries.ListVenues(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	records := make([]api.VenueRecord, 0, len(rows))
+	for _, row := range rows {
+		record := api.VenueRecord{
+			VenueId:     row.ID,
+			Type:        row.Type,
+			DisplayName: row.DisplayName,
+			Wallet:      row.Wallet,
+		}
+		if len(row.Flags) > 0 {
+			var flags map[string]interface{}
+			if err := json.Unmarshal(row.Flags, &flags); err == nil && len(flags) > 0 {
+				record.Flags = &flags
+			}
+		}
+		records = append(records, record)
+	}
+
+	return records, nil
+}
+
+// UpsertVenue stores the provided venue definition and returns the persisted record.
+func (s *Storage) UpsertVenue(ctx context.Context, venueID string, payload api.VenueUpsertRequest) (api.VenueRecord, error) {
+	venueID = strings.TrimSpace(venueID)
+	if venueID == "" {
+		return api.VenueRecord{}, api.ErrVenueInvalid
+	}
+
+	venueType := strings.TrimSpace(payload.Type)
+	displayName := strings.TrimSpace(payload.DisplayName)
+	wallet := strings.TrimSpace(payload.Wallet)
+	if venueType == "" || displayName == "" || wallet == "" {
+		return api.VenueRecord{}, api.ErrVenueInvalid
+	}
+
+	flagsValue := json.RawMessage(`{}`)
+	if payload.Flags != nil {
+		encoded, err := json.Marshal(payload.Flags)
+		if err != nil {
+			return api.VenueRecord{}, api.ErrVenueInvalid
+		}
+		flagsValue = encoded
+	}
+
+	params := sqlcgen.UpsertVenueParams{
+		ID:          venueID,
+		Type:        venueType,
+		DisplayName: displayName,
+		Wallet:      wallet,
+		Flags:       flagsValue,
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.queries.UpsertVenue(ctx, params); err != nil {
+		return api.VenueRecord{}, err
+	}
+
+	row, err := s.queries.GetVenue(ctx, venueID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return api.VenueRecord{}, api.ErrVenueNotFound
+		}
+		return api.VenueRecord{}, err
+	}
+
+	record := api.VenueRecord{
+		VenueId:     row.ID,
+		Type:        row.Type,
+		DisplayName: row.DisplayName,
+		Wallet:      row.Wallet,
+	}
+	if len(row.Flags) > 0 {
+		var flags map[string]interface{}
+		if err := json.Unmarshal(row.Flags, &flags); err == nil && len(flags) > 0 {
+			record.Flags = &flags
+		}
+	}
+
+	return record, nil
+}
+
+// DeleteVenue removes the requested venue.
+func (s *Storage) DeleteVenue(ctx context.Context, venueID string) error {
+	venueID = strings.TrimSpace(venueID)
+	if venueID == "" {
+		return api.ErrVenueInvalid
+	}
+	if venueID == string(defaultHyperliquidVenueID) {
+		return api.ErrVenueImmutable
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, err := s.queries.GetVenue(ctx, venueID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return api.ErrVenueNotFound
+		}
+		return err
+	}
+
+	if err := s.queries.DeleteVenue(ctx, venueID); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ListVenueAssignments returns bot assignments for a venue.
+func (s *Storage) ListVenueAssignments(ctx context.Context, venueID string) ([]api.VenueAssignmentRecord, error) {
+	venueID = strings.TrimSpace(venueID)
+	if venueID == "" {
+		return nil, api.ErrVenueInvalid
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, err := s.queries.GetVenue(ctx, venueID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, api.ErrVenueNotFound
+		}
+		return nil, err
+	}
+
+	rows, err := s.queries.ListVenueAssignments(ctx, venueID)
+	if err != nil {
+		return nil, err
+	}
+
+	records := make([]api.VenueAssignmentRecord, 0, len(rows))
+	for _, row := range rows {
+		records = append(records, api.VenueAssignmentRecord{
+			BotId:      row.BotID,
+			VenueId:    row.VenueID,
+			IsPrimary:  row.IsPrimary != 0,
+			AssignedAt: time.UnixMilli(row.AssignedAtUtc).UTC(),
+		})
+	}
+
+	return records, nil
+}
+
+// UpsertVenueAssignment assigns a bot to a venue.
+func (s *Storage) UpsertVenueAssignment(ctx context.Context, venueID string, botID int64, isPrimary bool) (api.VenueAssignmentRecord, error) {
+	venueID = strings.TrimSpace(venueID)
+	if venueID == "" || botID <= 0 {
+		return api.VenueAssignmentRecord{}, api.ErrVenueInvalid
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, err := s.queries.GetVenue(ctx, venueID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return api.VenueAssignmentRecord{}, api.ErrVenueNotFound
+		}
+		return api.VenueAssignmentRecord{}, err
+	}
+
+	if isPrimary {
+		if _, err := s.db.ExecContext(ctx, "UPDATE bot_venue_assignments SET is_primary = 0 WHERE bot_id = ?", botID); err != nil {
+			return api.VenueAssignmentRecord{}, err
+		}
+	}
+
+	primary := int64(0)
+	if isPrimary {
+		primary = 1
+	}
+
+	params := sqlcgen.UpsertBotVenueAssignmentParams{
+		BotID:     botID,
+		VenueID:   venueID,
+		IsPrimary: primary,
+	}
+
+	if err := s.queries.UpsertBotVenueAssignment(ctx, params); err != nil {
+		if isUniqueConstraintError(err) {
+			return api.VenueAssignmentRecord{}, api.ErrVenueInvalid
+		}
+		return api.VenueAssignmentRecord{}, err
+	}
+
+	assignments, err := s.queries.ListBotVenueAssignments(ctx, botID)
+	if err != nil {
+		return api.VenueAssignmentRecord{}, err
+	}
+	for _, row := range assignments {
+		if row.VenueID == venueID {
+			return api.VenueAssignmentRecord{
+				BotId:      row.BotID,
+				VenueId:    row.VenueID,
+				IsPrimary:  row.IsPrimary != 0,
+				AssignedAt: time.UnixMilli(row.AssignedAtUtc).UTC(),
+			}, nil
+		}
+	}
+
+	return api.VenueAssignmentRecord{}, api.ErrVenueAssignmentNotFound
+}
+
+// DeleteVenueAssignment removes the bot assignment for the venue.
+func (s *Storage) DeleteVenueAssignment(ctx context.Context, venueID string, botID int64) error {
+	venueID = strings.TrimSpace(venueID)
+	if venueID == "" || botID <= 0 {
+		return api.ErrVenueInvalid
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	assignments, err := s.queries.ListBotVenueAssignments(ctx, botID)
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, row := range assignments {
+		if row.VenueID == venueID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return api.ErrVenueAssignmentNotFound
+	}
+
+	if err := s.queries.DeleteBotVenueAssignment(ctx, sqlcgen.DeleteBotVenueAssignmentParams{BotID: botID, VenueID: venueID}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ListBotVenues returns venue assignments for the specified bot.
+func (s *Storage) ListBotVenues(ctx context.Context, botID int64) ([]api.BotVenueAssignmentRecord, error) {
+	if botID <= 0 {
+		return nil, api.ErrVenueInvalid
+	}
+	if botID > math.MaxUint32 {
+		return nil, api.ErrVenueInvalid
+	}
+
+	venues, err := s.ListVenuesForBot(ctx, uint32(botID))
+	if err != nil {
+		return nil, err
+	}
+
+	records := make([]api.BotVenueAssignmentRecord, 0, len(venues))
+	for _, venue := range venues {
+		records = append(records, api.BotVenueAssignmentRecord{
+			VenueId:   string(venue.VenueID),
+			Wallet:    venue.Wallet,
+			IsPrimary: venue.IsPrimary,
+		})
+	}
+
+	return records, nil
 }

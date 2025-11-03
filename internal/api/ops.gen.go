@@ -368,7 +368,7 @@ type OrderIdentifiers struct {
 	Hex string `json:"hex"`
 
 	// VenueId Upstream venue identifier associated with the submission.
-	VenueId string `json:"venue_id,omitempty"`
+	VenueId string `json:"venue_id"`
 }
 
 // OrderLogEntry defines model for OrderLogEntry.

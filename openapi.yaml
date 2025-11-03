@@ -1225,6 +1225,7 @@ components:
         - deal_id
         - bot_event_id
         - created_at
+        - venue_id
       properties:
         hex:
           type: string

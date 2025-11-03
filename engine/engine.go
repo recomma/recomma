@@ -294,12 +294,6 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 			}
 		}
 
-		assignments, err := e.store.ListVenuesForBot(ctx, oid.BotID)
-		if err != nil {
-			orderLogger.Warn("could not load bot venues", slog.String("error", err.Error()))
-			assignments = nil
-		}
-
 		targets := resolveOrderTargets(oid, assignments, storedIdents, action.Type)
 		if len(targets) == 0 {
 			orderLogger.Debug("no venue targets resolved; skipping emission")
@@ -636,7 +630,15 @@ func resolveOrderTargets(
 		list = append(list, ident)
 	}
 
-	slices.SortFunc(list, compareIdentifiers)
+	slices.SortFunc(list, func(a, b recomma.OrderIdentifier) int {
+		if cmp := strings.Compare(a.Venue(), b.Venue()); cmp != 0 {
+			return cmp
+		}
+		if cmp := strings.Compare(a.Wallet, b.Wallet); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(a.Hex(), b.Hex())
+	})
 
 	return list
 }
@@ -676,17 +678,6 @@ func compareIdentifiers(a, b recomma.OrderIdentifier) int {
 		return cmp
 	}
 	return strings.Compare(a.Hex(), b.Hex())
-	slices.SortFunc(list, func(a, b recomma.OrderIdentifier) int {
-		if cmp := strings.Compare(a.Venue(), b.Venue()); cmp != 0 {
-			return cmp
-		}
-		if cmp := strings.Compare(a.Wallet, b.Wallet); cmp != 0 {
-			return cmp
-		}
-		return strings.Compare(a.Hex(), b.Hex())
-	})
-
-	return list
 }
 
 func cloneAction(action recomma.Action) recomma.Action {

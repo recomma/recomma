@@ -79,7 +79,9 @@ func TestStatusRefresherRefresh(t *testing.T) {
 
 	store := &fakeStatusStore{idents: []recomma.OrderIdentifier{recomma.NewOrderIdentifier("hyperliquid:test", "wallet", oid)}}
 
-	refresher := NewStatusRefresher(info, store, WithStatusRefresherConcurrency(1))
+	refresher := NewStatusRefresher(StatusClientRegistry{
+		"hyperliquid:test": info,
+	}, store, WithStatusRefresherConcurrency(1))
 
 	require.NoError(t, refresher.Refresh(ctx))
 

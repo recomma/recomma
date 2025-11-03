@@ -44,6 +44,13 @@ type Storage struct {
 	stream  api.StreamPublisher
 }
 
+// VenueAssignment represents a venue configured for a bot.
+type VenueAssignment struct {
+	VenueID   recomma.VenueID
+	Wallet    string
+	IsPrimary bool
+}
+
 // StorageOption configures Storage optional dependencies.
 type StorageOption func(*Storage)
 
@@ -112,12 +119,73 @@ func (s *Storage) ensureDefaultVenue(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	return s.upsertDefaultVenueLocked(ctx, defaultHyperliquidWallet)
+}
+
+// EnsureDefaultVenueWallet updates the default Hyperliquid venue to reference the
+// provided wallet address. Callers should invoke this once the runtime secrets
+// are available so downstream lookups return identifiers that align with the
+// live emitter/websocket clients.
+func (s *Storage) EnsureDefaultVenueWallet(ctx context.Context, wallet string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.upsertDefaultVenueLocked(ctx, wallet)
+}
+
+// UpsertVenue registers or updates a venue record. Callers can provide an
+// explicit type/display name or rely on defaults aligned with the Hyperliquid
+// integration used throughout the engine.
+func (s *Storage) UpsertVenue(ctx context.Context, venueID recomma.VenueID, venueType, displayName, wallet string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if venueType == "" {
+		venueType = defaultHyperliquidVenueType
+	}
+	if displayName == "" {
+		displayName = string(venueID)
+	}
+
+	params := sqlcgen.UpsertVenueParams{
+		ID:          string(venueID),
+		Type:        venueType,
+		DisplayName: displayName,
+		Wallet:      wallet,
+		Flags:       json.RawMessage(`{}`),
+	}
+
+	return s.queries.UpsertVenue(ctx, params)
+}
+
+// UpsertBotVenueAssignment associates a bot with a venue. Repeated calls update
+// the primary flag while preserving the latest assignment timestamp.
+func (s *Storage) UpsertBotVenueAssignment(ctx context.Context, botID uint32, venueID recomma.VenueID, isPrimary bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	params := sqlcgen.UpsertBotVenueAssignmentParams{
+		BotID:   int64(botID),
+		VenueID: string(venueID),
+	}
+	if isPrimary {
+		params.IsPrimary = 1
+	}
+
+	return s.queries.UpsertBotVenueAssignment(ctx, params)
+}
+
+func (s *Storage) upsertDefaultVenueLocked(ctx context.Context, wallet string) error {
+	if wallet == "" {
+		wallet = defaultHyperliquidWallet
+	}
+
 	flags := json.RawMessage(`{}`)
 	params := sqlcgen.UpsertVenueParams{
 		ID:          string(defaultHyperliquidVenueID),
 		Type:        defaultHyperliquidVenueType,
 		DisplayName: defaultHyperliquidName,
-		Wallet:      defaultHyperliquidWallet,
+		Wallet:      wallet,
 		Flags:       flags,
 	}
 
@@ -147,6 +215,134 @@ func ensureIdentifier(ident recomma.OrderIdentifier) recomma.OrderIdentifier {
 		ident.Wallet = defaultHyperliquidWallet
 	}
 	return ident
+}
+
+func (s *Storage) defaultVenueAssignmentLocked(ctx context.Context) (VenueAssignment, error) {
+	row, err := s.queries.GetVenue(ctx, string(defaultHyperliquidVenueID))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return VenueAssignment{
+				VenueID:   defaultHyperliquidVenueID,
+				Wallet:    defaultHyperliquidWallet,
+				IsPrimary: true,
+			}, nil
+		}
+		return VenueAssignment{}, err
+	}
+
+	wallet := row.Wallet
+	if wallet == "" {
+		wallet = defaultHyperliquidWallet
+	}
+
+	return VenueAssignment{
+		VenueID:   recomma.VenueID(row.ID),
+		Wallet:    wallet,
+		IsPrimary: true,
+	}, nil
+}
+
+// ListVenuesForBot returns the configured venue assignments for the given bot.
+// If no explicit assignments exist, the default Hyperliquid venue is returned.
+func (s *Storage) ListVenuesForBot(ctx context.Context, botID uint32) ([]VenueAssignment, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	assignments, err := s.queries.ListBotVenueAssignments(ctx, int64(botID))
+	if err != nil {
+		return nil, err
+	}
+
+	if len(assignments) == 0 {
+		defaultAssignment, err := s.defaultVenueAssignmentLocked(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return []VenueAssignment{defaultAssignment}, nil
+	}
+
+	venues := make([]VenueAssignment, 0, len(assignments))
+	for _, assignment := range assignments {
+		row, err := s.queries.GetVenue(ctx, assignment.VenueID)
+		if errors.Is(err, sql.ErrNoRows) {
+			// Skip dangling assignments; callers will fall back to defaults
+			// if no valid venues remain.
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		wallet := row.Wallet
+		if wallet == "" {
+			wallet = defaultHyperliquidWallet
+		}
+
+		venues = append(venues, VenueAssignment{
+			VenueID:   recomma.VenueID(assignment.VenueID),
+			Wallet:    wallet,
+			IsPrimary: assignment.IsPrimary != 0,
+		})
+	}
+
+	if len(venues) == 0 {
+		defaultAssignment, err := s.defaultVenueAssignmentLocked(ctx)
+		if err != nil {
+			return nil, err
+		}
+		venues = append(venues, defaultAssignment)
+	}
+
+	return venues, nil
+}
+
+// ListSubmissionIdentifiersForOrder returns the venue-aware identifiers that
+// have recorded submissions for the given order fingerprint.
+func (s *Storage) ListSubmissionIdentifiersForOrder(ctx context.Context, oid orderid.OrderId) ([]recomma.OrderIdentifier, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	hex := strings.ToLower(oid.Hex())
+	seen := make(map[recomma.OrderIdentifier]struct{})
+	var identifiers []recomma.OrderIdentifier
+
+	const submissionsQuery = "SELECT venue_id, wallet FROM hyperliquid_submissions WHERE lower(order_id) = ?"
+	const statusesQuery = "SELECT venue_id, wallet FROM hyperliquid_status_history WHERE lower(order_id) = ?"
+
+	appendIdentifiers := func(rows *sql.Rows) error {
+		defer rows.Close()
+		for rows.Next() {
+			var venueID, wallet string
+			if err := rows.Scan(&venueID, &wallet); err != nil {
+				return err
+			}
+			ident := ensureIdentifier(recomma.NewOrderIdentifier(recomma.VenueID(venueID), wallet, oid))
+			if _, ok := seen[ident]; ok {
+				continue
+			}
+			seen[ident] = struct{}{}
+			identifiers = append(identifiers, ident)
+		}
+		return rows.Err()
+	}
+
+	subRows, err := s.db.QueryContext(ctx, submissionsQuery, hex)
+	if err != nil {
+		return nil, err
+	}
+	if err := appendIdentifiers(subRows); err != nil {
+		return nil, err
+	}
+
+	statusRows, err := s.db.QueryContext(ctx, statusesQuery, hex)
+	if err != nil {
+		return nil, err
+	}
+	if err := appendIdentifiers(statusRows); err != nil {
+		return nil, err
+	}
+
+	return identifiers, nil
 }
 
 // RecordThreeCommasBotEvent records the threecommas botevents that we acted upon
@@ -556,7 +752,11 @@ func (s *Storage) ListHyperliquidOrderIds(ctx context.Context) ([]recomma.OrderI
 	}
 
 	if len(venues) == 0 {
-		venues = append(venues, sqlcgen.ListVenuesRow{ID: string(defaultHyperliquidVenueID), Wallet: defaultHyperliquidWallet})
+		defaultAssignment, err := s.defaultVenueAssignmentLocked(ctx)
+		if err != nil {
+			return nil, err
+		}
+		venues = append(venues, sqlcgen.ListVenuesRow{ID: string(defaultAssignment.VenueID), Wallet: defaultAssignment.Wallet})
 	}
 
 	var identifiers []recomma.OrderIdentifier

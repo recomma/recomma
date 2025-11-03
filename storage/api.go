@@ -476,6 +476,11 @@ FROM threecommas_botevents`)
 		byOrderId[ro.oid] = append(byOrderId[ro.oid], idx)
 	}
 
+	defaultAssignment, err := s.defaultVenueAssignmentLocked(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load default venue: %w", err)
+	}
+
 	for oidHex, indexes := range byOrderId {
 		if len(indexes) == 0 {
 			continue
@@ -483,8 +488,8 @@ FROM threecommas_botevents`)
 		oidCopy := items[indexes[0]].OrderId
 
 		submissionRow, err := s.queries.FetchHyperliquidSubmission(ctx, sqlcgen.FetchHyperliquidSubmissionParams{
-			VenueID: string(defaultHyperliquidVenueID),
-			Wallet:  defaultHyperliquidWallet,
+			VenueID: string(defaultAssignment.VenueID),
+			Wallet:  defaultAssignment.Wallet,
 			OrderID: oidHex,
 		})
 		var submission interface{}
@@ -532,8 +537,8 @@ FROM threecommas_botevents`)
 		}
 
 		statusRow, err := s.queries.FetchLatestHyperliquidStatus(ctx, sqlcgen.FetchLatestHyperliquidStatusParams{
-			VenueID: string(defaultHyperliquidVenueID),
-			Wallet:  defaultHyperliquidWallet,
+			VenueID: string(defaultAssignment.VenueID),
+			Wallet:  defaultAssignment.Wallet,
 			OrderID: oidHex,
 		})
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {

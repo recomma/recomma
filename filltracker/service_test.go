@@ -36,7 +36,9 @@ func TestServiceRebuildAggregatesExecutedOrders(t *testing.T) {
 	recordDeal(t, store, dealID, botID, coin)
 
 	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
+	baseIdent := defaultIdentifier(t, store, botID, baseOid)
 	takeProfitOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
+	takeProfitIdent := defaultIdentifier(t, store, botID, takeProfitOid)
 
 	baseEvent := tc.BotEvent{
 		CreatedAt:   time.Now().Add(-5 * time.Minute),
@@ -52,7 +54,7 @@ func TestServiceRebuildAggregatesExecutedOrders(t *testing.T) {
 		Text:        "base order filled",
 	}
 	require.NoError(t, recordEvent(store, baseOid, baseEvent))
-	require.NoError(t, recordStatus(store, baseOid, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 100, 0, 10, baseEvent.CreatedAt.Add(time.Second))))
+	require.NoError(t, recordStatus(store, baseIdent, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 100, 0, 10, baseEvent.CreatedAt.Add(time.Second))))
 
 	takeProfitEvent := tc.BotEvent{
 		CreatedAt:   time.Now().Add(-4 * time.Minute),
@@ -68,7 +70,7 @@ func TestServiceRebuildAggregatesExecutedOrders(t *testing.T) {
 		Text:        "tp placed",
 	}
 	require.NoError(t, recordEvent(store, takeProfitOid, takeProfitEvent))
-	require.NoError(t, recordStatus(store, takeProfitOid, makeStatus(takeProfitOid, coin, "S", hyperliquid.OrderStatusValueOpen, 100, 100, 10.5, takeProfitEvent.CreatedAt.Add(time.Second))))
+	require.NoError(t, recordStatus(store, takeProfitIdent, makeStatus(takeProfitOid, coin, "S", hyperliquid.OrderStatusValueOpen, 100, 100, 10.5, takeProfitEvent.CreatedAt.Add(time.Second))))
 
 	require.NoError(t, tracker.Rebuild(ctx))
 
@@ -102,6 +104,8 @@ func TestServiceUpdateStatusAdjustsPosition(t *testing.T) {
 
 	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
 	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
+	baseIdent := defaultIdentifier(t, store, botID, baseOid)
+	tpIdent := defaultIdentifier(t, store, botID, tpOid)
 	now := time.Now()
 
 	require.NoError(t, recordEvent(store, baseOid, tc.BotEvent{
@@ -116,7 +120,7 @@ func TestServiceUpdateStatusAdjustsPosition(t *testing.T) {
 		IsMarket:  true,
 		Text:      "base fill",
 	}))
-	require.NoError(t, recordStatus(store, baseOid, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 200, 0, 0.2, now.Add(-5*time.Minute))))
+	require.NoError(t, recordStatus(store, baseIdent, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 200, 0, 0.2, now.Add(-5*time.Minute))))
 
 	require.NoError(t, recordEvent(store, tpOid, tc.BotEvent{
 		CreatedAt: now.Add(-4 * time.Minute),
@@ -130,14 +134,14 @@ func TestServiceUpdateStatusAdjustsPosition(t *testing.T) {
 		Text:      "tp placed",
 	}))
 	initialStatus := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueOpen, 200, 200, 0.205, now.Add(-4*time.Minute+time.Second))
-	require.NoError(t, recordStatus(store, tpOid, initialStatus))
+	require.NoError(t, recordStatus(store, tpIdent, initialStatus))
 
 	require.NoError(t, tracker.Rebuild(ctx))
 
 	// Partial fill: remaining 80 of 200.
 	partialStatus := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueOpen, 200, 80, 0.205, now)
-	require.NoError(t, recordStatus(store, tpOid, partialStatus))
-	require.NoError(t, tracker.UpdateStatus(ctx, tpOid, partialStatus))
+	require.NoError(t, recordStatus(store, tpIdent, partialStatus))
+	require.NoError(t, tracker.UpdateStatus(ctx, tpIdent, partialStatus))
 
 	snapshot, ok := tracker.Snapshot(dealID)
 	require.True(t, ok)
@@ -166,6 +170,7 @@ func TestReconcileTakeProfits(t *testing.T) {
 	recordDeal(t, store, dealID, botID, coin)
 
 	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
+	tpIdent := defaultIdentifier(t, store, botID, tpOid)
 	now := time.Now()
 
 	require.NoError(t, recordEvent(store, tpOid, tc.BotEvent{
@@ -181,16 +186,16 @@ func TestReconcileTakeProfits(t *testing.T) {
 	}))
 
 	initialStatus := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueOpen, 150, 150, 1.2, now.Add(-4*time.Minute))
-	require.NoError(t, recordStatus(store, tpOid, initialStatus))
+	require.NoError(t, recordStatus(store, tpIdent, initialStatus))
 
 	require.NoError(t, tracker.Rebuild(ctx))
 
 	fresher := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueOpen, 150, 40, 1.2, now.Add(-2*time.Minute))
-	require.NoError(t, tracker.UpdateStatus(ctx, tpOid, fresher))
+	require.NoError(t, tracker.UpdateStatus(ctx, tpIdent, fresher))
 
 	// Older timestamp that reports a larger remaining size should be ignored.
 	stale := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueOpen, 150, 120, 1.2, now.Add(-3*time.Minute))
-	require.NoError(t, tracker.UpdateStatus(ctx, tpOid, stale))
+	require.NoError(t, tracker.UpdateStatus(ctx, tpIdent, stale))
 
 	snapshot, ok := tracker.Snapshot(dealID)
 	require.True(t, ok)
@@ -216,6 +221,7 @@ func TestApplyScaledOrderUpdatesSnapshot(t *testing.T) {
 	recordDeal(t, store, dealID, botID, coin)
 
 	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
+	baseIdent := defaultIdentifier(t, store, botID, baseOid)
 	now := time.Now().UTC()
 
 	baseEvent := tc.BotEvent{
@@ -231,11 +237,11 @@ func TestApplyScaledOrderUpdatesSnapshot(t *testing.T) {
 	require.NoError(t, recordEvent(store, baseOid, baseEvent))
 
 	initialStatus := makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueOpen, 100, 100, 24.5, now.Add(-90*time.Second))
-	require.NoError(t, recordStatus(store, baseOid, initialStatus))
+	require.NoError(t, recordStatus(store, baseIdent, initialStatus))
 
 	require.NoError(t, tracker.Rebuild(ctx))
 
-	tracker.ApplyScaledOrder(baseOid, 40, 24.25)
+	tracker.ApplyScaledOrder(baseIdent, 40, 24.25)
 
 	snapshot, ok := tracker.Snapshot(dealID)
 	require.True(t, ok)
@@ -270,7 +276,10 @@ func TestReconcileTakeProfitsCancelsWhenFlat(t *testing.T) {
 
 	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
 	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
+	baseIdent := defaultIdentifier(t, store, botID, baseOid)
+	tpIdent := defaultIdentifier(t, store, botID, tpOid)
 	closeOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 3}
+	closeIdent := defaultIdentifier(t, store, botID, closeOid)
 	now := time.Now()
 
 	baseEvent := tc.BotEvent{
@@ -286,7 +295,7 @@ func TestReconcileTakeProfitsCancelsWhenFlat(t *testing.T) {
 		Text:      "base fill",
 	}
 	require.NoError(t, recordEvent(store, baseOid, baseEvent))
-	require.NoError(t, recordStatus(store, baseOid, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 5, 0, 8, now.Add(-9*time.Minute))))
+	require.NoError(t, recordStatus(store, baseIdent, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 5, 0, 8, now.Add(-9*time.Minute))))
 
 	tpEvent := tc.BotEvent{
 		CreatedAt: now.Add(-8 * time.Minute),
@@ -301,7 +310,7 @@ func TestReconcileTakeProfitsCancelsWhenFlat(t *testing.T) {
 	}
 	require.NoError(t, recordEvent(store, tpOid, tpEvent))
 	tpStatus := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueOpen, 5, 5, 8.5, now.Add(-7*time.Minute))
-	require.NoError(t, recordStatus(store, tpOid, tpStatus))
+	require.NoError(t, recordStatus(store, tpIdent, tpStatus))
 
 	closeEvent := tc.BotEvent{
 		CreatedAt: now.Add(-6 * time.Minute),
@@ -316,7 +325,7 @@ func TestReconcileTakeProfitsCancelsWhenFlat(t *testing.T) {
 	}
 	require.NoError(t, recordEvent(store, closeOid, closeEvent))
 	closeStatus := makeStatus(closeOid, coin, "S", hyperliquid.OrderStatusValueFilled, 5, 0, 8.3, now.Add(-5*time.Minute))
-	require.NoError(t, recordStatus(store, closeOid, closeStatus))
+	require.NoError(t, recordStatus(store, closeIdent, closeStatus))
 
 	require.NoError(t, tracker.Rebuild(ctx))
 
@@ -335,6 +344,7 @@ func TestReconcileTakeProfitsCancelsWhenFlat(t *testing.T) {
 	require.Equal(t, recomma.ActionCancel, work.Action.Type)
 	require.NotNil(t, work.Action.Cancel)
 	require.Equal(t, tpOid.Hex(), work.Action.Cancel.Cloid)
+	require.Equal(t, tpIdent, work.Identifier)
 }
 
 func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
@@ -357,6 +367,8 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 
 		baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
 		tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
+		baseIdent := defaultIdentifier(t, store, botID, baseOid)
+		tpIdent := defaultIdentifier(t, store, botID, tpOid)
 		now := time.Now()
 
 		require.NoError(t, recordEvent(store, baseOid, tc.BotEvent{
@@ -369,7 +381,7 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 			Size:      10,
 			OrderType: tc.MarketOrderDealOrderTypeBase,
 		}))
-		require.NoError(t, recordStatus(store, baseOid, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 10, 0, 35, now.Add(-9*time.Minute))))
+		require.NoError(t, recordStatus(store, baseIdent, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 10, 0, 35, now.Add(-9*time.Minute))))
 
 		tpEvent := tc.BotEvent{
 			CreatedAt: now.Add(-8 * time.Minute),
@@ -385,7 +397,7 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 
 		// Tracker sees the order as cancelled before reconciliation.
 		tpStatus := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueCanceled, 10, 10, 37, now.Add(-7*time.Minute))
-		require.NoError(t, recordStatus(store, tpOid, tpStatus))
+		require.NoError(t, recordStatus(store, tpIdent, tpStatus))
 
 		require.NoError(t, tracker.Rebuild(ctx))
 
@@ -406,6 +418,7 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 		require.InDelta(t, 10, work.Action.Create.Size, 1e-6)
 		require.True(t, work.Action.Create.ReduceOnly)
 		require.Equal(t, tpOid.Hex(), work.OrderId.Hex())
+		require.Equal(t, tpIdent, work.Identifier)
 		cloid := work.Action.Create.ClientOrderID
 		require.NotNil(t, cloid)
 		require.Equal(t, tpOid.Hex(), *cloid)
@@ -422,6 +435,8 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 
 		baseOid := orderid.OrderId{BotID: botID, DealID: dealID + 1, BotEventID: 1}
 		tpOid := orderid.OrderId{BotID: botID, DealID: dealID + 1, BotEventID: 2}
+		baseIdent := defaultIdentifier(t, store, botID, baseOid)
+		tpIdent := defaultIdentifier(t, store, botID, tpOid)
 		now := time.Now()
 
 		// Base fill establishes net qty 15.
@@ -435,7 +450,7 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 			Size:      15,
 			OrderType: tc.MarketOrderDealOrderTypeBase,
 		}))
-		require.NoError(t, recordStatus(store, baseOid, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 15, 0, 30, now.Add(-9*time.Minute))))
+		require.NoError(t, recordStatus(store, baseIdent, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 15, 0, 30, now.Add(-9*time.Minute))))
 
 		tpEvent := tc.BotEvent{
 			CreatedAt: now.Add(-8 * time.Minute),
@@ -451,7 +466,7 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 
 		// Active order is smaller than the net qty, so reconciliation should resize it.
 		tpStatus := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueOpen, 10, 10, 32, now.Add(-7*time.Minute))
-		require.NoError(t, recordStatus(store, tpOid, tpStatus))
+		require.NoError(t, recordStatus(store, tpIdent, tpStatus))
 
 		require.NoError(t, tracker.Rebuild(ctx))
 
@@ -473,6 +488,7 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 		oid, ok := work.Action.Modify.Oid.(string)
 		require.True(t, ok, "expected string OID")
 		require.Equal(t, tpOid.Hex(), oid)
+		require.Equal(t, tpIdent, work.Identifier)
 	})
 }
 
@@ -494,6 +510,8 @@ func TestEnsureTakeProfitRecreatesAfterStaleSubmission(t *testing.T) {
 
 	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
 	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
+	baseIdent := defaultIdentifier(t, store, botID, baseOid)
+	tpIdent := defaultIdentifier(t, store, botID, tpOid)
 	now := time.Now()
 
 	baseEvent := tc.BotEvent{
@@ -509,7 +527,7 @@ func TestEnsureTakeProfitRecreatesAfterStaleSubmission(t *testing.T) {
 		Text:      "base fill",
 	}
 	require.NoError(t, recordEvent(store, baseOid, baseEvent))
-	require.NoError(t, recordStatus(store, baseOid, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 10, 0, 35, now.Add(-9*time.Minute))))
+	require.NoError(t, recordStatus(store, baseIdent, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 10, 0, 35, now.Add(-9*time.Minute))))
 
 	tpEvent := tc.BotEvent{
 		CreatedAt: now.Add(-8 * time.Minute),
@@ -527,10 +545,10 @@ func TestEnsureTakeProfitRecreatesAfterStaleSubmission(t *testing.T) {
 
 	create := adapter.ToCreateOrderRequest(coin, recomma.BotEvent{BotEvent: tpEvent}, tpOid)
 	require.True(t, create.ReduceOnly)
-	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, storage.DefaultHyperliquidIdentifier(tpOid), create, tpRowID))
+	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, tpIdent, create, tpRowID))
 
 	canceled := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueCanceled, 10, 10, 37, now.Add(-7*time.Minute))
-	require.NoError(t, recordStatus(store, tpOid, canceled))
+	require.NoError(t, recordStatus(store, tpIdent, canceled))
 
 	require.NoError(t, tracker.Rebuild(ctx))
 
@@ -570,6 +588,8 @@ func TestReconcileTakeProfitsRecreatesAfterCancelWithMissingOrderId(t *testing.T
 
 	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
 	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
+	baseIdent := defaultIdentifier(t, store, botID, baseOid)
+	tpIdent := defaultIdentifier(t, store, botID, tpOid)
 	now := time.Now()
 
 	baseEvent := tc.BotEvent{
@@ -585,7 +605,7 @@ func TestReconcileTakeProfitsRecreatesAfterCancelWithMissingOrderId(t *testing.T
 		Text:      "base fill",
 	}
 	require.NoError(t, recordEvent(store, baseOid, baseEvent))
-	require.NoError(t, recordStatus(store, baseOid, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 8, 0, 12.5, now.Add(-14*time.Minute))))
+	require.NoError(t, recordStatus(store, baseIdent, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 8, 0, 12.5, now.Add(-14*time.Minute))))
 
 	tpEvent := tc.BotEvent{
 		CreatedAt: now.Add(-13 * time.Minute),
@@ -603,15 +623,15 @@ func TestReconcileTakeProfitsRecreatesAfterCancelWithMissingOrderId(t *testing.T
 
 	create := adapter.ToCreateOrderRequest(coin, recomma.BotEvent{BotEvent: tpEvent}, tpOid)
 	require.True(t, create.ReduceOnly)
-	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, storage.DefaultHyperliquidIdentifier(tpOid), create, tpRowID))
+	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, tpIdent, create, tpRowID))
 
 	tpStatus := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueOpen, 8, 8, 13.2, now.Add(-12*time.Minute))
-	require.NoError(t, recordStatus(store, tpOid, tpStatus))
+	require.NoError(t, recordStatus(store, tpIdent, tpStatus))
 
 	require.NoError(t, tracker.Rebuild(ctx))
 
 	tracker.mu.Lock()
-	state, ok := tracker.orders[tpOid.Hex()]
+	state, ok := tracker.orders[tpIdent]
 	require.True(t, ok, "expected tracked order state")
 	state.event = nil
 	state.originalQty = 8
@@ -619,7 +639,7 @@ func TestReconcileTakeProfitsRecreatesAfterCancelWithMissingOrderId(t *testing.T
 	state.filledQty = 0
 	deal := tracker.deals[dealID]
 	require.NotNil(t, deal)
-	deal.orders[tpOid.Hex()] = state
+	deal.orders[tpIdent] = state
 	deal.recompute()
 	tracker.mu.Unlock()
 
@@ -640,6 +660,7 @@ func TestReconcileTakeProfitsRecreatesAfterCancelWithMissingOrderId(t *testing.T
 	require.Equal(t, recomma.ActionCancel, cancelWork.Action.Type)
 	require.NotNil(t, cancelWork.Action.Cancel)
 	require.Equal(t, tpOid.Hex(), cancelWork.Action.Cancel.Cloid)
+	require.Equal(t, tpIdent, cancelWork.Identifier)
 
 	createWork := actions[1]
 	require.Equal(t, recomma.ActionCreate, createWork.Action.Type)
@@ -647,6 +668,7 @@ func TestReconcileTakeProfitsRecreatesAfterCancelWithMissingOrderId(t *testing.T
 	require.True(t, createWork.Action.Create.ReduceOnly)
 	require.InDelta(t, snapshot.Position.NetQty, createWork.Action.Create.Size, 1e-6)
 	require.Equal(t, tpOid.Hex(), createWork.OrderId.Hex())
+	require.Equal(t, tpIdent, createWork.Identifier)
 }
 
 // Helpers
@@ -716,8 +738,19 @@ func recordEvent(store *storage.Storage, oid orderid.OrderId, evt tc.BotEvent) e
 	return err
 }
 
-func recordStatus(store *storage.Storage, oid orderid.OrderId, status hyperliquid.WsOrder) error {
-	return store.RecordHyperliquidStatus(context.Background(), storage.DefaultHyperliquidIdentifier(oid), status)
+func recordStatus(store *storage.Storage, ident recomma.OrderIdentifier, status hyperliquid.WsOrder) error {
+	return store.RecordHyperliquidStatus(context.Background(), ident, status)
+}
+
+func defaultIdentifier(t *testing.T, store *storage.Storage, botID uint32, oid orderid.OrderId) recomma.OrderIdentifier {
+	t.Helper()
+
+	assignments, err := store.ListVenuesForBot(context.Background(), botID)
+	require.NoError(t, err)
+	require.NotEmpty(t, assignments)
+
+	venue := assignments[0]
+	return recomma.NewOrderIdentifier(venue.VenueID, venue.Wallet, oid)
 }
 
 func makeStatus(oid orderid.OrderId, coin, side string, status hyperliquid.OrderStatusValue, original, remaining, limit float64, ts time.Time) hyperliquid.WsOrder {

@@ -74,9 +74,10 @@ func TestHyperLiquidEmitterIOCRetriesLogSuccess(t *testing.T) {
 		},
 	}
 	work := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionCreate, Create: &order},
-		BotEvent: recomma.BotEvent{RowID: 1},
+		Identifier: storage.DefaultHyperliquidIdentifier(oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: &order},
+		BotEvent:   recomma.BotEvent{RowID: 1},
 	}
 
 	err := emitter.Emit(context.Background(), work)
@@ -146,9 +147,10 @@ func TestHyperLiquidEmitterIOCRetriesWarnOnFailure(t *testing.T) {
 		},
 	}
 	work := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionCreate, Create: &order},
-		BotEvent: recomma.BotEvent{RowID: 2},
+		Identifier: storage.DefaultHyperliquidIdentifier(oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: &order},
+		BotEvent:   recomma.BotEvent{RowID: 2},
 	}
 
 	err := emitter.Emit(context.Background(), work)

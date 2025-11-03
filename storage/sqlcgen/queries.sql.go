@@ -71,6 +71,82 @@ func (q *Queries) AppendHyperliquidModify(ctx context.Context, arg AppendHyperli
 	return err
 }
 
+const cloneHyperliquidStatusesToWallet = `-- name: CloneHyperliquidStatusesToWallet :exec
+INSERT INTO hyperliquid_status_history (
+    venue_id,
+    wallet,
+    order_id,
+    payload_type,
+    payload_blob,
+    recorded_at_utc
+)
+SELECT
+    src.venue_id,
+    ?1 AS wallet,
+    src.order_id,
+    src.payload_type,
+    src.payload_blob,
+    src.recorded_at_utc
+FROM hyperliquid_status_history AS src
+WHERE src.venue_id = ?2
+  AND src.wallet = ?3
+ON CONFLICT(venue_id, wallet, order_id, recorded_at_utc) DO NOTHING
+`
+
+type CloneHyperliquidStatusesToWalletParams struct {
+	ToWallet   string `json:"to_wallet"`
+	VenueID    string `json:"venue_id"`
+	FromWallet string `json:"from_wallet"`
+}
+
+func (q *Queries) CloneHyperliquidStatusesToWallet(ctx context.Context, arg CloneHyperliquidStatusesToWalletParams) error {
+	_, err := q.db.ExecContext(ctx, cloneHyperliquidStatusesToWallet, arg.ToWallet, arg.VenueID, arg.FromWallet)
+	return err
+}
+
+const cloneHyperliquidSubmissionsToWallet = `-- name: CloneHyperliquidSubmissionsToWallet :exec
+INSERT INTO hyperliquid_submissions (
+    venue_id,
+    wallet,
+    order_id,
+    action_kind,
+    create_payload,
+    modify_payloads,
+    cancel_payload,
+    payload_type,
+    payload_blob,
+    updated_at_utc,
+    botevent_row_id
+)
+SELECT
+    src.venue_id,
+    ?1 AS wallet,
+    src.order_id,
+    src.action_kind,
+    src.create_payload,
+    src.modify_payloads,
+    src.cancel_payload,
+    src.payload_type,
+    src.payload_blob,
+    src.updated_at_utc,
+    src.botevent_row_id
+FROM hyperliquid_submissions AS src
+WHERE src.venue_id = ?2
+  AND src.wallet = ?3
+ON CONFLICT(venue_id, wallet, order_id) DO NOTHING
+`
+
+type CloneHyperliquidSubmissionsToWalletParams struct {
+	ToWallet   string `json:"to_wallet"`
+	VenueID    string `json:"venue_id"`
+	FromWallet string `json:"from_wallet"`
+}
+
+func (q *Queries) CloneHyperliquidSubmissionsToWallet(ctx context.Context, arg CloneHyperliquidSubmissionsToWalletParams) error {
+	_, err := q.db.ExecContext(ctx, cloneHyperliquidSubmissionsToWallet, arg.ToWallet, arg.VenueID, arg.FromWallet)
+	return err
+}
+
 const deleteBotOrderScaler = `-- name: DeleteBotOrderScaler :exec
 DELETE FROM bot_order_scalers
 WHERE bot_id = ?1
@@ -94,6 +170,38 @@ type DeleteBotVenueAssignmentParams struct {
 
 func (q *Queries) DeleteBotVenueAssignment(ctx context.Context, arg DeleteBotVenueAssignmentParams) error {
 	_, err := q.db.ExecContext(ctx, deleteBotVenueAssignment, arg.BotID, arg.VenueID)
+	return err
+}
+
+const deleteHyperliquidStatusesForWallet = `-- name: DeleteHyperliquidStatusesForWallet :exec
+DELETE FROM hyperliquid_status_history
+WHERE venue_id = ?1
+  AND wallet = ?2
+`
+
+type DeleteHyperliquidStatusesForWalletParams struct {
+	VenueID string `json:"venue_id"`
+	Wallet  string `json:"wallet"`
+}
+
+func (q *Queries) DeleteHyperliquidStatusesForWallet(ctx context.Context, arg DeleteHyperliquidStatusesForWalletParams) error {
+	_, err := q.db.ExecContext(ctx, deleteHyperliquidStatusesForWallet, arg.VenueID, arg.Wallet)
+	return err
+}
+
+const deleteHyperliquidSubmissionsForWallet = `-- name: DeleteHyperliquidSubmissionsForWallet :exec
+DELETE FROM hyperliquid_submissions
+WHERE venue_id = ?1
+  AND wallet = ?2
+`
+
+type DeleteHyperliquidSubmissionsForWalletParams struct {
+	VenueID string `json:"venue_id"`
+	Wallet  string `json:"wallet"`
+}
+
+func (q *Queries) DeleteHyperliquidSubmissionsForWallet(ctx context.Context, arg DeleteHyperliquidSubmissionsForWalletParams) error {
+	_, err := q.db.ExecContext(ctx, deleteHyperliquidSubmissionsForWallet, arg.VenueID, arg.Wallet)
 	return err
 }
 

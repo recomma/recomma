@@ -180,6 +180,19 @@ func (s *Storage) upsertDefaultVenueLocked(ctx context.Context, wallet string) e
 		wallet = defaultHyperliquidWallet
 	}
 
+	currentWallet := defaultHyperliquidWallet
+	row, err := s.queries.GetVenue(ctx, string(defaultHyperliquidVenueID))
+	switch {
+	case err == nil:
+		if row.Wallet != "" {
+			currentWallet = row.Wallet
+		}
+	case errors.Is(err, sql.ErrNoRows):
+		// No existing venue, fall back to defaults.
+	default:
+		return err
+	}
+
 	flags := json.RawMessage(`{}`)
 	params := sqlcgen.UpsertVenueParams{
 		ID:          string(defaultHyperliquidVenueID),
@@ -189,7 +202,77 @@ func (s *Storage) upsertDefaultVenueLocked(ctx context.Context, wallet string) e
 		Flags:       flags,
 	}
 
-	return s.queries.UpsertVenue(ctx, params)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	rollback := true
+	defer func() {
+		if rollback {
+			_ = tx.Rollback()
+		}
+	}()
+
+	qtx := s.queries.WithTx(tx)
+
+	if err := qtx.UpsertVenue(ctx, params); err != nil {
+		return err
+	}
+
+	if currentWallet != wallet {
+		if err := s.migrateDefaultVenueWalletLocked(ctx, qtx, currentWallet, wallet); err != nil {
+			return fmt.Errorf("migrate default hyperliquid wallet: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	rollback = false
+	return nil
+}
+
+func (s *Storage) migrateDefaultVenueWalletLocked(ctx context.Context, qtx *sqlcgen.Queries, fromWallet, toWallet string) error {
+	if fromWallet == toWallet {
+		return nil
+	}
+
+	cloneSubmissionsParams := sqlcgen.CloneHyperliquidSubmissionsToWalletParams{
+		ToWallet:   toWallet,
+		VenueID:    string(defaultHyperliquidVenueID),
+		FromWallet: fromWallet,
+	}
+	if err := qtx.CloneHyperliquidSubmissionsToWallet(ctx, cloneSubmissionsParams); err != nil {
+		return err
+	}
+
+	cloneStatusesParams := sqlcgen.CloneHyperliquidStatusesToWalletParams{
+		ToWallet:   toWallet,
+		VenueID:    string(defaultHyperliquidVenueID),
+		FromWallet: fromWallet,
+	}
+	if err := qtx.CloneHyperliquidStatusesToWallet(ctx, cloneStatusesParams); err != nil {
+		return err
+	}
+
+	deleteStatusesParams := sqlcgen.DeleteHyperliquidStatusesForWalletParams{
+		VenueID: string(defaultHyperliquidVenueID),
+		Wallet:  fromWallet,
+	}
+	if err := qtx.DeleteHyperliquidStatusesForWallet(ctx, deleteStatusesParams); err != nil {
+		return err
+	}
+
+	deleteSubmissionsParams := sqlcgen.DeleteHyperliquidSubmissionsForWalletParams{
+		VenueID: string(defaultHyperliquidVenueID),
+		Wallet:  fromWallet,
+	}
+	if err := qtx.DeleteHyperliquidSubmissionsForWallet(ctx, deleteSubmissionsParams); err != nil {
+		return err
+	}
+	return nil
 }
 
 func isUniqueConstraintError(err error) bool {

@@ -4,11 +4,23 @@ on:
   push:
     paths:
       - 'storage/sqlcgen/**'
+      - 'storage/sqlc/**'
+      - 'gen/storage/**'
+      - 'sqlc.yaml'
       - 'internal/api/ops.gen.go'
+      - 'openapi.yaml'
+      - 'oapi.yaml'
+      - 'gen/api/**'
   pull_request:
     paths:
       - 'storage/sqlcgen/**'
+      - 'storage/sqlc/**'
+      - 'gen/storage/**'
+      - 'sqlc.yaml'
       - 'internal/api/ops.gen.go'
+      - 'openapi.yaml'
+      - 'oapi.yaml'
+      - 'gen/api/**'
 
 jobs:
   verify-generated-code:
@@ -25,8 +37,14 @@ jobs:
           files_yaml: |
             storage:
               - storage/sqlcgen/**
+              - storage/sqlc/**
+              - gen/storage/**
+              - sqlc.yaml
             api:
               - internal/api/ops.gen.go
+              - openapi.yaml
+              - oapi.yaml
+              - gen/api/**
 
       - name: Set up Go
         if: steps.changes.outputs.storage_any_changed == 'true' || steps.changes.outputs.api_any_changed == 'true'

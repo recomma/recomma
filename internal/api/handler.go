@@ -687,6 +687,7 @@ func (h *ApiHandler) CancelOrderByOrderId(ctx context.Context, req CancelOrderBy
 		if h.logger != nil {
 			h.logger.Warn("CancelOrderByOrderId list identifiers failed", slog.String("orderid", oid.Hex()), slog.String("error", err.Error()))
 		}
+		return CancelOrderByOrderId500Response{}, nil
 	}
 	if len(idents) == 0 {
 		if h.logger != nil {

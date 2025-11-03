@@ -391,9 +391,14 @@ func (s *Storage) InsertScaledOrderAudit(ctx context.Context, params ScaledOrder
 
 	orderID := fmt.Sprintf("%s#%d", params.OrderId.Hex(), params.StackIndex)
 
+	defaultAssignment, err := s.defaultVenueAssignmentLocked(ctx)
+	if err != nil {
+		return ScaledOrderAudit{}, fmt.Errorf("load default venue: %w", err)
+	}
+
 	insert := sqlcgen.InsertScaledOrderParams{
-		VenueID:             string(defaultHyperliquidVenueID),
-		Wallet:              defaultHyperliquidWallet,
+		VenueID:             string(defaultAssignment.VenueID),
+		Wallet:              defaultAssignment.Wallet,
 		OrderID:             orderID,
 		DealID:              int64(params.DealID),
 		BotID:               int64(params.BotID),

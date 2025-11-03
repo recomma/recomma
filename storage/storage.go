@@ -119,12 +119,31 @@ func (s *Storage) ensureDefaultVenue(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	return s.upsertDefaultVenueLocked(ctx, defaultHyperliquidWallet)
+}
+
+// EnsureDefaultVenueWallet updates the default Hyperliquid venue to reference the
+// provided wallet address. Callers should invoke this once the runtime secrets
+// are available so downstream lookups return identifiers that align with the
+// live emitter/websocket clients.
+func (s *Storage) EnsureDefaultVenueWallet(ctx context.Context, wallet string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.upsertDefaultVenueLocked(ctx, wallet)
+}
+
+func (s *Storage) upsertDefaultVenueLocked(ctx context.Context, wallet string) error {
+	if wallet == "" {
+		wallet = defaultHyperliquidWallet
+	}
+
 	flags := json.RawMessage(`{}`)
 	params := sqlcgen.UpsertVenueParams{
 		ID:          string(defaultHyperliquidVenueID),
 		Type:        defaultHyperliquidVenueType,
 		DisplayName: defaultHyperliquidName,
-		Wallet:      defaultHyperliquidWallet,
+		Wallet:      wallet,
 		Flags:       flags,
 	}
 
@@ -156,6 +175,31 @@ func ensureIdentifier(ident recomma.OrderIdentifier) recomma.OrderIdentifier {
 	return ident
 }
 
+func (s *Storage) defaultVenueAssignmentLocked(ctx context.Context) (VenueAssignment, error) {
+	row, err := s.queries.GetVenue(ctx, string(defaultHyperliquidVenueID))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return VenueAssignment{
+				VenueID:   defaultHyperliquidVenueID,
+				Wallet:    defaultHyperliquidWallet,
+				IsPrimary: true,
+			}, nil
+		}
+		return VenueAssignment{}, err
+	}
+
+	wallet := row.Wallet
+	if wallet == "" {
+		wallet = defaultHyperliquidWallet
+	}
+
+	return VenueAssignment{
+		VenueID:   recomma.VenueID(row.ID),
+		Wallet:    wallet,
+		IsPrimary: true,
+	}, nil
+}
+
 // ListVenuesForBot returns the configured venue assignments for the given bot.
 // If no explicit assignments exist, the default Hyperliquid venue is returned.
 func (s *Storage) ListVenuesForBot(ctx context.Context, botID uint32) ([]VenueAssignment, error) {
@@ -168,11 +212,11 @@ func (s *Storage) ListVenuesForBot(ctx context.Context, botID uint32) ([]VenueAs
 	}
 
 	if len(assignments) == 0 {
-		return []VenueAssignment{{
-			VenueID:   defaultHyperliquidVenueID,
-			Wallet:    defaultHyperliquidWallet,
-			IsPrimary: true,
-		}}, nil
+		defaultAssignment, err := s.defaultVenueAssignmentLocked(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return []VenueAssignment{defaultAssignment}, nil
 	}
 
 	venues := make([]VenueAssignment, 0, len(assignments))
@@ -200,11 +244,11 @@ func (s *Storage) ListVenuesForBot(ctx context.Context, botID uint32) ([]VenueAs
 	}
 
 	if len(venues) == 0 {
-		venues = append(venues, VenueAssignment{
-			VenueID:   defaultHyperliquidVenueID,
-			Wallet:    defaultHyperliquidWallet,
-			IsPrimary: true,
-		})
+		defaultAssignment, err := s.defaultVenueAssignmentLocked(ctx)
+		if err != nil {
+			return nil, err
+		}
+		venues = append(venues, defaultAssignment)
 	}
 
 	return venues, nil
@@ -666,7 +710,11 @@ func (s *Storage) ListHyperliquidOrderIds(ctx context.Context) ([]recomma.OrderI
 	}
 
 	if len(venues) == 0 {
-		venues = append(venues, sqlcgen.ListVenuesRow{ID: string(defaultHyperliquidVenueID), Wallet: defaultHyperliquidWallet})
+		defaultAssignment, err := s.defaultVenueAssignmentLocked(ctx)
+		if err != nil {
+			return nil, err
+		}
+		venues = append(venues, sqlcgen.ListVenuesRow{ID: string(defaultAssignment.VenueID), Wallet: defaultAssignment.Wallet})
 	}
 
 	var identifiers []recomma.OrderIdentifier

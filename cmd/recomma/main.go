@@ -233,6 +233,10 @@ func main() {
 		fatal("vault secrets unavailable", errors.New("vault secrets unavailable"))
 	}
 
+	if err := store.EnsureDefaultVenueWallet(appCtx, secrets.Secrets.HYPERLIQUIDWALLET); err != nil {
+		fatal("update default venue wallet", err)
+	}
+
 	client, err := tc.New3CommasClient(tc.ClientConfig{
 		APIKey:     secrets.Secrets.THREECOMMASAPIKEY,
 		PrivatePEM: []byte(secrets.Secrets.THREECOMMASPRIVATEKEY),

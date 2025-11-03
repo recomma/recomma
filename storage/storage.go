@@ -202,26 +202,6 @@ func (s *Storage) upsertDefaultVenueLocked(ctx context.Context, wallet string) e
 		Flags:       flags,
 	}
 
-	if err := s.queries.UpsertVenue(ctx, params); err != nil {
-		return err
-	}
-
-	if currentWallet == wallet {
-		return nil
-	}
-
-	if err := s.migrateDefaultVenueWalletLocked(ctx, currentWallet, wallet); err != nil {
-		return fmt.Errorf("migrate default hyperliquid wallet: %w", err)
-	}
-
-	return nil
-}
-
-func (s *Storage) migrateDefaultVenueWalletLocked(ctx context.Context, fromWallet, toWallet string) error {
-	if fromWallet == toWallet {
-		return nil
-	}
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -235,6 +215,29 @@ func (s *Storage) migrateDefaultVenueWalletLocked(ctx context.Context, fromWalle
 	}()
 
 	qtx := s.queries.WithTx(tx)
+
+	if err := qtx.UpsertVenue(ctx, params); err != nil {
+		return err
+	}
+
+	if currentWallet != wallet {
+		if err := s.migrateDefaultVenueWalletLocked(ctx, qtx, currentWallet, wallet); err != nil {
+			return fmt.Errorf("migrate default hyperliquid wallet: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	rollback = false
+	return nil
+}
+
+func (s *Storage) migrateDefaultVenueWalletLocked(ctx context.Context, qtx *sqlcgen.Queries, fromWallet, toWallet string) error {
+	if fromWallet == toWallet {
+		return nil
+	}
 
 	cloneSubmissionsParams := sqlcgen.CloneHyperliquidSubmissionsToWalletParams{
 		ToWallet:   toWallet,
@@ -269,12 +272,6 @@ func (s *Storage) migrateDefaultVenueWalletLocked(ctx context.Context, fromWalle
 	if err := qtx.DeleteHyperliquidSubmissionsForWallet(ctx, deleteSubmissionsParams); err != nil {
 		return err
 	}
-
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
-	rollback = false
 	return nil
 }
 

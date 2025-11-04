@@ -281,34 +281,41 @@ func ensureIdentifier(ident recomma.OrderIdentifier) recomma.OrderIdentifier {
 
 func (s *Storage) defaultVenueAssignmentLocked(ctx context.Context) (VenueAssignment, error) {
 	row, err := s.queries.GetVenue(ctx, string(defaultHyperliquidVenueID))
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return VenueAssignment{
+				VenueID:   defaultHyperliquidVenueID,
+				Wallet:    defaultHyperliquidWallet,
+				IsPrimary: true,
+			}, nil
+		}
 		return VenueAssignment{}, err
 	}
 
-	wallet := defaultHyperliquidWallet
-	venueID := defaultHyperliquidVenueID
-	if err == nil {
-		venueID = recomma.VenueID(row.ID)
-		if row.Wallet != "" {
-			wallet = row.Wallet
-		}
+	wallet := row.Wallet
+	if wallet == "" {
+		wallet = defaultHyperliquidWallet
 	}
 
 	assignment := VenueAssignment{
-		VenueID:   venueID,
+		VenueID:   recomma.VenueID(row.ID),
 		Wallet:    wallet,
 		IsPrimary: true,
 	}
 
-	primary, err := s.findPrimaryHyperliquidVenueLocked(ctx)
-	if err == nil {
-		return primary, nil
+	if wallet != defaultHyperliquidWallet {
+		return assignment, nil
 	}
-	if err != nil && !errors.Is(err, errPrimaryHyperliquidVenueNotFound) {
+
+	primary, err := s.findPrimaryHyperliquidVenueLocked(ctx)
+	if err != nil {
+		if errors.Is(err, errPrimaryHyperliquidVenueNotFound) {
+			return assignment, nil
+		}
 		return VenueAssignment{}, err
 	}
 
-	return assignment, nil
+	return primary, nil
 }
 
 func (s *Storage) findPrimaryHyperliquidVenueLocked(ctx context.Context) (VenueAssignment, error) {

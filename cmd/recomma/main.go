@@ -274,7 +274,10 @@ func main() {
 		fatal("load hyperliquid configuration", errors.New("primary hyperliquid venue missing api_url"))
 	}
 
-	defaultHyperliquidIdent := storage.DefaultHyperliquidIdentifier(orderid.OrderId{}).VenueID
+	defaultIdentifier := storage.DefaultHyperliquidIdentifier(orderid.OrderId{})
+	defaultHyperliquidIdent := defaultIdentifier.VenueID
+	defaultHyperliquidWallet := defaultIdentifier.Wallet
+
 	defaultVenueWallet := primaryWallet
 	if shouldUseSentinelDefaultHyperliquidWallet(
 		secrets.Secrets.Venues,
@@ -288,7 +291,21 @@ func main() {
 		fatal("update default venue wallet", err)
 	}
 
+	defaultAliasWallet := strings.TrimSpace(defaultVenueWallet)
+	if defaultAliasWallet == "" {
+		defaultAliasWallet = defaultHyperliquidWallet
+	}
+
+	defaultVenueConfigured := false
+	for _, venue := range secrets.Secrets.Venues {
+		if recomma.VenueID(strings.TrimSpace(venue.ID)) == defaultHyperliquidIdent {
+			defaultVenueConfigured = true
+			break
+		}
+	}
+
 	primaryIdent := recomma.VenueID(primaryVenueID)
+	shouldBootstrapDefaultWs := !defaultVenueConfigured && defaultHyperliquidIdent != "" && defaultHyperliquidIdent != primaryIdent && defaultAliasWallet != defaultHyperliquidWallet
 
 	statusClients := make(hl.StatusClientRegistry)
 	wsClients := make(map[recomma.VenueID]*ws.Client)
@@ -369,7 +386,7 @@ func main() {
 		if err != nil {
 			fatal("create hyperliquid websocket", err)
 		}
-		registerHyperliquidWsClient(wsClients, wsClient, venueIdent, primaryIdent, defaultHyperliquidIdent)
+		registerHyperliquidWsClient(wsClients, wsClient, venueIdent)
 		venueOrder = append(venueOrder, venueIdent)
 
 		client := wsClient
@@ -380,12 +397,35 @@ func main() {
 		}
 		venueClosers = append(venueClosers, closeVenue)
 
-		submitter := emitter.NewHyperLiquidEmitter(exchange, wsClient, store,
+		submitter := emitter.NewHyperLiquidEmitter(exchange, venueIdent, wsClient, store,
 			emitter.WithHyperLiquidEmitterConfig(emitter.HyperLiquidEmitterConfig{
 				InitialIOCOffsetBps: cfg.HyperliquidIOCInitialOffsetBps,
 			}),
 			emitter.WithHyperLiquidEmitterLogger(emitterLogger.With(slog.String("venue", venueID), slog.String("wallet", wallet))),
 		)
+
+		if shouldBootstrapDefaultWs && venueIdent == primaryIdent {
+			aliasClient, err := ws.New(appCtx, store, fillTracker, defaultHyperliquidIdent, defaultAliasWallet, apiURL)
+			if err != nil {
+				fatal("create default hyperliquid websocket", err)
+			}
+			registerHyperliquidWsClient(wsClients, aliasClient, defaultHyperliquidIdent)
+			submitter.RegisterWsClient(defaultHyperliquidIdent, aliasClient)
+			statusClients[defaultHyperliquidIdent] = info
+
+			alias := aliasClient
+			venueClosers = append(venueClosers, func() {
+				if err := alias.Close(); err != nil {
+					runtimeLogger.Debug("websocket close failed", slog.String("venue", string(defaultHyperliquidIdent)), slog.String("error", err.Error()))
+				}
+			})
+
+			runtimeLogger.Info("default hyperliquid alias configured",
+				slog.String("venue", string(defaultHyperliquidIdent)),
+				slog.String("wallet", defaultAliasWallet),
+				slog.String("api_url", apiURL),
+			)
+		}
 
 		registerHyperliquidEmitter(engineEmitter, submitter, venueIdent, primaryIdent, defaultHyperliquidIdent)
 

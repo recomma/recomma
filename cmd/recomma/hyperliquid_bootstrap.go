@@ -48,19 +48,10 @@ func registerHyperliquidStatusClient(reg hl.StatusClientRegistry, client hyperli
 	reg[defaultIdent] = client
 }
 
-func registerHyperliquidWsClient(reg map[recomma.VenueID]*ws.Client, client *ws.Client, venueIdent, primaryIdent, defaultIdent recomma.VenueID) {
+func registerHyperliquidWsClient(reg map[recomma.VenueID]*ws.Client, client *ws.Client, venueIdent recomma.VenueID) {
 	if reg == nil || client == nil {
 		return
 	}
 
 	reg[venueIdent] = client
-
-	if venueIdent != primaryIdent {
-		return
-	}
-	if defaultIdent == "" || defaultIdent == venueIdent {
-		return
-	}
-
-	reg[defaultIdent] = client
 }

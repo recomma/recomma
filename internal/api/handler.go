@@ -40,8 +40,16 @@ type Store interface {
 	UpsertBotOrderScalerOverride(ctx context.Context, botID uint32, multiplier *float64, notes *string, updatedBy string) (OrderScalerOverride, error)
 	DeleteBotOrderScalerOverride(ctx context.Context, botID uint32, updatedBy string) error
 	ResolveEffectiveOrderScalerConfig(ctx context.Context, oid orderid.OrderId) (EffectiveOrderScaler, error)
-	LoadHyperliquidSubmission(ctx context.Context, oid orderid.OrderId) (recomma.Action, bool, error)
-	LoadHyperliquidStatus(ctx context.Context, oid orderid.OrderId) (*hyperliquid.WsOrder, bool, error)
+	LoadHyperliquidSubmission(ctx context.Context, ident recomma.OrderIdentifier) (recomma.Action, bool, error)
+	LoadHyperliquidStatus(ctx context.Context, ident recomma.OrderIdentifier) (*hyperliquid.WsOrder, bool, error)
+	ListSubmissionIdentifiersForOrder(ctx context.Context, oid orderid.OrderId) ([]recomma.OrderIdentifier, error)
+	ListVenues(ctx context.Context) ([]VenueRecord, error)
+	UpsertVenue(ctx context.Context, venueID string, payload VenueUpsertRequest) (VenueRecord, error)
+	DeleteVenue(ctx context.Context, venueID string) error
+	ListVenueAssignments(ctx context.Context, venueID string) ([]VenueAssignmentRecord, error)
+	UpsertVenueAssignment(ctx context.Context, venueID string, botID int64, isPrimary bool) (VenueAssignmentRecord, error)
+	DeleteVenueAssignment(ctx context.Context, venueID string, botID int64) error
+	ListBotVenues(ctx context.Context, botID int64) ([]BotVenueAssignmentRecord, error)
 }
 
 // StreamSource publishes live order mutations for the SSE endpoint.
@@ -94,6 +102,13 @@ type HyperliquidPriceSource interface {
 }
 
 var ErrPriceSourceNotReady = errors.New("hyperliquid price source not ready")
+
+var (
+	ErrVenueNotFound           = errors.New("api: venue not found")
+	ErrVenueImmutable          = errors.New("api: venue immutable")
+	ErrVenueInvalid            = errors.New("api: invalid venue payload")
+	ErrVenueAssignmentNotFound = errors.New("api: venue assignment not found")
+)
 
 type priceSourceProxy struct {
 	mu    sync.RWMutex
@@ -306,6 +321,169 @@ func (h *ApiHandler) ListOrderScalers(ctx context.Context, req ListOrderScalersR
 		resp.NextPageToken = next
 	}
 	return resp, nil
+}
+
+// ListVenues satisfies StrictServerInterface.
+func (h *ApiHandler) ListVenues(ctx context.Context, req ListVenuesRequestObject) (ListVenuesResponseObject, error) {
+	venues, err := h.store.ListVenues(ctx)
+	if err != nil {
+		if h.logger != nil {
+			h.logger.ErrorContext(ctx, "ListVenues failed", slog.String("error", err.Error()))
+		}
+		return ListVenues500Response{}, nil
+	}
+	return ListVenues200JSONResponse{Items: venues}, nil
+}
+
+// UpsertVenue satisfies StrictServerInterface.
+func (h *ApiHandler) UpsertVenue(ctx context.Context, req UpsertVenueRequestObject) (UpsertVenueResponseObject, error) {
+	venueID := strings.TrimSpace(req.VenueId)
+	if venueID == "" || req.Body == nil {
+		return UpsertVenue400Response{}, nil
+	}
+
+	record, err := h.store.UpsertVenue(ctx, venueID, VenueUpsertRequest(*req.Body))
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrVenueInvalid):
+			return UpsertVenue400Response{}, nil
+		default:
+			if h.logger != nil {
+				h.logger.ErrorContext(ctx, "UpsertVenue failed", slog.String("venue", venueID), slog.String("error", err.Error()))
+			}
+			return UpsertVenue500Response{}, nil
+		}
+	}
+
+	return UpsertVenue200JSONResponse(record), nil
+}
+
+// DeleteVenue satisfies StrictServerInterface.
+func (h *ApiHandler) DeleteVenue(ctx context.Context, req DeleteVenueRequestObject) (DeleteVenueResponseObject, error) {
+	venueID := strings.TrimSpace(req.VenueId)
+	if venueID == "" {
+		return DeleteVenue400Response{}, nil
+	}
+
+	err := h.store.DeleteVenue(ctx, venueID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrVenueNotFound):
+			return DeleteVenue404Response{}, nil
+		case errors.Is(err, ErrVenueImmutable):
+			return DeleteVenue409Response{}, nil
+		case errors.Is(err, ErrVenueInvalid):
+			return DeleteVenue400Response{}, nil
+		default:
+			if h.logger != nil {
+				h.logger.ErrorContext(ctx, "DeleteVenue failed", slog.String("venue", venueID), slog.String("error", err.Error()))
+			}
+			return DeleteVenue500Response{}, nil
+		}
+	}
+
+	return DeleteVenue204Response{}, nil
+}
+
+// ListVenueAssignments satisfies StrictServerInterface.
+func (h *ApiHandler) ListVenueAssignments(ctx context.Context, req ListVenueAssignmentsRequestObject) (ListVenueAssignmentsResponseObject, error) {
+	venueID := strings.TrimSpace(req.VenueId)
+	if venueID == "" {
+		return ListVenueAssignments400Response{}, nil
+	}
+
+	assignments, err := h.store.ListVenueAssignments(ctx, venueID)
+	if err != nil {
+		if errors.Is(err, ErrVenueNotFound) {
+			return ListVenueAssignments404Response{}, nil
+		}
+		if h.logger != nil {
+			h.logger.ErrorContext(ctx, "ListVenueAssignments failed", slog.String("venue", venueID), slog.String("error", err.Error()))
+		}
+		return ListVenueAssignments500Response{}, nil
+	}
+
+	return ListVenueAssignments200JSONResponse{Items: assignments}, nil
+}
+
+// UpsertVenueAssignment satisfies StrictServerInterface.
+func (h *ApiHandler) UpsertVenueAssignment(ctx context.Context, req UpsertVenueAssignmentRequestObject) (UpsertVenueAssignmentResponseObject, error) {
+	venueID := strings.TrimSpace(req.VenueId)
+	if venueID == "" || req.Body == nil {
+		return UpsertVenueAssignment400Response{}, nil
+	}
+
+	botID := req.BotId
+	if botID <= 0 {
+		return UpsertVenueAssignment400Response{}, nil
+	}
+
+	record, err := h.store.UpsertVenueAssignment(ctx, venueID, botID, req.Body.IsPrimary)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrVenueNotFound):
+			return UpsertVenueAssignment404Response{}, nil
+		case errors.Is(err, ErrVenueInvalid):
+			return UpsertVenueAssignment400Response{}, nil
+		default:
+			if h.logger != nil {
+				h.logger.ErrorContext(ctx, "UpsertVenueAssignment failed", slog.String("venue", venueID), slog.Int64("bot_id", botID), slog.String("error", err.Error()))
+			}
+			return UpsertVenueAssignment500Response{}, nil
+		}
+	}
+
+	return UpsertVenueAssignment200JSONResponse(record), nil
+}
+
+// DeleteVenueAssignment satisfies StrictServerInterface.
+func (h *ApiHandler) DeleteVenueAssignment(ctx context.Context, req DeleteVenueAssignmentRequestObject) (DeleteVenueAssignmentResponseObject, error) {
+	venueID := strings.TrimSpace(req.VenueId)
+	if venueID == "" {
+		return DeleteVenueAssignment400Response{}, nil
+	}
+	botID := req.BotId
+	if botID <= 0 {
+		return DeleteVenueAssignment400Response{}, nil
+	}
+
+	err := h.store.DeleteVenueAssignment(ctx, venueID, botID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrVenueAssignmentNotFound):
+			return DeleteVenueAssignment404Response{}, nil
+		case errors.Is(err, ErrVenueInvalid):
+			return DeleteVenueAssignment400Response{}, nil
+		default:
+			if h.logger != nil {
+				h.logger.ErrorContext(ctx, "DeleteVenueAssignment failed", slog.String("venue", venueID), slog.Int64("bot_id", botID), slog.String("error", err.Error()))
+			}
+			return DeleteVenueAssignment500Response{}, nil
+		}
+	}
+
+	return DeleteVenueAssignment204Response{}, nil
+}
+
+// ListBotVenues satisfies StrictServerInterface.
+func (h *ApiHandler) ListBotVenues(ctx context.Context, req ListBotVenuesRequestObject) (ListBotVenuesResponseObject, error) {
+	botID := req.BotId
+	if botID <= 0 {
+		return ListBotVenues400Response{}, nil
+	}
+
+	assignments, err := h.store.ListBotVenues(ctx, botID)
+	if err != nil {
+		if errors.Is(err, ErrVenueInvalid) {
+			return ListBotVenues400Response{}, nil
+		}
+		if h.logger != nil {
+			h.logger.ErrorContext(ctx, "ListBotVenues failed", slog.Int64("bot_id", botID), slog.String("error", err.Error()))
+		}
+		return ListBotVenues500Response{}, nil
+	}
+
+	return ListBotVenues200JSONResponse{Items: assignments}, nil
 }
 
 // GetOrderScalerConfig satisfies StrictServerInterface.
@@ -626,7 +804,7 @@ func (h *ApiHandler) orderRecordFromItem(ctx context.Context, row OrderItem, inc
 		return OrderRecord{}, false
 	}
 
-	identifiers := makeOrderIdentifiers(row.OrderId, row.BotEvent, row.ObservedAt)
+	identifiers := makeOrderIdentifiers(row.OrderId, row.BotEvent, row.ObservedAt, row.Identifier)
 
 	record := OrderRecord{
 		OrderId:     row.OrderId.Hex(),
@@ -637,7 +815,7 @@ func (h *ApiHandler) orderRecordFromItem(ctx context.Context, row OrderItem, inc
 		},
 	}
 
-	if state := buildHyperliquidOrderState(row.LatestSubmission, row.LatestStatus); state != nil {
+	if state := buildHyperliquidOrderState(&identifiers, row.LatestSubmission, row.LatestStatus); state != nil {
 		record.Hyperliquid = state
 	}
 
@@ -645,7 +823,7 @@ func (h *ApiHandler) orderRecordFromItem(ctx context.Context, row OrderItem, inc
 		entries := make([]OrderLogEntry, 0, len(row.LogEntries))
 		identCopy := record.Identifiers
 		for _, logRow := range row.LogEntries {
-			entry, ok := h.makeOrderLogEntry(ctx, logRow.OrderId, logRow.ObservedAt, logRow.Type, logRow.BotEvent, logRow.Submission, logRow.Status, logRow.ScalerConfig, logRow.ScaledAudit, logRow.Actor, &identCopy, nil)
+			entry, ok := h.makeOrderLogEntry(ctx, logRow.OrderId, logRow.ObservedAt, logRow.Type, logRow.BotEvent, logRow.Submission, logRow.Status, logRow.ScalerConfig, logRow.ScaledAudit, logRow.Actor, logRow.Identifier, &identCopy, nil)
 			if !ok {
 				continue
 			}
@@ -681,31 +859,93 @@ func (h *ApiHandler) CancelOrderByOrderId(ctx context.Context, req CancelOrderBy
 		return CancelOrderByOrderId400Response{}, nil
 	}
 
-	action, found, err := h.store.LoadHyperliquidSubmission(ctx, *oid)
+	idents, err := h.store.ListSubmissionIdentifiersForOrder(ctx, *oid)
 	if err != nil {
 		if h.logger != nil {
-			h.logger.Error("CancelOrderByOrderId load submission failed", slog.String("orderid", oid.Hex()), slog.String("error", err.Error()))
+			h.logger.Warn("CancelOrderByOrderId list identifiers failed", slog.String("orderid", oid.Hex()), slog.String("error", err.Error()))
 		}
 		return CancelOrderByOrderId500Response{}, nil
 	}
-	if !found || (action.Create == nil && action.Modify == nil) {
+	venueFilter := ""
+	if req.Params.VenueId != nil {
+		venueFilter = strings.TrimSpace(*req.Params.VenueId)
+	}
+	if venueFilter != "" {
+		filtered := idents[:0]
+		for _, ident := range idents {
+			if strings.EqualFold(ident.Venue(), venueFilter) {
+				filtered = append(filtered, ident)
+			}
+		}
+		idents = filtered
+	}
+	if len(idents) == 0 {
 		if h.logger != nil {
 			h.logger.Info("CancelOrderByOrderId submission not found", slog.String("orderid", oid.Hex()))
 		}
 		return CancelOrderByOrderId404Response{}, nil
 	}
-	if action.Cancel != nil {
-		if h.logger != nil {
-			h.logger.Info("CancelOrderByOrderId cancel already recorded", slog.String("orderid", oid.Hex()))
+
+	var (
+		coin              string
+		pending           []recomma.OrderIdentifier
+		lastStatus        *hyperliquid.WsOrder
+		haveLastStatus    bool
+		anySubmission     bool
+		anyCancelRecorded bool
+		anyNotCancelable  bool
+	)
+
+	for _, ident := range idents {
+		action, found, loadErr := h.store.LoadHyperliquidSubmission(ctx, ident)
+		if loadErr != nil {
+			if h.logger != nil {
+				h.logger.Error("CancelOrderByOrderId load submission failed", slog.String("orderid", oid.Hex()), slog.String("venue", ident.Venue()), slog.String("error", loadErr.Error()))
+			}
+			return CancelOrderByOrderId500Response{}, nil
 		}
-		return CancelOrderByOrderId409Response{}, nil
+		if !found || (action.Create == nil && action.Modify == nil) {
+			continue
+		}
+		anySubmission = true
+
+		if coin == "" {
+			if action.Create != nil && strings.TrimSpace(action.Create.Coin) != "" {
+				coin = strings.ToUpper(strings.TrimSpace(action.Create.Coin))
+			} else if action.Modify != nil && strings.TrimSpace(action.Modify.Order.Coin) != "" {
+				coin = strings.ToUpper(strings.TrimSpace(action.Modify.Order.Coin))
+			}
+		}
+
+		if action.Cancel != nil {
+			anyCancelRecorded = true
+			continue
+		}
+
+		status, haveStatus, statusErr := h.store.LoadHyperliquidStatus(ctx, ident)
+		if statusErr != nil {
+			if h.logger != nil {
+				h.logger.Error("CancelOrderByOrderId load status failed", slog.String("orderid", oid.Hex()), slog.String("venue", ident.Venue()), slog.String("error", statusErr.Error()))
+			}
+			return CancelOrderByOrderId500Response{}, nil
+		}
+		if haveStatus {
+			lastStatus = status
+			haveLastStatus = true
+			if !isCancelableStatus(status) {
+				anyNotCancelable = true
+				continue
+			}
+		}
+
+		pending = append(pending, ident)
 	}
 
-	coin := ""
-	if action.Create != nil && strings.TrimSpace(action.Create.Coin) != "" {
-		coin = strings.ToUpper(strings.TrimSpace(action.Create.Coin))
-	} else if action.Modify != nil && strings.TrimSpace(action.Modify.Order.Coin) != "" {
-		coin = strings.ToUpper(strings.TrimSpace(action.Modify.Order.Coin))
+	if !anySubmission {
+		if h.logger != nil {
+			h.logger.Info("CancelOrderByOrderId submission not found", slog.String("orderid", oid.Hex()))
+		}
+		return CancelOrderByOrderId404Response{}, nil
 	}
 	if coin == "" {
 		if h.logger != nil {
@@ -713,17 +953,16 @@ func (h *ApiHandler) CancelOrderByOrderId(ctx context.Context, req CancelOrderBy
 		}
 		return CancelOrderByOrderId404Response{}, nil
 	}
-
-	status, haveStatus, err := h.store.LoadHyperliquidStatus(ctx, *oid)
-	if err != nil {
+	if len(pending) == 0 {
 		if h.logger != nil {
-			h.logger.Error("CancelOrderByOrderId load status failed", slog.String("orderid", oid.Hex()), slog.String("error", err.Error()))
-		}
-		return CancelOrderByOrderId500Response{}, nil
-	}
-	if haveStatus && !isCancelableStatus(status) {
-		if h.logger != nil {
-			h.logger.Info("CancelOrderByOrderId order not cancelable", slog.String("orderid", oid.Hex()), slog.String("status", string(status.Status)))
+			switch {
+			case anyNotCancelable && haveLastStatus && lastStatus != nil:
+				h.logger.Info("CancelOrderByOrderId order not cancelable", slog.String("orderid", oid.Hex()), slog.String("status", string(lastStatus.Status)))
+			case anyCancelRecorded:
+				h.logger.Info("CancelOrderByOrderId cancel already recorded", slog.String("orderid", oid.Hex()))
+			default:
+				h.logger.Info("CancelOrderByOrderId no pending venues", slog.String("orderid", oid.Hex()))
+			}
 		}
 		return CancelOrderByOrderId409Response{}, nil
 	}
@@ -759,29 +998,32 @@ func (h *ApiHandler) CancelOrderByOrderId(ctx context.Context, req CancelOrderBy
 		return CancelOrderByOrderId202JSONResponse(resp), nil
 	}
 
-	work := recomma.OrderWork{
-		OrderId: *oid,
-		Action: recomma.Action{
-			Type:   recomma.ActionCancel,
-			Cancel: &cancelPayload,
-		},
-	}
-	if reason != "" {
-		work.Action.Reason = reason
-	}
-
-	if err := h.orders.Emit(ctx, work); err != nil {
-		if h.logger != nil {
-			h.logger.Error("CancelOrderByOrderId emit failed", slog.String("orderid", oid.Hex()), slog.String("error", err.Error()))
+	for _, ident := range pending {
+		work := recomma.OrderWork{
+			Identifier: ident,
+			OrderId:    *oid,
+			Action: recomma.Action{
+				Type:   recomma.ActionCancel,
+				Cancel: &cancelPayload,
+			},
 		}
-		return CancelOrderByOrderId500Response{}, nil
+		if reason != "" {
+			work.Action.Reason = reason
+		}
+
+		if err := h.orders.Emit(ctx, work); err != nil {
+			if h.logger != nil {
+				h.logger.Error("CancelOrderByOrderId emit failed", slog.String("orderid", oid.Hex()), slog.String("venue", ident.Venue()), slog.String("error", err.Error()))
+			}
+			return CancelOrderByOrderId500Response{}, nil
+		}
 	}
 
 	resp.Status = "queued"
 	if reason != "" {
 		resp.Message = strPtr(reason)
-	} else if haveStatus && status != nil {
-		resp.Message = strPtr(fmt.Sprintf("latest status: %s", status.Status))
+	} else if haveLastStatus && lastStatus != nil {
+		resp.Message = strPtr(fmt.Sprintf("latest status: %s", lastStatus.Status))
 	}
 
 	if h.logger != nil {
@@ -942,9 +1184,9 @@ func (h *ApiHandler) StreamHyperliquidPrices(ctx context.Context, req StreamHype
 
 // writeSSEFrame marshals the event payload and writes an SSE-formatted frame.
 func (h *ApiHandler) writeSSEFrame(ctx context.Context, w io.Writer, evt StreamEvent) error {
-	ident := makeOrderIdentifiers(evt.OrderId, evt.BotEvent, evt.ObservedAt)
+	ident := makeOrderIdentifiers(evt.OrderID, evt.BotEvent, evt.ObservedAt, evt.Identifier)
 
-	entry, ok := h.makeOrderLogEntry(ctx, evt.OrderId, evt.ObservedAt, evt.Type, evt.BotEvent, evt.Submission, evt.Status, evt.ScalerConfig, evt.ScaledOrderAudit, evt.Actor, &ident, evt.Sequence)
+	entry, ok := h.makeOrderLogEntry(ctx, evt.OrderID, evt.ObservedAt, evt.Type, evt.BotEvent, evt.Submission, evt.Status, evt.ScalerConfig, evt.ScaledOrderAudit, evt.Actor, evt.Identifier, &ident, evt.Sequence)
 	if !ok {
 		return nil
 	}
@@ -1170,6 +1412,7 @@ type OrderItem struct {
 	BotEvent         *tc.BotEvent
 	LatestSubmission interface{}
 	LatestStatus     *hyperliquid.WsOrder
+	Identifier       *recomma.OrderIdentifier
 	LogEntries       []OrderLogItem
 }
 
@@ -1194,6 +1437,7 @@ type OrderLogItem struct {
 	Type         OrderLogEntryType
 	OrderId      orderid.OrderId
 	ObservedAt   time.Time
+	Identifier   *recomma.OrderIdentifier
 	BotEvent     *tc.BotEvent
 	Submission   interface{}
 	Status       *hyperliquid.WsOrder
@@ -1212,7 +1456,8 @@ type StreamFilter struct {
 
 type StreamEvent struct {
 	Type             OrderLogEntryType
-	OrderId          orderid.OrderId
+	OrderID          orderid.OrderId
+	Identifier       *recomma.OrderIdentifier
 	ObservedAt       time.Time
 	BotEvent         *tc.BotEvent
 	Submission       interface{}
@@ -1223,10 +1468,15 @@ type StreamEvent struct {
 	Actor            *string
 }
 
-func makeOrderIdentifiers(oid orderid.OrderId, event *tc.BotEvent, fallback time.Time) OrderIdentifiers {
+func makeOrderIdentifiers(oid orderid.OrderId, event *tc.BotEvent, fallback time.Time, ident *recomma.OrderIdentifier) OrderIdentifiers {
 	createdAt := fallback
 	if event != nil && !event.CreatedAt.IsZero() {
 		createdAt = event.CreatedAt
+	}
+	var venueID, wallet string
+	if ident != nil {
+		venueID = ident.Venue()
+		wallet = ident.Wallet
 	}
 	return OrderIdentifiers{
 		Hex:        oid.Hex(),
@@ -1234,6 +1484,8 @@ func makeOrderIdentifiers(oid orderid.OrderId, event *tc.BotEvent, fallback time
 		DealId:     int64(oid.DealID),
 		BotEventId: int64(oid.BotEventID),
 		CreatedAt:  createdAt,
+		VenueId:    venueID,
+		Wallet:     wallet,
 	}
 }
 
@@ -1269,8 +1521,13 @@ func convertThreeCommasBotEvent(evt *tc.BotEvent) ThreeCommasBotEvent {
 	}
 }
 
-func buildHyperliquidOrderState(submission interface{}, status *hyperliquid.WsOrder) *HyperliquidOrderState {
+func buildHyperliquidOrderState(identifiers *OrderIdentifiers, submission interface{}, status *hyperliquid.WsOrder) *HyperliquidOrderState {
 	var state HyperliquidOrderState
+
+	if identifiers != nil {
+		clone := *identifiers
+		state.Identifier = &clone
+	}
 
 	if action, ok := convertHyperliquidAction(submission); ok {
 		state.LatestSubmission = &action
@@ -1464,7 +1721,7 @@ func cloneIdentifiers(base *OrderIdentifiers, oid orderid.OrderId, createdAt, fa
 	return &ident
 }
 
-func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, oid orderid.OrderId, observedAt time.Time, entryType OrderLogEntryType, botEvent *tc.BotEvent, submission interface{}, status *hyperliquid.WsOrder, config *EffectiveOrderScaler, audit *ScaledOrderAudit, actor *string, baseIdentifiers *OrderIdentifiers, sequence *int64) (OrderLogEntry, bool) {
+func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, oid orderid.OrderId, observedAt time.Time, entryType OrderLogEntryType, botEvent *tc.BotEvent, submission interface{}, status *hyperliquid.WsOrder, config *EffectiveOrderScaler, audit *ScaledOrderAudit, actor *string, logIdentifier *recomma.OrderIdentifier, baseIdentifiers *OrderIdentifiers, sequence *int64) (OrderLogEntry, bool) {
 	oidHex := oid.Hex()
 	var entry OrderLogEntry
 	var botEventID *int64
@@ -1488,7 +1745,10 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, oid orderid.OrderId,
 			Event:      convertThreeCommasBotEvent(botEvent),
 			BotEventId: botEventID,
 		}
-		if identifiers := cloneIdentifiers(baseIdentifiers, oid, botEvent.CreatedAt, observedAt); identifiers != nil {
+		if logIdentifier != nil {
+			ident := makeOrderIdentifiers(oid, botEvent, observedAt, logIdentifier)
+			logEntry.Identifiers = &ident
+		} else if identifiers := cloneIdentifiers(baseIdentifiers, oid, botEvent.CreatedAt, observedAt); identifiers != nil {
 			logEntry.Identifiers = identifiers
 		}
 		if sequence != nil {
@@ -1513,7 +1773,10 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, oid orderid.OrderId,
 			Action:     action,
 			BotEventId: botEventID,
 		}
-		if identifiers := cloneIdentifiers(baseIdentifiers, oid, createdAt(botEvent), observedAt); identifiers != nil {
+		if logIdentifier != nil {
+			ident := makeOrderIdentifiers(oid, botEvent, observedAt, logIdentifier)
+			logEntry.Identifiers = &ident
+		} else if identifiers := cloneIdentifiers(baseIdentifiers, oid, createdAt(botEvent), observedAt); identifiers != nil {
 			logEntry.Identifiers = identifiers
 		}
 		if sequence != nil {
@@ -1538,7 +1801,10 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, oid orderid.OrderId,
 			Status:     ws,
 			BotEventId: botEventID,
 		}
-		if identifiers := cloneIdentifiers(baseIdentifiers, oid, createdAt(botEvent), observedAt); identifiers != nil {
+		if logIdentifier != nil {
+			ident := makeOrderIdentifiers(oid, botEvent, observedAt, logIdentifier)
+			logEntry.Identifiers = &ident
+		} else if identifiers := cloneIdentifiers(baseIdentifiers, oid, createdAt(botEvent), observedAt); identifiers != nil {
 			logEntry.Identifiers = identifiers
 		}
 		if sequence != nil {
@@ -1566,7 +1832,10 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, oid orderid.OrderId,
 			Config:     *clampedConfig,
 			Actor:      actorVal,
 		}
-		if identifiers := cloneIdentifiers(baseIdentifiers, oid, observedAt, observedAt); identifiers != nil {
+		if logIdentifier != nil {
+			ident := makeOrderIdentifiers(oid, nil, observedAt, logIdentifier)
+			logEntry.Identifiers = &ident
+		} else if identifiers := cloneIdentifiers(baseIdentifiers, oid, observedAt, observedAt); identifiers != nil {
 			logEntry.Identifiers = identifiers
 		}
 		if sequence != nil {
@@ -1598,7 +1867,10 @@ func (h *ApiHandler) makeOrderLogEntry(ctx context.Context, oid orderid.OrderId,
 			cfgCopy := *clampedConfig
 			logEntry.Effective = &cfgCopy
 		}
-		if identifiers := cloneIdentifiers(baseIdentifiers, oid, createdAt(botEvent), observedAt); identifiers != nil {
+		if logIdentifier != nil {
+			ident := makeOrderIdentifiers(oid, botEvent, observedAt, logIdentifier)
+			logEntry.Identifiers = &ident
+		} else if identifiers := cloneIdentifiers(baseIdentifiers, oid, createdAt(botEvent), observedAt); identifiers != nil {
 			logEntry.Identifiers = identifiers
 		}
 		if sequence != nil {

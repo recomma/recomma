@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -75,9 +74,10 @@ func TestHyperLiquidEmitterIOCRetriesLogSuccess(t *testing.T) {
 		},
 	}
 	work := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionCreate, Create: &order},
-		BotEvent: recomma.BotEvent{RowID: 1},
+		Identifier: storage.DefaultHyperliquidIdentifier(oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: &order},
+		BotEvent:   recomma.BotEvent{RowID: 1},
 	}
 
 	err := emitter.Emit(context.Background(), work)
@@ -147,9 +147,10 @@ func TestHyperLiquidEmitterIOCRetriesWarnOnFailure(t *testing.T) {
 		},
 	}
 	work := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionCreate, Create: &order},
-		BotEvent: recomma.BotEvent{RowID: 2},
+		Identifier: storage.DefaultHyperliquidIdentifier(oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: &order},
+		BotEvent:   recomma.BotEvent{RowID: 2},
 	}
 
 	err := emitter.Emit(context.Background(), work)
@@ -228,9 +229,12 @@ func parseLogs(t *testing.T, raw string) []logEntry {
 
 func newTestStore(t *testing.T) *storage.Storage {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "emitter.db")
-	store, err := storage.New(path)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = store.Close() })
+	store, err := storage.New(":memory:")
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
 	return store
 }

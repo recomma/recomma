@@ -27,8 +27,8 @@ type Service struct {
 	logger *slog.Logger
 
 	mu     sync.RWMutex
-	orders map[string]*orderState // keyed by metadata hex
-	deals  map[uint32]*dealState  // keyed by deal id
+	orders map[recomma.OrderIdentifier]*orderState
+	deals  map[uint32]*dealState
 }
 
 // New creates a new fill tracker service.
@@ -39,7 +39,7 @@ func New(store *storage.Storage, logger *slog.Logger) *Service {
 	return &Service{
 		store:  store,
 		logger: logger.WithGroup("filltracker"),
-		orders: make(map[string]*orderState),
+		orders: make(map[recomma.OrderIdentifier]*orderState),
 		deals:  make(map[uint32]*dealState),
 	}
 }
@@ -67,9 +67,9 @@ func (s *Service) Rebuild(ctx context.Context) error {
 	return nil
 }
 
-// UpdateStatus ingests a fresh Hyperliquid status update for an OrderId.
-func (s *Service) UpdateStatus(ctx context.Context, oid orderid.OrderId, status hyperliquid.WsOrder) error {
-	event, err := s.store.LoadThreeCommasBotEvent(ctx, oid)
+// UpdateStatus ingests a fresh Hyperliquid status update for a metadata fingerprint.
+func (s *Service) UpdateStatus(ctx context.Context, ident recomma.OrderIdentifier, status hyperliquid.WsOrder) error {
+	event, err := s.store.LoadThreeCommasBotEvent(ctx, ident.OrderId)
 	if err != nil {
 		return err
 	}
@@ -77,21 +77,23 @@ func (s *Service) UpdateStatus(ctx context.Context, oid orderid.OrderId, status 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	state := s.ensureOrderLocked(oid)
+	state := s.ensureOrderLocked(ident)
 	if event != nil {
 		clone := *event
 		state.applyEvent(&clone)
 	}
 	state.applyStatus(status)
 
-	deal := s.ensureDealLocked(oid)
-	deal.orders[oid.Hex()] = state
+	deal := s.ensureDealLocked(ident)
+	deal.orders[ident] = state
 	deal.lastUpdate = time.Now().UTC()
 	deal.recompute()
 
 	s.logger.Debug("updated order status",
 		slog.Uint64("deal_id", uint64(deal.dealID)),
-		slog.String("orderid", oid.Hex()),
+		slog.String("venue", ident.Venue()),
+		slog.String("wallet", ident.Wallet),
+		slog.String("orderid", ident.Hex()),
 		slog.String("status", string(status.Status)),
 		slog.Float64("filled_qty", state.filledQty),
 		slog.Float64("remaining_qty", state.remainingQty),
@@ -101,7 +103,7 @@ func (s *Service) UpdateStatus(ctx context.Context, oid orderid.OrderId, status 
 }
 
 // ApplyScaledOrder updates the cached state with a scaled order size/price.
-func (s *Service) ApplyScaledOrder(oid orderid.OrderId, size, price float64) {
+func (s *Service) ApplyScaledOrder(ident recomma.OrderIdentifier, size, price float64) {
 	if s == nil {
 		return
 	}
@@ -112,7 +114,7 @@ func (s *Service) ApplyScaledOrder(oid orderid.OrderId, size, price float64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	state := s.ensureOrderLocked(oid)
+	state := s.ensureOrderLocked(ident)
 	if size > 0 {
 		state.originalQty = size
 		if state.filledQty > size {
@@ -132,8 +134,8 @@ func (s *Service) ApplyScaledOrder(oid orderid.OrderId, size, price float64) {
 	}
 	state.lastUpdate = time.Now().UTC()
 
-	deal := s.ensureDealLocked(oid)
-	deal.orders[oid.Hex()] = state
+	deal := s.ensureDealLocked(ident)
+	deal.orders[ident] = state
 	deal.lastUpdate = time.Now().UTC()
 	deal.recompute()
 }
@@ -189,6 +191,7 @@ func (s *Service) cancelTakeProfit(
 		return
 	}
 
+	ident := tp.Identifier
 	oid := tp.OrderId
 	cancel := hyperliquid.CancelOrderRequestByCloid{
 		Coin:  snapshot.Currency,
@@ -196,7 +199,8 @@ func (s *Service) cancelTakeProfit(
 	}
 
 	work := recomma.OrderWork{
-		OrderId: oid,
+		Identifier: ident,
+		OrderId:    oid,
 		Action: recomma.Action{
 			Type:   recomma.ActionCancel,
 			Cancel: &cancel,
@@ -222,6 +226,7 @@ func (s *Service) reconcileActiveTakeProfit(
 		return true
 	}
 
+	ident := tp.Identifier
 	oid := tp.OrderId
 	evt := cloneEvent(tp.Event)
 	if evt == nil {
@@ -233,13 +238,14 @@ func (s *Service) reconcileActiveTakeProfit(
 		modify.Order.Size = desiredQty
 		modify.Order.ReduceOnly = true
 
-		if s.shouldSkipSubmission(ctx, oid, modify.Order.Size, modify.Order.ReduceOnly) {
+		if s.shouldSkipSubmission(ctx, ident, modify.Order.Size, modify.Order.ReduceOnly) {
 			s.logger.Debug("skip take profit modify: already submitted", slog.Uint64("deal_id", uint64(snapshot.DealID)), slog.String("cloid", oid.Hex()))
 			return true
 		}
 
 		work := recomma.OrderWork{
-			OrderId: oid,
+			Identifier: ident,
+			OrderId:    oid,
 			Action: recomma.Action{
 				Type:   recomma.ActionModify,
 				Modify: &modify,
@@ -258,7 +264,8 @@ func (s *Service) reconcileActiveTakeProfit(
 		Cloid: oid.Hex(),
 	}
 	cancelWork := recomma.OrderWork{
-		OrderId: oid,
+		Identifier: ident,
+		OrderId:    oid,
 		Action: recomma.Action{
 			Type:   recomma.ActionCancel,
 			Cancel: &cancel,
@@ -269,7 +276,7 @@ func (s *Service) reconcileActiveTakeProfit(
 		return true
 	}
 
-	s.ensureTakeProfit(ctx, submitter, snapshot, desiredQty, &oid, snapshot.LastTakeProfitEvent, true)
+	s.ensureTakeProfit(ctx, submitter, snapshot, desiredQty, &ident, snapshot.LastTakeProfitEvent, true)
 	return true
 }
 
@@ -278,27 +285,29 @@ func (s *Service) ensureTakeProfit(
 	submitter recomma.Emitter,
 	snapshot DealSnapshot,
 	desiredQty float64,
-	preferredOrderId *orderid.OrderId,
+	preferredIdent *recomma.OrderIdentifier,
 	preferredEvent *tc.BotEvent,
 	force bool,
 ) {
-	oid, evt, ok := s.lookupTakeProfitContext(ctx, snapshot, preferredOrderId, preferredEvent)
+	ident, evt, ok := s.lookupTakeProfitContext(ctx, snapshot, preferredIdent, preferredEvent)
 	if !ok {
 		s.logger.Warn("take profit reconciliation skipped: no metadata", slog.Uint64("deal_id", uint64(snapshot.DealID)))
 		return
 	}
 
+	oid := ident.OrderId
 	create := adapter.ToCreateOrderRequest(snapshot.Currency, recomma.BotEvent{BotEvent: *evt}, oid)
 	create.Size = desiredQty
 	create.ReduceOnly = true
 
-	if !force && s.shouldSkipSubmission(ctx, oid, create.Size, create.ReduceOnly) {
+	if !force && s.shouldSkipSubmission(ctx, ident, create.Size, create.ReduceOnly) {
 		s.logger.Debug("skip take profit create: already submitted", slog.Uint64("deal_id", uint64(snapshot.DealID)), slog.String("cloid", oid.Hex()))
 		return
 	}
 
 	work := recomma.OrderWork{
-		OrderId: oid,
+		Identifier: ident,
+		OrderId:    oid,
 		Action: recomma.Action{
 			Type:   recomma.ActionCreate,
 			Create: &create,
@@ -318,6 +327,11 @@ func (s *Service) emitOrderWork(
 	snapshot DealSnapshot,
 	qty float64,
 ) bool {
+	if work.Identifier == (recomma.OrderIdentifier{}) {
+		s.logger.Warn("order work missing identifier", slog.Uint64("deal_id", uint64(snapshot.DealID)), slog.Uint64("bot_id", uint64(snapshot.BotID)), slog.String("cloid", work.OrderId.Hex()))
+		return false
+	}
+
 	emitCtx, cancelFn := context.WithTimeout(ctx, 30*time.Second)
 	err := submitter.Emit(emitCtx, work)
 	cancelFn()
@@ -325,6 +339,8 @@ func (s *Service) emitOrderWork(
 	fields := []any{
 		slog.Uint64("deal_id", uint64(snapshot.DealID)),
 		slog.Uint64("bot_id", uint64(snapshot.BotID)),
+		slog.String("venue", work.Identifier.Venue()),
+		slog.String("wallet", work.Identifier.Wallet),
 		slog.String("cloid", work.OrderId.Hex()),
 		slog.Float64("net_qty", snapshot.Position.NetQty),
 		slog.Float64("target_qty", qty),
@@ -350,10 +366,10 @@ func (s *Service) emitOrderWork(
 	return true
 }
 
-func (s *Service) shouldSkipSubmission(ctx context.Context, oid orderid.OrderId, desiredSize float64, requireReduceOnly bool) bool {
-	action, found, err := s.store.LoadHyperliquidSubmission(ctx, oid)
+func (s *Service) shouldSkipSubmission(ctx context.Context, ident recomma.OrderIdentifier, desiredSize float64, requireReduceOnly bool) bool {
+	action, found, err := s.store.LoadHyperliquidSubmission(ctx, ident)
 	if err != nil {
-		s.logger.Warn("load hyperliquid submission failed", slog.String("cloid", oid.Hex()), slog.String("error", err.Error()))
+		s.logger.Warn("load hyperliquid submission failed", slog.String("cloid", ident.Hex()), slog.String("error", err.Error()))
 		return false
 	}
 	if !found {
@@ -364,9 +380,9 @@ func (s *Service) shouldSkipSubmission(ctx context.Context, oid orderid.OrderId,
 		return false
 	}
 
-	status, haveStatus, err := s.store.LoadHyperliquidStatus(ctx, oid)
+	status, haveStatus, err := s.store.LoadHyperliquidStatus(ctx, ident)
 	if err != nil {
-		s.logger.Warn("load hyperliquid status failed", slog.String("cloid", oid.Hex()), slog.String("error", err.Error()))
+		s.logger.Warn("load hyperliquid status failed", slog.String("cloid", ident.Hex()), slog.String("error", err.Error()))
 		return false
 	}
 	if !haveStatus || !isLiveHyperliquidStatus(status) {
@@ -417,13 +433,13 @@ func isLiveHyperliquidStatus(status *hyperliquid.WsOrder) bool {
 func (s *Service) lookupTakeProfitContext(
 	ctx context.Context,
 	snapshot DealSnapshot,
-	preferredOrderId *orderid.OrderId,
+	preferredIdent *recomma.OrderIdentifier,
 	preferredEvent *tc.BotEvent,
-) (orderid.OrderId, *tc.BotEvent, bool) {
-	var oid *orderid.OrderId
-	if preferredOrderId != nil {
-		clone := *preferredOrderId
-		oid = &clone
+) (recomma.OrderIdentifier, *tc.BotEvent, bool) {
+	var ident *recomma.OrderIdentifier
+	if preferredIdent != nil {
+		clone := *preferredIdent
+		ident = &clone
 	}
 
 	evt := cloneEvent(preferredEvent)
@@ -431,43 +447,52 @@ func (s *Service) lookupTakeProfitContext(
 		evt = cloneEvent(snapshot.LastTakeProfitEvent)
 	}
 
-	if oid == nil && evt != nil {
+	if ident == nil && evt != nil {
 		for _, order := range snapshot.Orders {
 			if !order.ReduceOnly || order.Event == nil {
 				continue
 			}
 			if eventsMatch(order.Event, evt) {
-				clone := order.OrderId
-				oid = &clone
+				clone := order.Identifier
+				ident = &clone
 				break
 			}
 		}
 	}
 
-	needLoadOrderId := oid == nil
+	needLoadIdent := ident == nil
 	needLoadEvent := evt == nil
-	if needLoadOrderId || needLoadEvent {
+	if needLoadIdent || needLoadEvent {
 		storedOrderId, storedEvt, err := s.store.LoadTakeProfitForDeal(ctx, snapshot.DealID)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
 				s.logger.Warn("load take profit metadata failed", slog.Uint64("deal_id", uint64(snapshot.DealID)), slog.String("error", err.Error()))
 			}
-			return orderid.OrderId{}, nil, false
+			return recomma.OrderIdentifier{}, nil, false
 		}
-		if needLoadOrderId {
-			clone := *storedOrderId
-			oid = &clone
+		if needLoadIdent {
+			storedIdents, err := s.store.ListSubmissionIdentifiersForOrder(ctx, *storedOrderId)
+			if err != nil {
+				s.logger.Warn("load submission identifiers", slog.Uint64("deal_id", uint64(snapshot.DealID)), slog.String("error", err.Error()))
+			}
+			if len(storedIdents) > 0 {
+				clone := storedIdents[0]
+				ident = &clone
+			} else {
+				s.logger.Warn("take profit reconciliation missing submission identifier", slog.Uint64("deal_id", uint64(snapshot.DealID)), slog.String("orderid", storedOrderId.Hex()))
+				return recomma.OrderIdentifier{}, nil, false
+			}
 		}
 		if needLoadEvent {
 			evt = cloneEvent(storedEvt)
 		}
 	}
 
-	if oid == nil || evt == nil {
-		return orderid.OrderId{}, nil, false
+	if ident == nil || evt == nil {
+		return recomma.OrderIdentifier{}, nil, false
 	}
 
-	return *oid, evt, true
+	return *ident, evt, true
 }
 
 func cloneEvent(evt *tc.BotEvent) *tc.BotEvent {
@@ -506,9 +531,14 @@ func (s *Service) reloadDeal(ctx context.Context, dealID uint32) error {
 		if err != nil {
 			return err
 		}
-		status, found, err := s.store.LoadHyperliquidStatus(ctx, oid)
+
+		identifiers, err := s.store.ListSubmissionIdentifiersForOrder(ctx, oid)
 		if err != nil {
-			return err
+			s.logger.Warn("load submission identifiers", slog.Uint64("deal_id", uint64(oid.DealID)), slog.String("error", err.Error()))
+		}
+		if len(identifiers) == 0 {
+			s.logger.Warn("reload deal missing submission identifiers", slog.Uint64("deal_id", uint64(oid.DealID)), slog.String("orderid", oid.Hex()))
+			continue
 		}
 
 		scaledOrders, err := s.store.ListScaledOrdersByOrderId(ctx, oid)
@@ -521,66 +551,74 @@ func (s *Service) reloadDeal(ctx context.Context, dealID uint32) error {
 			latestScaled = &copy
 		}
 
-		s.mu.Lock()
-		state := s.ensureOrderLocked(oid)
-		if event != nil {
-			clone := *event
-			state.applyEvent(&clone)
-		}
-		if found && status != nil {
-			state.applyStatus(*status)
-		} else {
-			state.inferFromEvent()
-		}
-		if latestScaled != nil {
-			if latestScaled.ScaledSize > 0 {
-				state.originalQty = latestScaled.ScaledSize
-				if state.filledQty > state.originalQty {
-					state.filledQty = state.originalQty
-				}
-				remaining := state.originalQty - state.filledQty
-				if remaining < 0 {
-					remaining = 0
-				}
-				state.remainingQty = remaining
+		for _, ident := range identifiers {
+			status, found, err := s.store.LoadHyperliquidStatus(ctx, ident)
+			if err != nil {
+				return err
 			}
-		}
 
-		deal := s.ensureDealLocked(oid)
-		deal.orders[oid.Hex()] = state
-		deal.lastUpdate = time.Now().UTC()
-		deal.recompute()
-		s.mu.Unlock()
+			s.mu.Lock()
+			state := s.ensureOrderLocked(ident)
+			if event != nil {
+				clone := *event
+				state.applyEvent(&clone)
+			}
+			if found && status != nil {
+				state.applyStatus(*status)
+			} else {
+				state.inferFromEvent()
+			}
+			if latestScaled != nil {
+				if latestScaled.ScaledSize > 0 {
+					state.originalQty = latestScaled.ScaledSize
+					if state.filledQty > state.originalQty {
+						state.filledQty = state.originalQty
+					}
+					remaining := state.originalQty - state.filledQty
+					if remaining < 0 {
+						remaining = 0
+					}
+					state.remainingQty = remaining
+				}
+			}
+
+			deal := s.ensureDealLocked(ident)
+			deal.orders[ident] = state
+			deal.lastUpdate = time.Now().UTC()
+			deal.recompute()
+			s.mu.Unlock()
+		}
 	}
 
 	return nil
 }
 
-func (s *Service) ensureOrderLocked(oid orderid.OrderId) *orderState {
-	key := oid.Hex()
-	state, ok := s.orders[key]
+func (s *Service) ensureOrderLocked(ident recomma.OrderIdentifier) *orderState {
+	state, ok := s.orders[ident]
 	if !ok {
 		state = &orderState{
-			oid: oid,
+			identifier: ident,
 		}
-		s.orders[key] = state
+		s.orders[ident] = state
+	} else {
+		state.identifier = ident
 	}
 	return state
 }
 
-func (s *Service) ensureDealLocked(oid orderid.OrderId) *dealState {
-	deal, ok := s.deals[oid.DealID]
+func (s *Service) ensureDealLocked(ident recomma.OrderIdentifier) *dealState {
+	deal, ok := s.deals[ident.OrderId.DealID]
 	if !ok {
 		deal = &dealState{
-			botID:      oid.BotID,
-			dealID:     oid.DealID,
-			orders:     make(map[string]*orderState),
+			botID:      ident.OrderId.BotID,
+			dealID:     ident.OrderId.DealID,
+			orders:     make(map[recomma.OrderIdentifier]*orderState),
 			lastUpdate: time.Now().UTC(),
 		}
-		s.deals[oid.DealID] = deal
+		s.deals[ident.OrderId.DealID] = deal
 	}
 	if deal.botID == 0 {
-		deal.botID = oid.BotID
+		deal.botID = ident.OrderId.BotID
 	}
 	return deal
 }
@@ -597,7 +635,7 @@ func (s *Service) listDealIDs() []uint32 {
 }
 
 type orderState struct {
-	oid orderid.OrderId
+	identifier recomma.OrderIdentifier
 
 	event *tc.BotEvent
 
@@ -737,7 +775,8 @@ func (o *orderState) snapshot() OrderSnapshot {
 	}
 
 	return OrderSnapshot{
-		OrderId:        o.oid,
+		Identifier:     o.identifier,
+		OrderId:        o.identifier.OrderId,
 		Coin:           o.coin,
 		OrderType:      o.orderType,
 		Side:           o.side,
@@ -759,7 +798,7 @@ type dealState struct {
 	dealID uint32
 
 	currency string
-	orders   map[string]*orderState
+	orders   map[recomma.OrderIdentifier]*orderState
 
 	position   dealPosition
 	lastUpdate time.Time
@@ -900,8 +939,9 @@ type DealPosition struct {
 
 // OrderSnapshot describes a single order tracked by the fill tracker.
 type OrderSnapshot struct {
-	OrderId orderid.OrderId
-	Coin    string
+	Identifier recomma.OrderIdentifier
+	OrderId    orderid.OrderId
+	Coin       string
 
 	OrderType string
 	Side      string

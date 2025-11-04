@@ -10,10 +10,48 @@ import (
 	"github.com/sonirico/go-hyperliquid"
 )
 
+// VenueID identifies the upstream venue that processed an order submission.
+//
+// It intentionally uses a string alias so identifiers remain comparable when
+// embedded into other structs (e.g., recomma.OrderWork).
+type VenueID string
+
+// OrderIdentifier uniquely identifies a submission across venues and wallets.
+// It bundles the metadata fingerprint with the target venue information so
+// storage, emitters, and SSE payloads can disambiguate submissions that share
+// the same metadata but target different wallets.
+type OrderIdentifier struct {
+	VenueID VenueID
+	Wallet  string
+	OrderId orderid.OrderId
+}
+
+// NewOrderIdentifier constructs an identifier for the given venue, wallet, and
+// metadata fingerprint.
+func NewOrderIdentifier(venue VenueID, wallet string, oid orderid.OrderId) OrderIdentifier {
+	return OrderIdentifier{
+		VenueID: venue,
+		Wallet:  wallet,
+		OrderId: oid,
+	}
+}
+
+// Venue returns the venue identifier as a string. Callers that need the raw
+// VenueID may access the field directly, but most SQL bindings expect a string.
+func (oi OrderIdentifier) Venue() string {
+	return string(oi.VenueID)
+}
+
+// Hex returns the metadata fingerprint in hex form.
+func (oi OrderIdentifier) Hex() string {
+	return oi.OrderId.Hex()
+}
+
 type OrderWork struct {
-	OrderId  orderid.OrderId
-	Action   Action
-	BotEvent BotEvent
+	Identifier OrderIdentifier
+	OrderId    orderid.OrderId
+	Action     Action
+	BotEvent   BotEvent
 }
 
 type Emitter interface {

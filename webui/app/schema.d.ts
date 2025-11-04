@@ -583,6 +583,8 @@ export interface components {
              * @description When the originating 3Commas event was created.
              */
             created_at: string;
+            /** @description Upstream venue identifier associated with the submission. */
+            venue_id?: string;
         };
         ThreeCommasOrderState: {
             /** @description Parsed 3Commas bot event emitted for this OrderId. */

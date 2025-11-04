@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
+	"strings"
 	"time"
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
@@ -82,6 +84,13 @@ func NewEngine(client ThreeCommasAPI, opts ...EngineOption) *Engine {
 	}
 
 	return e
+}
+
+type emissionPlan struct {
+	action       recomma.Action
+	targets      []recomma.OrderIdentifier
+	latest       *recomma.BotEvent
+	skipExisting bool
 }
 
 func (e *Engine) ProduceActiveDeals(ctx context.Context, q Queue) error {
@@ -254,39 +263,133 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 	}
 
 	for _, oid := range seen {
-		action, latestEvent, shouldEmit, err := e.reduceOrderEvents(ctx, currency, oid, logger.With("botevent-id", oid.BotEventID))
+		orderLogger := logger.With("botevent-id", oid.BotEventID)
+
+		storedIdents, err := e.store.ListSubmissionIdentifiersForOrder(ctx, oid)
+		if err != nil {
+			orderLogger.Warn("could not load submission identifiers", slog.String("error", err.Error()))
+		}
+
+		hasLocalOrder := len(storedIdents) > 0
+
+		action, latestEvent, shouldEmit, err := e.reduceOrderEvents(ctx, currency, oid, hasLocalOrder, orderLogger)
 		if err != nil {
 			return fmt.Errorf("reduce order %d: %w", oid.BotEventID, err)
 		}
-		if !shouldEmit {
+
+		assignments, err := e.store.ListVenuesForBot(ctx, oid.BotID)
+		if err != nil {
+			orderLogger.Warn("could not load bot venues", slog.String("error", err.Error()))
+			assignments = nil
+		}
+
+		missingTargets := missingAssignmentTargets(oid, assignments, storedIdents)
+		needsReplay := len(missingTargets) > 0 && latestEvent != nil && latestEvent.Status == tc.Active
+
+		if fillSnapshot != nil && latestEvent != nil {
+			adjusted, emit := e.adjustActionWithTracker(currency, oid, *latestEvent, action, fillSnapshot, orderLogger, false)
+			action = adjusted
+			shouldEmit = emit
+		}
+
+		replayForPrimary := false
+		if !shouldEmit && needsReplay {
+			req := adapter.ToCreateOrderRequest(currency, *latestEvent, oid)
+			orderLogger.Info("replaying create for venues missing submissions", slog.Int("venues", len(missingTargets)))
+			action = recomma.Action{Type: recomma.ActionCreate, Create: &req}
+			shouldEmit = true
+			replayForPrimary = true
+			needsReplay = false
+		}
+
+		var emissions []emissionPlan
+
+		if shouldEmit {
+			targets := resolveOrderTargets(oid, assignments, storedIdents, action.Type)
+			if len(targets) > 0 {
+				var latestCopy *recomma.BotEvent
+				if latestEvent != nil {
+					copy := *latestEvent
+					latestCopy = &copy
+				}
+				emissions = append(emissions, emissionPlan{
+					action:       action,
+					targets:      targets,
+					latest:       latestCopy,
+					skipExisting: replayForPrimary,
+				})
+				if action.Type == recomma.ActionCreate {
+					needsReplay = false
+				}
+			} else if !needsReplay {
+				orderLogger.Debug("no venue targets resolved; skipping emission")
+				continue
+			}
+		}
+
+		if needsReplay {
+			req := adapter.ToCreateOrderRequest(currency, *latestEvent, oid)
+			orderLogger.Info("replaying create for venues missing submissions", slog.Int("venues", len(missingTargets)))
+			targets := append([]recomma.OrderIdentifier(nil), missingTargets...)
+			var latestCopy *recomma.BotEvent
+			if latestEvent != nil {
+				copy := *latestEvent
+				latestCopy = &copy
+			}
+			emissions = append(emissions, emissionPlan{
+				action:       recomma.Action{Type: recomma.ActionCreate, Create: &req},
+				targets:      targets,
+				latest:       latestCopy,
+				skipExisting: true,
+			})
+		}
+
+		if len(emissions) == 0 {
 			continue
 		}
-		if fillSnapshot != nil && latestEvent != nil {
-			action, shouldEmit = e.adjustActionWithTracker(currency, oid, *latestEvent, action, fillSnapshot, logger.With("botevent-id", oid.BotEventID))
-			if !shouldEmit {
-				continue
+
+		for _, emission := range emissions {
+			action := emission.action
+			latestForEmission := emission.latest
+			emit := true
+
+			if fillSnapshot != nil && latestForEmission != nil {
+				action, emit = e.adjustActionWithTracker(currency, oid, *latestForEmission, action, fillSnapshot, orderLogger, emission.skipExisting)
+				if !emit {
+					continue
+				}
 			}
-		}
-		var scaleResult *orderscaler.Result
-		if latestEvent != nil {
-			var err error
-			action, scaleResult, shouldEmit, err = e.applyScaling(ctx, oid, latestEvent, action, logger.With("botevent-id", oid.BotEventID))
-			if err != nil {
-				return fmt.Errorf("scale order %d: %w", oid.BotEventID, err)
-			}
-			if !shouldEmit {
-				continue
+
+			var scaleResult *orderscaler.Result
+			if latestForEmission != nil {
+				var err error
+				action, scaleResult, emit, err = e.applyScaling(ctx, oid, latestForEmission, action, orderLogger)
+				if err != nil {
+					return fmt.Errorf("scale order %d: %w", oid.BotEventID, err)
+				}
+				if !emit {
+					continue
+				}
 			}
 			if e.tracker != nil && scaleResult != nil {
-				e.tracker.ApplyScaledOrder(oid, scaleResult.Size, scaleResult.Price)
+				for _, ident := range emission.targets {
+					e.tracker.ApplyScaledOrder(ident, scaleResult.Size, scaleResult.Price)
+				}
 			}
-		}
-		work := recomma.OrderWork{OrderId: oid, Action: action}
-		if latestEvent != nil {
-			work.BotEvent = *latestEvent
-		}
-		if err := e.emitter.Emit(ctx, work); err != nil {
-			e.logger.Warn("could not submit order", slog.Any("orderid", oid), slog.Any("action", action), slog.String("error", err.Error()))
+
+			for _, ident := range emission.targets {
+				work := recomma.OrderWork{
+					Identifier: ident,
+					OrderId:    oid,
+					Action:     cloneAction(action),
+				}
+				if latestForEmission != nil {
+					work.BotEvent = *latestForEmission
+				}
+				if err := e.emitter.Emit(ctx, work); err != nil {
+					e.logger.Warn("could not submit order", slog.Any("orderid", oid), slog.String("venue", ident.Venue()), slog.Any("action", work.Action), slog.String("error", err.Error()))
+				}
+			}
 		}
 	}
 
@@ -301,6 +404,7 @@ func (e *Engine) reduceOrderEvents(
 	ctx context.Context,
 	currency string,
 	oid orderid.OrderId,
+	hasLocalOrder bool,
 	logger *slog.Logger,
 ) (recomma.Action, *recomma.BotEvent, bool, error) {
 
@@ -320,12 +424,6 @@ func (e *Engine) reduceOrderEvents(
 	prev := previousDistinct(events)
 
 	// Did we already create anything for this CLOID on Hyperliquid?
-	submitted, haveSubmission, err := e.store.LoadHyperliquidSubmission(ctx, oid)
-	if err != nil {
-		return recomma.Action{}, nil, false, fmt.Errorf("load submission: %w", err)
-	}
-	hasLocalOrder := haveSubmission && submitted.Create != nil
-
 	// If Hyperliquid hasn’t seen this order yet, we pretend there is no “previous”
 	// snapshot so BuildAction can only choose between Create or None.
 	if !hasLocalOrder {
@@ -417,6 +515,7 @@ func (e *Engine) adjustActionWithTracker(
 	action recomma.Action,
 	snapshot *filltracker.DealSnapshot,
 	logger *slog.Logger,
+	skipExisting bool,
 ) (recomma.Action, bool) {
 	if snapshot == nil {
 		return action, true
@@ -435,7 +534,7 @@ func (e *Engine) adjustActionWithTracker(
 	}
 
 	active := snapshot.ActiveTakeProfit
-	if active != nil && active.ReduceOnly && nearlyEqual(active.RemainingQty, desiredQty) {
+	if !skipExisting && active != nil && active.ReduceOnly && nearlyEqual(active.RemainingQty, desiredQty) {
 		logger.Debug("take profit already matches position",
 			slog.Float64("desired_qty", desiredQty),
 			slog.Float64("existing_qty", active.RemainingQty),
@@ -553,4 +652,109 @@ func (e *Engine) applyScaling(
 	default:
 		return action, nil, true, nil
 	}
+}
+
+func resolveOrderTargets(
+	oid orderid.OrderId,
+	assignments []storage.VenueAssignment,
+	stored []recomma.OrderIdentifier,
+	actionType recomma.ActionType,
+) []recomma.OrderIdentifier {
+	targets := make(map[recomma.OrderIdentifier]bool)
+	for _, ident := range stored {
+		targets[ident] = true
+	}
+
+	for _, assignment := range assignments {
+		ident := recomma.NewOrderIdentifier(assignment.VenueID, assignment.Wallet, oid)
+		if _, ok := targets[ident]; !ok {
+			targets[ident] = false
+		}
+	}
+
+	if len(targets) == 0 {
+		ident := storage.DefaultHyperliquidIdentifier(oid)
+		targets[ident] = len(stored) > 0
+	}
+
+	list := make([]recomma.OrderIdentifier, 0, len(targets))
+	for ident, hadSubmission := range targets {
+		switch actionType {
+		case recomma.ActionCreate:
+			if hadSubmission {
+				continue
+			}
+		case recomma.ActionModify, recomma.ActionCancel:
+			if !hadSubmission {
+				continue
+			}
+		}
+		list = append(list, ident)
+	}
+
+	slices.SortFunc(list, func(a, b recomma.OrderIdentifier) int {
+		if cmp := strings.Compare(a.Venue(), b.Venue()); cmp != 0 {
+			return cmp
+		}
+		if cmp := strings.Compare(a.Wallet, b.Wallet); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(a.Hex(), b.Hex())
+	})
+
+	return list
+}
+
+func missingAssignmentTargets(
+	oid orderid.OrderId,
+	assignments []storage.VenueAssignment,
+	stored []recomma.OrderIdentifier,
+) []recomma.OrderIdentifier {
+	if len(assignments) == 0 {
+		return nil
+	}
+
+	seen := make(map[recomma.OrderIdentifier]struct{}, len(stored))
+	for _, ident := range stored {
+		seen[ident] = struct{}{}
+	}
+
+	missing := make([]recomma.OrderIdentifier, 0, len(assignments))
+	for _, assignment := range assignments {
+		ident := recomma.NewOrderIdentifier(assignment.VenueID, assignment.Wallet, oid)
+		if _, ok := seen[ident]; ok {
+			continue
+		}
+		missing = append(missing, ident)
+	}
+
+	slices.SortFunc(missing, compareIdentifiers)
+	return missing
+}
+
+func compareIdentifiers(a, b recomma.OrderIdentifier) int {
+	if cmp := strings.Compare(a.Venue(), b.Venue()); cmp != 0 {
+		return cmp
+	}
+	if cmp := strings.Compare(a.Wallet, b.Wallet); cmp != 0 {
+		return cmp
+	}
+	return strings.Compare(a.Hex(), b.Hex())
+}
+
+func cloneAction(action recomma.Action) recomma.Action {
+	clone := action
+	if action.Create != nil {
+		req := *action.Create
+		clone.Create = &req
+	}
+	if action.Modify != nil {
+		req := *action.Modify
+		clone.Modify = &req
+	}
+	if action.Cancel != nil {
+		req := *action.Cancel
+		clone.Cancel = &req
+	}
+	return clone
 }

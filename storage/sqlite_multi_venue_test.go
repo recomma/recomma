@@ -100,10 +100,10 @@ func TestStorageMultiVenueIsolation(t *testing.T) {
 	var alphaEvent, betaEvent *api.StreamEvent
 	for i := range events {
 		evt := events[i]
-		if evt.VenueID == alphaIdent.Venue() && evt.Type == api.HyperliquidSubmission {
+		if evt.Identifier != nil && evt.Identifier.Venue() == alphaIdent.Venue() && evt.Type == api.HyperliquidSubmission {
 			alphaEvent = &evt
 		}
-		if evt.VenueID == betaIdent.Venue() && evt.Type == api.HyperliquidSubmission {
+		if evt.Identifier != nil && evt.Identifier.Venue() == betaIdent.Venue() && evt.Type == api.HyperliquidSubmission {
 			betaEvent = &evt
 		}
 	}

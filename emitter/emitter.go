@@ -2,6 +2,7 @@ package emitter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/recomma/recomma/hl/ws"
+	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
 	"github.com/sonirico/go-hyperliquid"
@@ -21,21 +23,72 @@ type OrderQueue interface {
 }
 
 type QueueEmitter struct {
-	q      OrderQueue
-	logger *slog.Logger
+	q        OrderQueue
+	logger   *slog.Logger
+	mu       sync.RWMutex
+	emitters map[recomma.VenueID]recomma.Emitter
 }
+
+var (
+	ErrMissingOrderIdentifier   = errors.New("queue emitter: order identifier required")
+	ErrUnregisteredVenueEmitter = errors.New("queue emitter: no emitter registered for venue")
+	ErrOrderIdentifierMismatch  = errors.New("queue emitter: order identifier mismatch")
+)
 
 func NewQueueEmitter(q OrderQueue) *QueueEmitter {
 	return &QueueEmitter{
-		q:      q,
-		logger: slog.Default().WithGroup("emitter"),
+		q:        q,
+		logger:   slog.Default().WithGroup("emitter"),
+		emitters: make(map[recomma.VenueID]recomma.Emitter),
 	}
 }
 
+// Register associates a venue with a concrete emitter implementation. Existing
+// registrations are overwritten so callers can update emitters during
+// reconfiguration.
+func (e *QueueEmitter) Register(venue recomma.VenueID, emitter recomma.Emitter) {
+	if emitter == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.emitters[venue] = emitter
+}
+
+func (e *QueueEmitter) emitterFor(venue recomma.VenueID) (recomma.Emitter, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	emitter, ok := e.emitters[venue]
+	return emitter, ok
+}
+
 func (e *QueueEmitter) Emit(ctx context.Context, w recomma.OrderWork) error {
+	if w.Identifier == (recomma.OrderIdentifier{}) {
+		return ErrMissingOrderIdentifier
+	}
+	if w.OrderId != (orderid.OrderId{}) && w.Identifier.OrderId != w.OrderId {
+		return ErrOrderIdentifierMismatch
+	}
+	if _, ok := e.emitterFor(w.Identifier.VenueID); !ok {
+		return fmt.Errorf("%w: %s", ErrUnregisteredVenueEmitter, w.Identifier.Venue())
+	}
 	e.logger.Debug("emit", slog.Any("order-work", w))
 	e.q.Add(w)
 	return nil
+}
+
+// Dispatch forwards the work item to the venue-specific emitter registered for
+// its identifier. Workers call this after dequeuing an item so pacing and
+// retries remain local to the concrete emitter implementation.
+func (e *QueueEmitter) Dispatch(ctx context.Context, w recomma.OrderWork) error {
+	if w.Identifier == (recomma.OrderIdentifier{}) {
+		return ErrMissingOrderIdentifier
+	}
+	emitter, ok := e.emitterFor(w.Identifier.VenueID)
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrUnregisteredVenueEmitter, w.Identifier.Venue())
+	}
+	return emitter.Emit(ctx, w)
 }
 
 type hyperliquidExchange interface {
@@ -208,7 +261,16 @@ func (e *HyperLiquidEmitter) applyIOCOffset(order hyperliquid.CreateOrderRequest
 }
 
 func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) error {
-	logger := e.logger.With("orderid", w.OrderId.Hex()).With("bot-event", w.BotEvent)
+	if w.Identifier == (recomma.OrderIdentifier{}) {
+		return ErrMissingOrderIdentifier
+	}
+	if w.OrderId != (orderid.OrderId{}) && w.Identifier.OrderId != w.OrderId {
+		return ErrOrderIdentifierMismatch
+	}
+
+	ident := w.Identifier
+
+	logger := e.logger.With("orderid", ident.Hex()).With("venue", ident.Venue()).With("bot-event", w.BotEvent)
 	logger.Debug("emit", slog.Any("orderwork", w))
 
 	if w.Action.Type == recomma.ActionNone {
@@ -234,7 +296,7 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 		if e.ws != nil {
 			if status, ok := e.ws.Get(ctx, w.OrderId); ok && isLiveStatus(status) {
 				var latestSubmission *hyperliquid.CreateOrderRequest
-				if submission, found, err := e.store.LoadHyperliquidSubmission(ctx, storage.DefaultHyperliquidIdentifier(w.OrderId)); err != nil {
+				if submission, found, err := e.store.LoadHyperliquidSubmission(ctx, ident); err != nil {
 					logger.Warn("could not load latest submission", slog.String("error", err.Error()))
 				} else if found {
 					switch {
@@ -292,7 +354,7 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 			status, err := e.exchange.Order(ctx, *w.Action.Create, nil)
 			if err != nil {
 				if strings.Contains(err.Error(), "Order must have minimum value") {
-					if err := e.store.RecordHyperliquidOrderRequest(ctx, storage.DefaultHyperliquidIdentifier(w.OrderId), *w.Action.Create, w.BotEvent.RowID); err != nil {
+					if err := e.store.RecordHyperliquidOrderRequest(ctx, ident, *w.Action.Create, w.BotEvent.RowID); err != nil {
 						logger.Warn("could not add to store", slog.String("error", err.Error()))
 					}
 					logger.Warn("could not submit (order value), ignoring", slog.String("error", err.Error()))
@@ -300,7 +362,7 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 				}
 
 				if strings.Contains(err.Error(), "Reduce only order would increase position") {
-					if err := e.store.RecordHyperliquidOrderRequest(ctx, storage.DefaultHyperliquidIdentifier(w.OrderId), *w.Action.Create, w.BotEvent.RowID); err != nil {
+					if err := e.store.RecordHyperliquidOrderRequest(ctx, ident, *w.Action.Create, w.BotEvent.RowID); err != nil {
 						logger.Warn("could not add to store", slog.String("error", err.Error()))
 					}
 					logger.Warn("could not submit (reduce only order, increase position), ignoring", slog.String("error", err.Error()))
@@ -337,7 +399,7 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 			return err
 		}
 
-		if err := e.store.RecordHyperliquidOrderRequest(ctx, storage.DefaultHyperliquidIdentifier(w.OrderId), *w.Action.Create, w.BotEvent.RowID); err != nil {
+		if err := e.store.RecordHyperliquidOrderRequest(ctx, ident, *w.Action.Create, w.BotEvent.RowID); err != nil {
 			logger.Warn("could not add to store", slog.String("error", err.Error()))
 		}
 		executedAction = w.Action
@@ -359,7 +421,7 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 			logger.Warn("could not cancel order", slog.String("error", err.Error()), slog.Any("action", w.Action.Cancel))
 			return fmt.Errorf("could not cancel order: %w", err)
 		}
-		if err := e.store.RecordHyperliquidCancel(ctx, storage.DefaultHyperliquidIdentifier(w.OrderId), *w.Action.Cancel, w.BotEvent.RowID); err != nil {
+		if err := e.store.RecordHyperliquidCancel(ctx, ident, *w.Action.Cancel, w.BotEvent.RowID); err != nil {
 			logger.Warn("could not add to store", slog.String("error", err.Error()))
 		}
 		executedAction = w.Action
@@ -420,7 +482,7 @@ func (e *HyperLiquidEmitter) submitModify(
 		logger.Warn("could not modify order", slog.String("error", err.Error()), slog.Any("action", req))
 		return nil, fmt.Errorf("could not modify order: %w", err)
 	}
-	if err := e.store.AppendHyperliquidModify(ctx, storage.DefaultHyperliquidIdentifier(w.OrderId), req, w.BotEvent.RowID); err != nil {
+	if err := e.store.AppendHyperliquidModify(ctx, w.Identifier, req, w.BotEvent.RowID); err != nil {
 		logger.Warn("could not add to store", slog.String("error", err.Error()))
 	}
 	return &status, nil

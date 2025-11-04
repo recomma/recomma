@@ -48,9 +48,10 @@ func (oi OrderIdentifier) Hex() string {
 }
 
 type OrderWork struct {
-	OrderId  orderid.OrderId
-	Action   Action
-	BotEvent BotEvent
+	Identifier OrderIdentifier
+	OrderId    orderid.OrderId
+	Action     Action
+	BotEvent   BotEvent
 }
 
 type Emitter interface {

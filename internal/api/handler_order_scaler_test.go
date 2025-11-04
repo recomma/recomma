@@ -55,6 +55,38 @@ func (s *orderScalerStubStore) LoadHyperliquidStatus(context.Context, recomma.Or
 	return nil, false, nil
 }
 
+func (s *orderScalerStubStore) ListSubmissionIdentifiersForOrder(context.Context, orderid.OrderId) ([]recomma.OrderIdentifier, error) {
+	return nil, nil
+}
+
+func (s *orderScalerStubStore) ListVenues(context.Context) ([]VenueRecord, error) {
+	return nil, nil
+}
+
+func (s *orderScalerStubStore) UpsertVenue(context.Context, string, VenueUpsertRequest) (VenueRecord, error) {
+	return VenueRecord{}, nil
+}
+
+func (s *orderScalerStubStore) DeleteVenue(context.Context, string) error {
+	return nil
+}
+
+func (s *orderScalerStubStore) ListVenueAssignments(context.Context, string) ([]VenueAssignmentRecord, error) {
+	return nil, nil
+}
+
+func (s *orderScalerStubStore) UpsertVenueAssignment(context.Context, string, int64, bool) (VenueAssignmentRecord, error) {
+	return VenueAssignmentRecord{}, nil
+}
+
+func (s *orderScalerStubStore) DeleteVenueAssignment(context.Context, string, int64) error {
+	return nil
+}
+
+func (s *orderScalerStubStore) ListBotVenues(context.Context, int64) ([]BotVenueAssignmentRecord, error) {
+	return nil, nil
+}
+
 func (s *orderScalerStubStore) GetDefaultOrderScaler(context.Context) (OrderScalerState, error) {
 	return s.defaultState, nil
 }
@@ -123,9 +155,12 @@ func (s *orderScalerStubStore) publishEvent(oid orderid.OrderId, actor string) {
 		return
 	}
 	effective, _ := s.ResolveEffectiveOrderScalerConfig(context.Background(), oid)
+	ident := recomma.NewOrderIdentifier("", "", oid)
+	identCopy := ident
 	event := StreamEvent{
 		Type:         OrderScalerConfigEntry,
 		OrderID:      oid,
+		Identifier:   &identCopy,
 		ObservedAt:   time.Now().UTC(),
 		ScalerConfig: &effective,
 		Actor:        &actor,
@@ -289,7 +324,7 @@ func TestMakeOrderLogEntryClampsEffectiveMultiplier(t *testing.T) {
 		Default:    OrderScalerState{Multiplier: 3.25},
 	}
 
-	entry, ok := handler.makeOrderLogEntry(context.Background(), oid, time.Now().UTC(), OrderScalerConfigEntry, nil, nil, nil, &effective, nil, nil, nil, nil)
+	entry, ok := handler.makeOrderLogEntry(context.Background(), oid, time.Now().UTC(), OrderScalerConfigEntry, nil, nil, nil, &effective, nil, nil, nil, nil, nil)
 	require.True(t, ok)
 
 	logEntry, err := entry.AsOrderScalerConfigLogEntry()

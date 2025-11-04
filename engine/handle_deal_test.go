@@ -11,6 +11,7 @@ import (
 	"github.com/recomma/recomma/engine/orderscaler"
 	"github.com/recomma/recomma/filltracker"
 	"github.com/recomma/recomma/hl"
+	api "github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/internal/testutil"
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
@@ -93,6 +94,13 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 		testutil.WithType(tc.MarketOrderOrderType(tc.SELL)),
 	)
 
+	reactivateEvent, _ := testutil.NewBotEvent(
+		t,
+		base.Add(3*time.Minute),
+		botID,
+		dealID,
+	)
+
 	cancelEvent := func(ts time.Time) tc.BotEvent {
 		evt, _ := testutil.NewBotEvent(
 			t,
@@ -110,6 +118,7 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 		events       []tc.BotEvent
 		prepare      func(t *testing.T, h *harness)
 		wantActions  []recomma.ActionType
+		wantVenues   []recomma.VenueID
 		wantStatuses []tc.MarketOrderStatusString
 	}
 
@@ -174,6 +183,51 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 				tc.MarketOrderStatusString(tc.Active),
 			},
 		},
+		{
+			name: "replays create for venues missing submissions",
+			events: []tc.BotEvent{
+				activeEvent,
+				cancelEvent(base.Add(2 * time.Minute)),
+				reactivateEvent,
+			},
+			prepare: func(t *testing.T, h *harness) {
+				ctx := h.ctx
+
+				require.NoError(t, h.store.EnsureDefaultVenueWallet(ctx, "hl-primary-wallet"))
+
+				const (
+					defaultVenue    = recomma.VenueID("hyperliquid:default")
+					secondaryVenue  = recomma.VenueID("hyperliquid:secondary")
+					secondaryWallet = "hl-secondary-wallet"
+				)
+
+				_, err := h.store.UpsertVenue(ctx, string(secondaryVenue), api.VenueUpsertRequest{
+					Type:        "hyperliquid",
+					DisplayName: "Secondary Hyperliquid Venue",
+					Wallet:      secondaryWallet,
+				})
+				require.NoError(t, err)
+				require.NoError(t, h.store.UpsertBotVenueAssignment(ctx, h.key.BotID, defaultVenue, true))
+				require.NoError(t, h.store.UpsertBotVenueAssignment(ctx, h.key.BotID, secondaryVenue, false))
+
+				inserted, err := h.store.RecordThreeCommasBotEvent(ctx, activeOid, activeEvent)
+				require.NoError(t, err)
+				require.NotZero(t, inserted)
+
+				be := recomma.BotEvent{RowID: inserted, BotEvent: activeEvent}
+				createReq := adapter.ToCreateOrderRequest(h.deal.ToCurrency, be, activeOid)
+				primaryIdent := recomma.NewOrderIdentifier(defaultVenue, "hl-primary-wallet", activeOid)
+				require.NoError(t, h.store.RecordHyperliquidOrderRequest(ctx, primaryIdent, createReq, inserted))
+
+			},
+			wantActions: []recomma.ActionType{recomma.ActionCreate},
+			wantVenues:  []recomma.VenueID{recomma.VenueID("hyperliquid:secondary")},
+			wantStatuses: []tc.MarketOrderStatusString{
+				tc.MarketOrderStatusString(tc.Active),
+				tc.MarketOrderStatusString(tc.Cancelled),
+				tc.MarketOrderStatusString(tc.Active),
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -196,6 +250,12 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 				require.Equal(t, want, h.emitter.items[i].Action.Type)
 				require.NotNil(t, h.emitter.items[i].BotEvent.CreatedAt)
 				require.NotEmpty(t, h.emitter.items[i].BotEvent.Coin)
+			}
+			if tc.wantVenues != nil {
+				require.Len(t, tc.wantVenues, len(h.emitter.items))
+				for i, venue := range tc.wantVenues {
+					require.Equal(t, venue, h.emitter.items[i].Identifier.VenueID)
+				}
 			}
 
 			// For history assertions, use the fingerprint of the last event we fed.

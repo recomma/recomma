@@ -12,6 +12,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/oapi-codegen/nullable"
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
+	api "github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
@@ -483,6 +484,73 @@ func TestStorageListHyperliquidOrderIds(t *testing.T) {
 		require.Equal(t, string(defaultHyperliquidVenueID), ident.Venue())
 		require.Equal(t, defaultHyperliquidWallet, ident.Wallet)
 	}
+}
+
+func TestEnsureDefaultVenueWalletAlignsIdentifiers(t *testing.T) {
+	store := newTestStorage(t)
+	ctx := context.Background()
+
+	const runtimeWallet = "hl-runtime-wallet"
+	require.NoError(t, store.EnsureDefaultVenueWallet(ctx, runtimeWallet))
+
+	botID := uint32(77)
+	assignments, err := store.ListVenuesForBot(ctx, botID)
+	require.NoError(t, err)
+	require.Len(t, assignments, 1)
+	require.Equal(t, runtimeWallet, assignments[0].Wallet)
+
+	oid := orderid.OrderId{BotID: botID, DealID: 88, BotEventID: 5}
+	evt := tc.BotEvent{
+		CreatedAt: time.Now().UTC().Round(time.Millisecond),
+		Action:    tc.BotEventActionExecute,
+		Coin:      "ETH",
+		Text:      "runtime wallet alignment",
+	}
+	_, err = store.RecordThreeCommasBotEvent(ctx, oid, evt)
+	require.NoError(t, err)
+
+	ident := recomma.NewOrderIdentifier(assignments[0].VenueID, runtimeWallet, oid)
+
+	createReq := hyperliquid.CreateOrderRequest{
+		Coin:          "ETH",
+		IsBuy:         true,
+		Price:         125.0,
+		Size:          2.5,
+		ClientOrderID: ident.OrderId.HexAsPointer(),
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
+		},
+	}
+	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, ident, createReq, 0))
+
+	cloid := ident.Hex()
+	status := hyperliquid.WsOrder{
+		Order: hyperliquid.WsBasicOrder{
+			Coin:    "ETH",
+			Cloid:   &cloid,
+			LimitPx: "125",
+			Sz:      "2.5",
+		},
+		Status:          hyperliquid.OrderStatusValueOpen,
+		StatusTimestamp: time.Now().UTC().UnixMilli(),
+	}
+	require.NoError(t, store.RecordHyperliquidStatus(ctx, ident, status))
+
+	idents, err := store.ListSubmissionIdentifiersForOrder(ctx, oid)
+	require.NoError(t, err)
+	require.Len(t, idents, 1)
+	require.Equal(t, runtimeWallet, idents[0].Wallet)
+
+	orderIds, err := store.ListHyperliquidOrderIds(ctx)
+	require.NoError(t, err)
+	require.Len(t, orderIds, 1)
+	require.Equal(t, runtimeWallet, orderIds[0].Wallet)
+
+	orders, _, err := store.ListOrders(ctx, api.ListOrdersOptions{Limit: 10})
+	require.NoError(t, err)
+	require.NotEmpty(t, orders)
+	require.NotNil(t, orders[0].LatestSubmission)
+	require.NotNil(t, orders[0].LatestStatus)
 }
 
 func ptr[T any](v T) *T {

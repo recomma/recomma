@@ -56,9 +56,12 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      - name: Download dependencies
+      - name: Prime codegen tool cache
         if: steps.changes.outputs.storage_any_changed == 'true' || steps.changes.outputs.api_any_changed == 'true'
-        run: go mod download
+        run: |
+          go mod download
+          go tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen -version
+          go tool github.com/sqlc-dev/sqlc/cmd/sqlc version
 
       - name: Validate storage sqlc output
         if: steps.changes.outputs.storage_any_changed == 'true'

@@ -6,9 +6,12 @@ import (
 	"testing"
 
 	"github.com/recomma/recomma/emitter"
+	"github.com/recomma/recomma/hl"
+	"github.com/recomma/recomma/hl/ws"
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
+	"github.com/sonirico/go-hyperliquid"
 )
 
 type stubQueue struct {
@@ -28,6 +31,12 @@ func (e *stubEmitter) Emit(_ context.Context, w recomma.OrderWork) error {
 	e.calls++
 	e.last = w
 	return nil
+}
+
+type stubStatusClient struct{}
+
+func (stubStatusClient) QueryOrderByCloid(context.Context, string) (*hyperliquid.OrderQueryResult, error) {
+	return nil, nil
 }
 
 func TestRegisterHyperliquidEmitterRegistersDefaultAlias(t *testing.T) {
@@ -83,6 +92,80 @@ func TestRegisterHyperliquidEmitterDoesNotAliasNonPrimary(t *testing.T) {
 	}
 	if submitter.calls != 0 {
 		t.Fatalf("expected submitter not to be called, got %d", submitter.calls)
+	}
+}
+
+func TestRegisterHyperliquidStatusClientAliasesDefault(t *testing.T) {
+	registry := make(hl.StatusClientRegistry)
+	client := stubStatusClient{}
+
+	primaryIdent := recomma.VenueID("hyperliquid:primary")
+	defaultIdent := storage.DefaultHyperliquidIdentifier(orderid.OrderId{}).VenueID
+
+	registerHyperliquidStatusClient(registry, client, primaryIdent, primaryIdent, defaultIdent)
+
+	if _, ok := registry[primaryIdent]; !ok {
+		t.Fatalf("expected primary client to be registered")
+	}
+	alias, ok := registry[defaultIdent]
+	if !ok {
+		t.Fatalf("expected default alias to be registered")
+	}
+	if alias != client {
+		t.Fatalf("expected alias to reference same client")
+	}
+}
+
+func TestRegisterHyperliquidStatusClientDoesNotAliasNonPrimary(t *testing.T) {
+	registry := make(hl.StatusClientRegistry)
+	client := stubStatusClient{}
+
+	primaryIdent := recomma.VenueID("hyperliquid:primary")
+	secondaryIdent := recomma.VenueID("hyperliquid:secondary")
+	defaultIdent := storage.DefaultHyperliquidIdentifier(orderid.OrderId{}).VenueID
+
+	registerHyperliquidStatusClient(registry, client, secondaryIdent, primaryIdent, defaultIdent)
+
+	if _, ok := registry[secondaryIdent]; !ok {
+		t.Fatalf("expected secondary client to be registered")
+	}
+	if _, ok := registry[defaultIdent]; ok {
+		t.Fatalf("expected default alias not to be registered for non-primary venue")
+	}
+}
+
+func TestRegisterHyperliquidWsClientAliasesDefault(t *testing.T) {
+	registry := make(map[recomma.VenueID]*ws.Client)
+	client := &ws.Client{}
+
+	primaryIdent := recomma.VenueID("hyperliquid:primary")
+	defaultIdent := storage.DefaultHyperliquidIdentifier(orderid.OrderId{}).VenueID
+
+	registerHyperliquidWsClient(registry, client, primaryIdent, primaryIdent, defaultIdent)
+
+	if registry[primaryIdent] != client {
+		t.Fatalf("expected primary websocket client to be registered")
+	}
+	if registry[defaultIdent] != client {
+		t.Fatalf("expected default alias to reference websocket client")
+	}
+}
+
+func TestRegisterHyperliquidWsClientDoesNotAliasNonPrimary(t *testing.T) {
+	registry := make(map[recomma.VenueID]*ws.Client)
+	client := &ws.Client{}
+
+	primaryIdent := recomma.VenueID("hyperliquid:primary")
+	secondaryIdent := recomma.VenueID("hyperliquid:secondary")
+	defaultIdent := storage.DefaultHyperliquidIdentifier(orderid.OrderId{}).VenueID
+
+	registerHyperliquidWsClient(registry, client, secondaryIdent, primaryIdent, defaultIdent)
+
+	if registry[secondaryIdent] != client {
+		t.Fatalf("expected secondary websocket client to be registered")
+	}
+	if _, ok := registry[defaultIdent]; ok {
+		t.Fatalf("expected default alias not to be registered for non-primary venue")
 	}
 }
 

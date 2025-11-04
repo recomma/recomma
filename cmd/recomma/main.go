@@ -353,7 +353,7 @@ func main() {
 			BaseURL: apiURL,
 			Wallet:  wallet,
 		})
-		statusClients[venueIdent] = info
+		registerHyperliquidStatusClient(statusClients, info, venueIdent, primaryIdent, defaultHyperliquidIdent)
 		if constraintsInfo == nil || venueIdent == primaryIdent {
 			constraintsInfo = info
 		}
@@ -362,7 +362,7 @@ func main() {
 		if err != nil {
 			fatal("create hyperliquid websocket", err)
 		}
-		wsClients[venueIdent] = wsClient
+		registerHyperliquidWsClient(wsClients, wsClient, venueIdent, primaryIdent, defaultHyperliquidIdent)
 		venueOrder = append(venueOrder, venueIdent)
 
 		client := wsClient

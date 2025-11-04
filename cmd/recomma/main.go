@@ -233,7 +233,15 @@ func main() {
 		fatal("vault secrets unavailable", errors.New("vault secrets unavailable"))
 	}
 
-	if err := store.EnsureDefaultVenueWallet(appCtx, secrets.Secrets.HYPERLIQUIDWALLET); err != nil {
+	primaryHyperliquid, ok := secrets.Secrets.PrimaryVenueByType("hyperliquid")
+	if !ok {
+		fatal("locate primary hyperliquid venue", errors.New("no primary hyperliquid venue configured"))
+	}
+	if primaryHyperliquid.APIURL == "" {
+		fatal("load hyperliquid configuration", errors.New("primary hyperliquid venue missing api_url"))
+	}
+
+	if err := store.EnsureDefaultVenueWallet(appCtx, primaryHyperliquid.Wallet); err != nil {
 		fatal("update default venue wallet", err)
 	}
 
@@ -250,17 +258,17 @@ func main() {
 	}
 
 	exchange, err := hl.NewExchange(appCtx, hl.ClientConfig{
-		BaseURL: secrets.Secrets.HYPERLIQUIDURL,
-		Wallet:  secrets.Secrets.HYPERLIQUIDWALLET,
-		Key:     secrets.Secrets.HYPERLIQUIDPRIVATEKEY,
+		BaseURL: primaryHyperliquid.APIURL,
+		Wallet:  primaryHyperliquid.Wallet,
+		Key:     primaryHyperliquid.PrivateKey,
 	})
 	if err != nil {
 		fatal("Could not create Hyperliquid Exchange", err)
 	}
 
 	info := hl.NewInfo(appCtx, hl.ClientConfig{
-		BaseURL: secrets.Secrets.HYPERLIQUIDURL,
-		Wallet:  secrets.Secrets.HYPERLIQUIDWALLET,
+		BaseURL: primaryHyperliquid.APIURL,
+		Wallet:  primaryHyperliquid.Wallet,
 	})
 
 	constraints := hl.NewOrderIdCache(info)
@@ -269,7 +277,7 @@ func main() {
 	fillTracker := filltracker.New(store, logger)
 
 	defaultIdent := storage.DefaultHyperliquidIdentifier(orderid.OrderId{})
-	baseIdent := recomma.NewOrderIdentifier(defaultIdent.VenueID, secrets.Secrets.HYPERLIQUIDWALLET, orderid.OrderId{})
+	baseIdent := recomma.NewOrderIdentifier(defaultIdent.VenueID, primaryHyperliquid.Wallet, orderid.OrderId{})
 
 	statusRefresher := hl.NewStatusRefresher(hl.StatusClientRegistry{
 		baseIdent.VenueID: info,
@@ -285,14 +293,14 @@ func main() {
 		logger.Warn("fill tracker rebuild failed", slog.String("error", err.Error()))
 	}
 
-	ws, err := ws.New(appCtx, store, fillTracker, baseIdent.VenueID, baseIdent.Wallet, secrets.Secrets.HYPERLIQUIDURL)
+	ws, err := ws.New(appCtx, store, fillTracker, baseIdent.VenueID, baseIdent.Wallet, primaryHyperliquid.APIURL)
 	if err != nil {
 		fatal("Could not create Hyperliquid websocket conn", err)
 	}
 	defer ws.Close()
 	api.WithHyperliquidPriceSource(ws)(apiHandler)
 
-	logger.Info("Service ready", slog.String("baseurl", secrets.Secrets.HYPERLIQUIDURL))
+	logger.Info("Service ready", slog.String("baseurl", primaryHyperliquid.APIURL))
 
 	// Queue + workers
 	// Q creation (typed)

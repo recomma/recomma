@@ -82,9 +82,17 @@ export function SetupWizard({ onSetupComplete }: SetupWizardProps) {
       secrets: {
         THREECOMMAS_API_KEY: data.threeCommas.apiKey.trim(),
         THREECOMMAS_PRIVATE_KEY: data.threeCommas.privateKeyFile.trim(),
-        HYPERLIQUID_WALLET: data.hyperliquid.wallet.trim(),
-        HYPERLIQUID_PRIVATE_KEY: data.hyperliquid.privateKey.trim(),
-        HYPERLIQUID_URL: hyperliquidApiUrl,
+        venues: [
+          {
+            id: 'hyperliquid:default',
+            type: 'hyperliquid',
+            display_name: 'Default Hyperliquid Venue',
+            wallet: data.hyperliquid.wallet.trim(),
+            private_key: data.hyperliquid.privateKey.trim(),
+            api_url: hyperliquidApiUrl,
+            is_primary: true,
+          },
+        ],
       },
     };
   };

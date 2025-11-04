@@ -607,20 +607,14 @@ type VaultSecretsBundle struct {
 		Username string `json:"username"`
 	} `json:"not_secret"`
 	Secrets struct {
-		// HYPERLIQUIDPRIVATEKEY Hyperliquid private key corresponding to the wallet.
-		HYPERLIQUIDPRIVATEKEY string `json:"HYPERLIQUID_PRIVATE_KEY"`
-
-		// HYPERLIQUIDURL Hyperliquid URL, mainnet https://api.hyperliquid.xyz testnet https://api.hyperliquid-testnet.xyz or custom
-		HYPERLIQUIDURL string `json:"HYPERLIQUID_URL"`
-
-		// HYPERLIQUIDWALLET Hyperliquid wallet address.
-		HYPERLIQUIDWALLET string `json:"HYPERLIQUID_WALLET"`
-
 		// THREECOMMASAPIKEY Public API key for the 3Commas integration.
 		THREECOMMASAPIKEY string `json:"THREECOMMAS_API_KEY"`
 
 		// THREECOMMASPRIVATEKEY Private API key for the 3Commas integration.
 		THREECOMMASPRIVATEKEY string `json:"THREECOMMAS_PRIVATE_KEY"`
+
+		// Venues Collection of venue credentials encrypted within the vault.
+		Venues []VaultVenueSecret `json:"venues"`
 	} `json:"secrets"`
 }
 
@@ -666,6 +660,33 @@ type VaultUser struct {
 	// CreatedAt Timestamp the user record was created, when available.
 	CreatedAt *time.Time `json:"created_at"`
 	Username  string     `json:"username"`
+}
+
+// VaultVenueSecret defines model for VaultVenueSecret.
+type VaultVenueSecret struct {
+	// ApiUrl Optional API base URL for the venue.
+	ApiUrl *string `json:"api_url"`
+
+	// DisplayName Human readable venue label.
+	DisplayName *string `json:"display_name,omitempty"`
+
+	// Flags Connector specific options encoded alongside the venue metadata.
+	Flags *map[string]interface{} `json:"flags"`
+
+	// Id Unique identifier for the venue.
+	Id string `json:"id"`
+
+	// IsPrimary Indicates whether this venue should be treated as primary.
+	IsPrimary bool `json:"is_primary"`
+
+	// PrivateKey Secret key associated with the configured wallet.
+	PrivateKey string `json:"private_key"`
+
+	// Type Connector type backing the venue (for example `hyperliquid`).
+	Type string `json:"type"`
+
+	// Wallet Wallet address used for submissions to this venue.
+	Wallet string `json:"wallet"`
 }
 
 // VenueAssignmentRecord defines model for VenueAssignmentRecord.

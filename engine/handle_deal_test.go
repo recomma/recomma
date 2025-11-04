@@ -11,6 +11,7 @@ import (
 	"github.com/recomma/recomma/engine/orderscaler"
 	"github.com/recomma/recomma/filltracker"
 	"github.com/recomma/recomma/hl"
+	api "github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/internal/testutil"
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
@@ -200,7 +201,12 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 					secondaryWallet = "hl-secondary-wallet"
 				)
 
-				require.NoError(t, h.store.UpsertVenue(ctx, secondaryVenue, "hyperliquid", "Secondary Hyperliquid Venue", secondaryWallet))
+				_, err := h.store.UpsertVenue(ctx, string(secondaryVenue), api.VenueUpsertRequest{
+					Type:        "hyperliquid",
+					DisplayName: "Secondary Hyperliquid Venue",
+					Wallet:      secondaryWallet,
+				})
+				require.NoError(t, err)
 				require.NoError(t, h.store.UpsertBotVenueAssignment(ctx, h.key.BotID, defaultVenue, true))
 				require.NoError(t, h.store.UpsertBotVenueAssignment(ctx, h.key.BotID, secondaryVenue, false))
 

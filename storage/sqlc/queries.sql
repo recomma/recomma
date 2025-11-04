@@ -286,6 +286,36 @@ WHERE venue_id = sqlc.arg(venue_id)
   AND wallet = sqlc.arg(wallet)
   AND order_id = sqlc.arg(order_id);
 
+-- name: FetchLatestHyperliquidSubmissionAnyIdentifier :one
+SELECT
+    venue_id,
+    wallet,
+    order_id,
+    action_kind,
+    CAST(create_payload  AS BLOB) AS create_payload,
+    CAST(modify_payloads AS BLOB) AS modify_payloads,
+    CAST(cancel_payload  AS BLOB) AS cancel_payload,
+    payload_type,
+    payload_blob,
+    updated_at_utc,
+    botevent_row_id
+FROM hyperliquid_submissions
+WHERE order_id = sqlc.arg(order_id)
+ORDER BY updated_at_utc DESC
+LIMIT 1;
+
+-- name: FetchLatestHyperliquidStatusAnyIdentifier :one
+SELECT
+    venue_id,
+    wallet,
+    payload_type,
+    payload_blob,
+    recorded_at_utc
+FROM hyperliquid_status_history
+WHERE order_id = sqlc.arg(order_id)
+ORDER BY recorded_at_utc DESC
+LIMIT 1;
+
 -- name: ListHyperliquidOrderIds :many
 SELECT
     venue_id,

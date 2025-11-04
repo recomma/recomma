@@ -379,6 +379,92 @@ func (q *Queries) FetchLatestHyperliquidStatus(ctx context.Context, arg FetchLat
 	return i, err
 }
 
+const fetchLatestHyperliquidStatusAnyIdentifier = `-- name: FetchLatestHyperliquidStatusAnyIdentifier :one
+SELECT
+    venue_id,
+    wallet,
+    payload_type,
+    payload_blob,
+    recorded_at_utc
+FROM hyperliquid_status_history
+WHERE order_id = ?1
+ORDER BY recorded_at_utc DESC
+LIMIT 1
+`
+
+type FetchLatestHyperliquidStatusAnyIdentifierRow struct {
+	VenueID       string `json:"venue_id"`
+	Wallet        string `json:"wallet"`
+	PayloadType   string `json:"payload_type"`
+	PayloadBlob   []byte `json:"payload_blob"`
+	RecordedAtUtc int64  `json:"recorded_at_utc"`
+}
+
+func (q *Queries) FetchLatestHyperliquidStatusAnyIdentifier(ctx context.Context, orderID string) (FetchLatestHyperliquidStatusAnyIdentifierRow, error) {
+	row := q.db.QueryRowContext(ctx, fetchLatestHyperliquidStatusAnyIdentifier, orderID)
+	var i FetchLatestHyperliquidStatusAnyIdentifierRow
+	err := row.Scan(
+		&i.VenueID,
+		&i.Wallet,
+		&i.PayloadType,
+		&i.PayloadBlob,
+		&i.RecordedAtUtc,
+	)
+	return i, err
+}
+
+const fetchLatestHyperliquidSubmissionAnyIdentifier = `-- name: FetchLatestHyperliquidSubmissionAnyIdentifier :one
+SELECT
+    venue_id,
+    wallet,
+    order_id,
+    action_kind,
+    CAST(create_payload  AS BLOB) AS create_payload,
+    CAST(modify_payloads AS BLOB) AS modify_payloads,
+    CAST(cancel_payload  AS BLOB) AS cancel_payload,
+    payload_type,
+    payload_blob,
+    updated_at_utc,
+    botevent_row_id
+FROM hyperliquid_submissions
+WHERE order_id = ?1
+ORDER BY updated_at_utc DESC
+LIMIT 1
+`
+
+type FetchLatestHyperliquidSubmissionAnyIdentifierRow struct {
+	VenueID        string `json:"venue_id"`
+	Wallet         string `json:"wallet"`
+	OrderID        string `json:"order_id"`
+	ActionKind     string `json:"action_kind"`
+	CreatePayload  []byte `json:"create_payload"`
+	ModifyPayloads []byte `json:"modify_payloads"`
+	CancelPayload  []byte `json:"cancel_payload"`
+	PayloadType    string `json:"payload_type"`
+	PayloadBlob    []byte `json:"payload_blob"`
+	UpdatedAtUtc   int64  `json:"updated_at_utc"`
+	BoteventRowID  int64  `json:"botevent_row_id"`
+}
+
+func (q *Queries) FetchLatestHyperliquidSubmissionAnyIdentifier(ctx context.Context, orderID string) (FetchLatestHyperliquidSubmissionAnyIdentifierRow, error) {
+	row := q.db.QueryRowContext(ctx, fetchLatestHyperliquidSubmissionAnyIdentifier, orderID)
+	var i FetchLatestHyperliquidSubmissionAnyIdentifierRow
+	err := row.Scan(
+		&i.VenueID,
+		&i.Wallet,
+		&i.OrderID,
+		&i.ActionKind,
+		&i.CreatePayload,
+		&i.ModifyPayloads,
+		&i.CancelPayload,
+		&i.PayloadType,
+		&i.PayloadBlob,
+		&i.UpdatedAtUtc,
+		&i.BoteventRowID,
+	)
+	return i, err
+}
+
 const fetchThreeCommasBotEvent = `-- name: FetchThreeCommasBotEvent :one
 SELECT payload
 FROM threecommas_botevents

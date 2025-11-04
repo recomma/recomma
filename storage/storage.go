@@ -133,31 +133,6 @@ func (s *Storage) EnsureDefaultVenueWallet(ctx context.Context, wallet string) e
 	return s.upsertDefaultVenueLocked(ctx, wallet)
 }
 
-// UpsertVenue registers or updates a venue record. Callers can provide an
-// explicit type/display name or rely on defaults aligned with the Hyperliquid
-// integration used throughout the engine.
-func (s *Storage) UpsertVenue(ctx context.Context, venueID recomma.VenueID, venueType, displayName, wallet string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if venueType == "" {
-		venueType = defaultHyperliquidVenueType
-	}
-	if displayName == "" {
-		displayName = string(venueID)
-	}
-
-	params := sqlcgen.UpsertVenueParams{
-		ID:          string(venueID),
-		Type:        venueType,
-		DisplayName: displayName,
-		Wallet:      wallet,
-		Flags:       json.RawMessage(`{}`),
-	}
-
-	return s.queries.UpsertVenue(ctx, params)
-}
-
 // UpsertBotVenueAssignment associates a bot with a venue. Repeated calls update
 // the primary flag while preserving the latest assignment timestamp.
 func (s *Storage) UpsertBotVenueAssignment(ctx context.Context, botID uint32, venueID recomma.VenueID, isPrimary bool) error {
@@ -454,10 +429,13 @@ func (s *Storage) RecordThreeCommasBotEvent(ctx context.Context, oid orderid.Ord
 
 	if lastInsertId != 0 {
 		clone := order
+		ident := ensureIdentifier(recomma.NewOrderIdentifier("", "", oid))
+		identCopy := ident
 		s.publishStreamEventLocked(api.StreamEvent{
-			Type:     api.ThreeCommasEvent,
-			OrderID:  oid,
-			BotEvent: &clone,
+			Type:       api.ThreeCommasEvent,
+			OrderID:    oid,
+			Identifier: &identCopy,
+			BotEvent:   &clone,
 		})
 	}
 
@@ -716,11 +694,12 @@ func (s *Storage) RecordHyperliquidStatus(ctx context.Context, ident recomma.Ord
 	}
 
 	copy := status
+	identCopy := ident
 	s.publishStreamEventLocked(api.StreamEvent{
-		Type:    api.HyperliquidStatus,
-		OrderID: ident.OrderId,
-		VenueID: ident.Venue(),
-		Status:  &copy,
+		Type:       api.HyperliquidStatus,
+		OrderID:    ident.OrderId,
+		Identifier: &identCopy,
+		Status:     &copy,
 	})
 
 	return nil
@@ -755,6 +734,7 @@ func (s *Storage) publishHyperliquidSubmissionLocked(ctx context.Context, ident 
 		return
 	}
 
+	ident = ensureIdentifier(ident)
 	var botEvent *tc.BotEvent
 	if boteventRowID > 0 {
 		if evt, err := s.fetchBotEventByRowIDLocked(ctx, boteventRowID); err == nil {
@@ -762,10 +742,11 @@ func (s *Storage) publishHyperliquidSubmissionLocked(ctx context.Context, ident 
 		}
 	}
 
+	identCopy := ident
 	s.publishStreamEventLocked(api.StreamEvent{
 		Type:       api.HyperliquidSubmission,
 		OrderID:    ident.OrderId,
-		VenueID:    ident.Venue(),
+		Identifier: &identCopy,
 		BotEvent:   botEvent,
 		Submission: submission,
 	})

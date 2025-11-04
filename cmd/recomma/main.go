@@ -32,6 +32,7 @@ import (
 	"github.com/recomma/recomma/internal/origin"
 	"github.com/recomma/recomma/internal/vault"
 	rlog "github.com/recomma/recomma/log"
+	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
 	"github.com/recomma/recomma/webui"
@@ -277,6 +278,9 @@ func main() {
 		fatal("update default venue wallet", err)
 	}
 
+	primaryIdent := recomma.VenueID(primaryVenueID)
+	defaultHyperliquidIdent := storage.DefaultHyperliquidIdentifier(orderid.OrderId{}).VenueID
+
 	statusClients := make(hl.StatusClientRegistry)
 	wsClients := make(map[recomma.VenueID]*ws.Client)
 	var venueOrder []recomma.VenueID
@@ -347,7 +351,7 @@ func main() {
 		})
 		venueIdent := recomma.VenueID(venueID)
 		statusClients[venueIdent] = info
-		if constraintsInfo == nil || venueIdent == recomma.VenueID(primaryVenueID) {
+		if constraintsInfo == nil || venueIdent == primaryIdent {
 			constraintsInfo = info
 		}
 
@@ -373,7 +377,7 @@ func main() {
 			emitter.WithHyperLiquidEmitterLogger(emitterLogger.With(slog.String("venue", venueID), slog.String("wallet", wallet))),
 		)
 
-		engineEmitter.Register(venueIdent, submitter)
+		registerHyperliquidEmitter(engineEmitter, submitter, venueIdent, primaryIdent, defaultHyperliquidIdent)
 
 		runtimeLogger.Info("hyperliquid venue configured",
 			slog.String("venue", venueID),
@@ -393,7 +397,6 @@ func main() {
 		}
 	}()
 
-	primaryIdent := recomma.VenueID(primaryVenueID)
 	if _, ok := statusClients[primaryIdent]; !ok {
 		fatal("load hyperliquid configuration", errors.New("primary hyperliquid venue missing from configuration"))
 	}

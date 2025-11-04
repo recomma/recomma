@@ -51,6 +51,7 @@ sharing pacing state where the upstream platform enforces account-level limits.
 * When the vault unseals, iterate over the configured venues. For each venue:
 ** Construct venue-specific clients (e.g., Hyperliquid REST + websocket) and wire them into a concrete emitter that satisfies `recomma.Emitter`.
 ** Register the emitter in the dispatcher map along with its shared rate gate and wallet details.
+** Ensure the `hyperliquid:default` alias keeps its wallet in lockstep with the websocket/exchange client whenever only one wallet is active; fall back to the sentinel wallet only when another venue truly shares that wallet (honor the `shouldUseSentinelDefaultHyperliquidWallet` guard).
 * Spawn websocket listeners per venue, sharing connections only when the venue allows it (e.g., reuse BBO feeds with matching URLs, but keep per-wallet trade/update subscriptions).
 
 == Data Model & Storage Changes
@@ -89,6 +90,7 @@ sharing pacing state where the upstream platform enforces account-level limits.
 * *Rate limiter fragmentation.* Duplicating `HyperLiquidEmitter` would multiply throughput. Extract shared rate gates keyed by wallet so fan-out still honors Hyperliquid pacing.
 * *Manual controls.* Cancel endpoints and CLI tools currently fetch submissions by order ID alone. They must accept `OrderIdentifier` or `(venue, wallet, order_id)` to locate the correct row.
 * *Status refresher dispatch.* `StatusRefresher.Refresh` still queries Hyperliquid with a single client per refresh cycle and only the raw order hex. The refactor must partition identifiers by `venue_id`/wallet and send them through the correct venue client so status updates continue to propagate when multiple venues are configured.
+* *Default wallet alignment.* `storage.DefaultHyperliquidIdentifier` still emits the sentinel wallet, so bootstrap code must either realign the stored wallet or alias the emitter, websocket, and storage layers to that identifier to keep `(venue, wallet)`-keyed lookups working.
 
 == Open Questions
 * Do we need venue-level configuration for websocket shards or can we assume one connection per wallet?

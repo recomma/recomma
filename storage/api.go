@@ -897,8 +897,29 @@ func (s *Storage) UpsertVenueAssignment(ctx context.Context, venueID string, bot
 		return api.VenueAssignmentRecord{}, err
 	}
 
+	qtx := s.queries
+	var (
+		tx       *sql.Tx
+		rollback bool
+	)
+
 	if isPrimary {
-		if _, err := s.db.ExecContext(ctx, "UPDATE bot_venue_assignments SET is_primary = 0 WHERE bot_id = ?", botID); err != nil {
+		var err error
+		tx, err = s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return api.VenueAssignmentRecord{}, err
+		}
+
+		rollback = true
+		defer func() {
+			if rollback {
+				_ = tx.Rollback()
+			}
+		}()
+
+		qtx = s.queries.WithTx(tx)
+
+		if _, err := tx.ExecContext(ctx, "UPDATE bot_venue_assignments SET is_primary = 0 WHERE bot_id = ?", botID); err != nil {
 			return api.VenueAssignmentRecord{}, err
 		}
 	}
@@ -914,11 +935,18 @@ func (s *Storage) UpsertVenueAssignment(ctx context.Context, venueID string, bot
 		IsPrimary: primary,
 	}
 
-	if err := s.queries.UpsertBotVenueAssignment(ctx, params); err != nil {
+	if err := qtx.UpsertBotVenueAssignment(ctx, params); err != nil {
 		if isUniqueConstraintError(err) {
 			return api.VenueAssignmentRecord{}, api.ErrVenueInvalid
 		}
 		return api.VenueAssignmentRecord{}, err
+	}
+
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return api.VenueAssignmentRecord{}, err
+		}
+		rollback = false
 	}
 
 	assignments, err := s.queries.ListBotVenueAssignments(ctx, botID)

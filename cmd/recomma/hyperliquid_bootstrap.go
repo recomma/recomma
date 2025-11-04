@@ -64,16 +64,3 @@ func registerHyperliquidWsClient(reg map[recomma.VenueID]*ws.Client, client *ws.
 
 	reg[defaultIdent] = client
 }
-
-func shouldSkipHyperliquidVenueUpsert(venueIdent, primaryIdent recomma.VenueID, wallet, primaryWallet string, isPrimary bool) bool {
-	if !isPrimary {
-		return false
-	}
-	if venueIdent != primaryIdent {
-		return false
-	}
-	if wallet == "" || primaryWallet == "" {
-		return false
-	}
-	return wallet == primaryWallet
-}

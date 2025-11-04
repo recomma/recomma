@@ -274,12 +274,16 @@ func main() {
 		fatal("load hyperliquid configuration", errors.New("primary hyperliquid venue missing api_url"))
 	}
 
-	if err := store.EnsureDefaultVenueWallet(appCtx, primaryWallet); err != nil {
+	defaultHyperliquidIdent := storage.DefaultHyperliquidIdentifier(orderid.OrderId{}).VenueID
+	defaultVenueWallet := primaryWallet
+	if shouldUseSentinelDefaultHyperliquidWallet(secrets.Secrets.Venues, primaryWallet, defaultHyperliquidIdent) {
+		defaultVenueWallet = ""
+	}
+	if err := store.EnsureDefaultVenueWallet(appCtx, defaultVenueWallet); err != nil {
 		fatal("update default venue wallet", err)
 	}
 
 	primaryIdent := recomma.VenueID(primaryVenueID)
-	defaultHyperliquidIdent := storage.DefaultHyperliquidIdentifier(orderid.OrderId{}).VenueID
 
 	statusClients := make(hl.StatusClientRegistry)
 	wsClients := make(map[recomma.VenueID]*ws.Client)
@@ -330,14 +334,12 @@ func main() {
 			DisplayName: displayName,
 			Wallet:      wallet,
 		}
-		if flags := cloneVenueFlags(venue.Flags); flags != nil {
+		if flags := decorateVenueFlags(venue.Flags, venue.Primary); flags != nil {
 			payload.Flags = &flags
 		}
 
-		if !shouldSkipHyperliquidVenueUpsert(venueIdent, primaryIdent, wallet, primaryWallet, venue.Primary) {
-			if _, err := store.UpsertVenue(appCtx, venueID, payload); err != nil {
-				fatal("persist venue configuration", err)
-			}
+		if _, err := store.UpsertVenue(appCtx, venueID, payload); err != nil {
+			fatal("persist venue configuration", err)
 		}
 
 		exchange, err := hl.NewExchange(appCtx, hl.ClientConfig{
@@ -597,6 +599,38 @@ func (m *priceSourceMultiplexer) SubscribeBBO(ctx context.Context, coin string) 
 		return nil, errors.Join(errs...)
 	}
 	return nil, errors.New("no hyperliquid price source available")
+}
+
+func decorateVenueFlags(src map[string]interface{}, isPrimary bool) map[string]interface{} {
+	flags := cloneVenueFlags(src)
+	if flags == nil && !isPrimary {
+		return nil
+	}
+	if flags == nil {
+		flags = make(map[string]interface{}, 1)
+	}
+	flags["is_primary"] = isPrimary
+	return flags
+}
+
+func shouldUseSentinelDefaultHyperliquidWallet(venues []vault.VenueSecret, primaryWallet string, defaultIdent recomma.VenueID) bool {
+	trimmedPrimary := strings.TrimSpace(primaryWallet)
+	if trimmedPrimary == "" {
+		return false
+	}
+	for _, venue := range venues {
+		if !strings.EqualFold(venue.Type, "hyperliquid") {
+			continue
+		}
+		venueID := recomma.VenueID(strings.TrimSpace(venue.ID))
+		if venueID == defaultIdent {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(venue.Wallet), trimmedPrimary) {
+			return true
+		}
+	}
+	return false
 }
 
 func cloneVenueFlags(src map[string]interface{}) map[string]interface{} {

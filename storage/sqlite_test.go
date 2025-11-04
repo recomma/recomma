@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sort"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	api "github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
+	"github.com/recomma/recomma/storage/sqlcgen"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
 	"github.com/stretchr/testify/require"
 )
@@ -551,6 +553,29 @@ func TestEnsureDefaultVenueWalletAlignsIdentifiers(t *testing.T) {
 	require.NotEmpty(t, orders)
 	require.NotNil(t, orders[0].LatestSubmission)
 	require.NotNil(t, orders[0].LatestStatus)
+}
+
+func TestDefaultVenueAssignmentFallsBackToPrimaryAlias(t *testing.T) {
+	store := newTestStorage(t)
+	ctx := context.Background()
+
+	require.NoError(t, store.EnsureDefaultVenueWallet(ctx, ""))
+
+	params := sqlcgen.UpsertVenueParams{
+		ID:          "hyperliquid:primary",
+		Type:        "hyperliquid",
+		DisplayName: "Primary Venue",
+		Wallet:      "hl-primary-wallet",
+		Flags:       json.RawMessage(fmt.Sprintf(`{"%s":true}`, primaryHyperliquidFlagKey)),
+	}
+	require.NoError(t, store.queries.UpsertVenue(ctx, params))
+
+	botID := uint32(9001)
+	assignments, err := store.ListVenuesForBot(ctx, botID)
+	require.NoError(t, err)
+	require.Len(t, assignments, 1)
+	require.Equal(t, recomma.VenueID("hyperliquid:primary"), assignments[0].VenueID)
+	require.Equal(t, "hl-primary-wallet", assignments[0].Wallet)
 }
 
 func ptr[T any](v T) *T {

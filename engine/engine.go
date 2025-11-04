@@ -277,6 +277,7 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 		}
 
 		missingTargets := missingAssignmentTargets(oid, assignments, storedIdents)
+		replayMissingTargets := !shouldEmit && len(missingTargets) > 0 && latestEvent != nil && latestEvent.OrderType == tc.MarketOrderDealOrderTypeTakeProfit
 
 		if !shouldEmit {
 			if latestEvent == nil || latestEvent.Status != tc.Active || len(missingTargets) == 0 {
@@ -288,7 +289,7 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 			shouldEmit = true
 		}
 		if fillSnapshot != nil && latestEvent != nil {
-			action, shouldEmit = e.adjustActionWithTracker(currency, oid, *latestEvent, action, fillSnapshot, orderLogger)
+			action, shouldEmit = e.adjustActionWithTracker(currency, oid, *latestEvent, action, fillSnapshot, orderLogger, replayMissingTargets)
 			if !shouldEmit {
 				continue
 			}
@@ -454,6 +455,7 @@ func (e *Engine) adjustActionWithTracker(
 	action recomma.Action,
 	snapshot *filltracker.DealSnapshot,
 	logger *slog.Logger,
+	skipExisting bool,
 ) (recomma.Action, bool) {
 	if snapshot == nil {
 		return action, true
@@ -472,7 +474,7 @@ func (e *Engine) adjustActionWithTracker(
 	}
 
 	active := snapshot.ActiveTakeProfit
-	if active != nil && active.ReduceOnly && nearlyEqual(active.RemainingQty, desiredQty) {
+	if !skipExisting && active != nil && active.ReduceOnly && nearlyEqual(active.RemainingQty, desiredQty) {
 		logger.Debug("take profit already matches position",
 			slog.Float64("desired_qty", desiredQty),
 			slog.Float64("existing_qty", active.RemainingQty),

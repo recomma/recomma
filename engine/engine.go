@@ -286,6 +286,12 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 		missingTargets := missingAssignmentTargets(oid, assignments, storedIdents)
 		needsReplay := len(missingTargets) > 0 && latestEvent != nil && latestEvent.Status == tc.Active
 
+		if fillSnapshot != nil && latestEvent != nil {
+			adjusted, emit := e.adjustActionWithTracker(currency, oid, *latestEvent, action, fillSnapshot, orderLogger, false)
+			action = adjusted
+			shouldEmit = emit
+		}
+
 		replayForPrimary := false
 		if !shouldEmit && needsReplay {
 			req := adapter.ToCreateOrderRequest(currency, *latestEvent, oid)

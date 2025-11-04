@@ -323,6 +323,8 @@ func main() {
 			apiURL = primaryAPIURL
 		}
 
+		venueIdent := recomma.VenueID(venueID)
+
 		payload := api.VenueUpsertRequest{
 			Type:        "hyperliquid",
 			DisplayName: displayName,
@@ -332,8 +334,10 @@ func main() {
 			payload.Flags = &flags
 		}
 
-		if _, err := store.UpsertVenue(appCtx, venueID, payload); err != nil {
-			fatal("persist venue configuration", err)
+		if !shouldSkipHyperliquidVenueUpsert(venueIdent, primaryIdent, wallet, primaryWallet, venue.Primary) {
+			if _, err := store.UpsertVenue(appCtx, venueID, payload); err != nil {
+				fatal("persist venue configuration", err)
+			}
 		}
 
 		exchange, err := hl.NewExchange(appCtx, hl.ClientConfig{
@@ -349,7 +353,6 @@ func main() {
 			BaseURL: apiURL,
 			Wallet:  wallet,
 		})
-		venueIdent := recomma.VenueID(venueID)
 		statusClients[venueIdent] = info
 		if constraintsInfo == nil || venueIdent == primaryIdent {
 			constraintsInfo = info

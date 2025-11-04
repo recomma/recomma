@@ -21,3 +21,16 @@ func registerHyperliquidEmitter(queue *emitter.QueueEmitter, submitter recomma.E
 
 	queue.Register(defaultIdent, submitter)
 }
+
+func shouldSkipHyperliquidVenueUpsert(venueIdent, primaryIdent recomma.VenueID, wallet, primaryWallet string, isPrimary bool) bool {
+	if !isPrimary {
+		return false
+	}
+	if venueIdent != primaryIdent {
+		return false
+	}
+	if wallet == "" || primaryWallet == "" {
+		return false
+	}
+	return wallet == primaryWallet
+}

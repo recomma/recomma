@@ -85,3 +85,54 @@ func TestRegisterHyperliquidEmitterDoesNotAliasNonPrimary(t *testing.T) {
 		t.Fatalf("expected submitter not to be called, got %d", submitter.calls)
 	}
 }
+
+func TestShouldSkipHyperliquidVenueUpsert(t *testing.T) {
+	primaryIdent := recomma.VenueID("hyperliquid:primary")
+	primaryWallet := "hl-primary-wallet"
+
+	tests := []struct {
+		name         string
+		venueIdent   recomma.VenueID
+		wallet       string
+		isPrimary    bool
+		expectedSkip bool
+	}{
+		{
+			name:         "skip primary with matching wallet",
+			venueIdent:   primaryIdent,
+			wallet:       primaryWallet,
+			isPrimary:    true,
+			expectedSkip: true,
+		},
+		{
+			name:         "do not skip when not marked primary",
+			venueIdent:   primaryIdent,
+			wallet:       primaryWallet,
+			isPrimary:    false,
+			expectedSkip: false,
+		},
+		{
+			name:         "do not skip when wallet differs",
+			venueIdent:   primaryIdent,
+			wallet:       "other-wallet",
+			isPrimary:    true,
+			expectedSkip: false,
+		},
+		{
+			name:         "do not skip when venue differs",
+			venueIdent:   recomma.VenueID("hyperliquid:secondary"),
+			wallet:       primaryWallet,
+			isPrimary:    true,
+			expectedSkip: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			skip := shouldSkipHyperliquidVenueUpsert(tt.venueIdent, primaryIdent, tt.wallet, primaryWallet, tt.isPrimary)
+			if skip != tt.expectedSkip {
+				t.Fatalf("expected skip=%t, got %t", tt.expectedSkip, skip)
+			}
+		})
+	}
+}

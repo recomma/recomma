@@ -276,7 +276,12 @@ func main() {
 
 	defaultHyperliquidIdent := storage.DefaultHyperliquidIdentifier(orderid.OrderId{}).VenueID
 	defaultVenueWallet := primaryWallet
-	if shouldUseSentinelDefaultHyperliquidWallet(secrets.Secrets.Venues, primaryWallet, defaultHyperliquidIdent) {
+	if shouldUseSentinelDefaultHyperliquidWallet(
+		secrets.Secrets.Venues,
+		recomma.VenueID(primaryVenueID),
+		primaryWallet,
+		defaultHyperliquidIdent,
+	) {
 		defaultVenueWallet = ""
 	}
 	if err := store.EnsureDefaultVenueWallet(appCtx, defaultVenueWallet); err != nil {
@@ -613,7 +618,12 @@ func decorateVenueFlags(src map[string]interface{}, isPrimary bool) map[string]i
 	return flags
 }
 
-func shouldUseSentinelDefaultHyperliquidWallet(venues []vault.VenueSecret, primaryWallet string, defaultIdent recomma.VenueID) bool {
+func shouldUseSentinelDefaultHyperliquidWallet(
+	venues []vault.VenueSecret,
+	primaryIdent recomma.VenueID,
+	primaryWallet string,
+	defaultIdent recomma.VenueID,
+) bool {
 	trimmedPrimary := strings.TrimSpace(primaryWallet)
 	if trimmedPrimary == "" {
 		return false
@@ -624,6 +634,9 @@ func shouldUseSentinelDefaultHyperliquidWallet(venues []vault.VenueSecret, prima
 		}
 		venueID := recomma.VenueID(strings.TrimSpace(venue.ID))
 		if venueID == defaultIdent {
+			continue
+		}
+		if primaryIdent != "" && strings.EqualFold(string(venueID), string(primaryIdent)) {
 			continue
 		}
 		if strings.EqualFold(strings.TrimSpace(venue.Wallet), trimmedPrimary) {

@@ -8,6 +8,7 @@ import (
 	"github.com/recomma/recomma/emitter"
 	"github.com/recomma/recomma/hl"
 	"github.com/recomma/recomma/hl/ws"
+	"github.com/recomma/recomma/internal/vault"
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
@@ -166,5 +167,42 @@ func TestRegisterHyperliquidWsClientDoesNotAliasNonPrimary(t *testing.T) {
 	}
 	if _, ok := registry[defaultIdent]; ok {
 		t.Fatalf("expected default alias not to be registered for non-primary venue")
+	}
+}
+
+func TestShouldUseSentinelDefaultHyperliquidWalletSkipsPrimary(t *testing.T) {
+	defaultIdent := storage.DefaultHyperliquidIdentifier(orderid.OrderId{}).VenueID
+	venues := []vault.VenueSecret{
+		{
+			ID:      "hyperliquid:primary",
+			Type:    "hyperliquid",
+			Wallet:  "hl-primary-wallet",
+			Primary: true,
+		},
+	}
+
+	if shouldUseSentinelDefaultHyperliquidWallet(venues, recomma.VenueID("hyperliquid:primary"), "hl-primary-wallet", defaultIdent) {
+		t.Fatalf("expected sentinel wallet guard to ignore the primary venue")
+	}
+}
+
+func TestShouldUseSentinelDefaultHyperliquidWalletDetectsDuplicateWallet(t *testing.T) {
+	defaultIdent := storage.DefaultHyperliquidIdentifier(orderid.OrderId{}).VenueID
+	venues := []vault.VenueSecret{
+		{
+			ID:      "hyperliquid:primary",
+			Type:    "hyperliquid",
+			Wallet:  "hl-primary-wallet",
+			Primary: true,
+		},
+		{
+			ID:     "hyperliquid:alias",
+			Type:   "hyperliquid",
+			Wallet: "hl-primary-wallet",
+		},
+	}
+
+	if !shouldUseSentinelDefaultHyperliquidWallet(venues, recomma.VenueID("hyperliquid:primary"), "hl-primary-wallet", defaultIdent) {
+		t.Fatalf("expected sentinel wallet guard to activate when duplicate wallets exist")
 	}
 }

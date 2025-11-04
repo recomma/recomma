@@ -283,6 +283,11 @@ func (h *ApiHandler) UnsealVault(ctx context.Context, request UnsealVaultRequest
 		return UnsealVault400Response{}, nil
 	}
 
+	if err := h.syncVenueMetadata(ctx, secrets.Secrets.Venues); err != nil {
+		h.logger.ErrorContext(ctx, "sync venue metadata", slog.String("error", err.Error()))
+		return UnsealVault500Response{}, nil
+	}
+
 	ttl := deriveSessionTTL(request.Body.RememberSessionSeconds)
 	expiry := h.now().Add(ttl).UTC()
 
@@ -457,28 +462,111 @@ func buildPayloadInput(payload VaultEncryptedPayload, userID int64, now time.Tim
 }
 
 func buildSecretsBundle(bundle VaultSecretsBundle, now time.Time) (vault.Secrets, error) {
-	if strings.TrimSpace(bundle.NotSecret.Username) == "" {
+	username := strings.TrimSpace(bundle.NotSecret.Username)
+	if username == "" {
 		return vault.Secrets{}, errors.New("payload username is required")
 	}
-	if strings.TrimSpace(bundle.Secrets.THREECOMMASAPIKEY) == "" ||
-		strings.TrimSpace(bundle.Secrets.THREECOMMASPRIVATEKEY) == "" ||
-		strings.TrimSpace(bundle.Secrets.HYPERLIQUIDWALLET) == "" ||
-		strings.TrimSpace(bundle.Secrets.HYPERLIQUIDPRIVATEKEY) == "" {
+
+	threeCommasKey := strings.TrimSpace(bundle.Secrets.THREECOMMASAPIKEY)
+	threeCommasSecret := strings.TrimSpace(bundle.Secrets.THREECOMMASPRIVATEKEY)
+	if threeCommasKey == "" || threeCommasSecret == "" {
 		return vault.Secrets{}, errors.New("missing required secret fields")
 	}
 
-	raw, err := json.Marshal(bundle)
+	if len(bundle.Secrets.Venues) == 0 {
+		return vault.Secrets{}, errors.New("vault secrets require at least one venue")
+	}
+
+	normalized := bundle
+	normalized.NotSecret.Username = username
+	normalized.Secrets.THREECOMMASAPIKEY = threeCommasKey
+	normalized.Secrets.THREECOMMASPRIVATEKEY = threeCommasSecret
+	normalized.Secrets.Venues = make([]VaultVenueSecret, 0, len(bundle.Secrets.Venues))
+
+	venues := make([]vault.VenueSecret, 0, len(bundle.Secrets.Venues))
+	primaryCount := 0
+
+	for _, venue := range bundle.Secrets.Venues {
+		id := strings.TrimSpace(venue.Id)
+		venueType := strings.TrimSpace(venue.Type)
+		wallet := strings.TrimSpace(venue.Wallet)
+		privateKey := strings.TrimSpace(venue.PrivateKey)
+
+		if id == "" || venueType == "" || wallet == "" || privateKey == "" {
+			return vault.Secrets{}, errors.New("venue definitions must include id, type, wallet, and private key")
+		}
+
+		displayName := ""
+		if venue.DisplayName != nil {
+			displayName = strings.TrimSpace(*venue.DisplayName)
+		}
+
+		apiURL := ""
+		if venue.ApiUrl != nil {
+			apiURL = strings.TrimSpace(*venue.ApiUrl)
+		}
+
+		if strings.EqualFold(venueType, "hyperliquid") && apiURL == "" {
+			return vault.Secrets{}, errors.New("hyperliquid venues require an api_url")
+		}
+
+		var flags map[string]interface{}
+		if venue.Flags != nil {
+			flags = cloneInterfaceMap(*venue.Flags)
+		}
+
+		if venue.IsPrimary {
+			primaryCount++
+		}
+
+		normalizedVenue := VaultVenueSecret{
+			Id:         id,
+			Type:       venueType,
+			Wallet:     wallet,
+			PrivateKey: privateKey,
+			IsPrimary:  venue.IsPrimary,
+		}
+
+		if displayName != "" {
+			dn := displayName
+			normalizedVenue.DisplayName = &dn
+		}
+		if apiURL != "" {
+			url := apiURL
+			normalizedVenue.ApiUrl = &url
+		}
+		if len(flags) > 0 {
+			normFlags := cloneInterfaceMap(flags)
+			normalizedVenue.Flags = &normFlags
+		}
+
+		normalized.Secrets.Venues = append(normalized.Secrets.Venues, normalizedVenue)
+		venues = append(venues, vault.VenueSecret{
+			ID:          id,
+			Type:        venueType,
+			DisplayName: displayName,
+			Wallet:      wallet,
+			PrivateKey:  privateKey,
+			APIURL:      apiURL,
+			Flags:       flags,
+			Primary:     venue.IsPrimary,
+		})
+	}
+
+	if primaryCount == 0 {
+		return vault.Secrets{}, errors.New("vault secrets require at least one primary venue")
+	}
+
+	raw, err := json.Marshal(normalized)
 	if err != nil {
 		return vault.Secrets{}, fmt.Errorf("encode secrets bundle: %w", err)
 	}
 
 	return vault.Secrets{
 		Secrets: vault.Data{
-			THREECOMMASAPIKEY:     bundle.Secrets.THREECOMMASAPIKEY,
-			THREECOMMASPRIVATEKEY: bundle.Secrets.THREECOMMASPRIVATEKEY,
-			HYPERLIQUIDWALLET:     bundle.Secrets.HYPERLIQUIDWALLET,
-			HYPERLIQUIDPRIVATEKEY: bundle.Secrets.HYPERLIQUIDPRIVATEKEY,
-			HYPERLIQUIDURL:        bundle.Secrets.HYPERLIQUIDURL,
+			THREECOMMASAPIKEY:     threeCommasKey,
+			THREECOMMASPRIVATEKEY: threeCommasSecret,
+			Venues:                venues,
 		},
 		Raw:        raw,
 		ReceivedAt: now.UTC(),
@@ -503,6 +591,64 @@ func deriveSessionTTL(rememberSeconds *int64) time.Duration {
 		ttl = maxVaultSessionTTL
 	}
 	return ttl
+}
+
+func (h *ApiHandler) syncVenueMetadata(ctx context.Context, venues []vault.VenueSecret) error {
+	if len(venues) == 0 {
+		return nil
+	}
+
+	if h.store == nil {
+		return errors.New("api handler store unavailable for venue sync")
+	}
+
+	for _, venue := range venues {
+		displayName := strings.TrimSpace(venue.DisplayName)
+		if displayName == "" {
+			displayName = venue.ID
+		}
+
+		flags := cloneInterfaceMap(venue.Flags)
+		if venue.APIURL != "" {
+			if flags == nil {
+				flags = make(map[string]interface{})
+			}
+			if _, exists := flags["api_url"]; !exists {
+				flags["api_url"] = venue.APIURL
+			}
+		}
+
+		payload := VenueUpsertRequest{
+			Type:        strings.TrimSpace(venue.Type),
+			DisplayName: displayName,
+			Wallet:      strings.TrimSpace(venue.Wallet),
+		}
+
+		if len(flags) > 0 {
+			payload.Flags = &flags
+		}
+
+		if _, err := h.store.UpsertVenue(ctx, strings.TrimSpace(venue.ID), payload); err != nil {
+			return fmt.Errorf("upsert venue %s: %w", venue.ID, err)
+		}
+	}
+
+	return nil
+}
+
+func cloneInterfaceMap(src map[string]interface{}) map[string]interface{} {
+	if len(src) == 0 {
+		if src == nil {
+			return nil
+		}
+		return map[string]interface{}{}
+	}
+
+	cloned := make(map[string]interface{}, len(src))
+	for key, value := range src {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 type sealVault200JSONResponse struct {

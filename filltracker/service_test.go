@@ -342,7 +342,6 @@ func TestReconcileTakeProfitsCancelsWhenFlat(t *testing.T) {
 	require.Len(t, actions, 1)
 	work := actions[0]
 	require.Equal(t, recomma.ActionCancel, work.Action.Type)
-	require.NotNil(t, work.Action.Cancel)
 	require.Equal(t, tpOid.Hex(), work.Action.Cancel.Cloid)
 	require.Equal(t, tpIdent, work.Identifier)
 }
@@ -414,7 +413,6 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 		require.Len(t, actions, 1)
 		work := actions[0]
 		require.Equal(t, recomma.ActionCreate, work.Action.Type)
-		require.NotNil(t, work.Action.Create)
 		require.InDelta(t, 10, work.Action.Create.Size, 1e-6)
 		require.True(t, work.Action.Create.ReduceOnly)
 		require.Equal(t, tpOid.Hex(), work.OrderId.Hex())
@@ -482,7 +480,6 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 		require.Len(t, actions, 1)
 		work := actions[0]
 		require.Equal(t, recomma.ActionModify, work.Action.Type)
-		require.NotNil(t, work.Action.Modify)
 		require.InDelta(t, 15, work.Action.Modify.Order.Size, 1e-6)
 		require.True(t, work.Action.Modify.Order.ReduceOnly)
 		oid, ok := work.Action.Modify.Oid.(string)
@@ -564,7 +561,6 @@ func TestEnsureTakeProfitRecreatesAfterStaleSubmission(t *testing.T) {
 	require.Len(t, actions, 1)
 	work := actions[0]
 	require.Equal(t, recomma.ActionCreate, work.Action.Type)
-	require.NotNil(t, work.Action.Create)
 	require.InDelta(t, snapshot.Position.NetQty, work.Action.Create.Size, 1e-6)
 	require.True(t, work.Action.Create.ReduceOnly)
 	require.Equal(t, tpOid.Hex(), work.OrderId.Hex())
@@ -658,13 +654,11 @@ func TestReconcileTakeProfitsRecreatesAfterCancelWithMissingOrderId(t *testing.T
 
 	cancelWork := actions[0]
 	require.Equal(t, recomma.ActionCancel, cancelWork.Action.Type)
-	require.NotNil(t, cancelWork.Action.Cancel)
 	require.Equal(t, tpOid.Hex(), cancelWork.Action.Cancel.Cloid)
 	require.Equal(t, tpIdent, cancelWork.Identifier)
 
 	createWork := actions[1]
 	require.Equal(t, recomma.ActionCreate, createWork.Action.Type)
-	require.NotNil(t, createWork.Action.Create)
 	require.True(t, createWork.Action.Create.ReduceOnly)
 	require.InDelta(t, snapshot.Position.NetQty, createWork.Action.Create.Size, 1e-6)
 	require.Equal(t, tpOid.Hex(), createWork.OrderId.Hex())

@@ -203,7 +203,7 @@ func (s *Service) cancelTakeProfit(
 		OrderId:    oid,
 		Action: recomma.Action{
 			Type:   recomma.ActionCancel,
-			Cancel: &cancel,
+			Cancel: cancel,
 			Reason: "position closed; cancel stale take profit",
 		},
 	}
@@ -248,7 +248,7 @@ func (s *Service) reconcileActiveTakeProfit(
 			OrderId:    oid,
 			Action: recomma.Action{
 				Type:   recomma.ActionModify,
-				Modify: &modify,
+				Modify: modify,
 				Reason: "resize take profit to match net position",
 			},
 			BotEvent: recomma.BotEvent{BotEvent: *evt},
@@ -268,7 +268,7 @@ func (s *Service) reconcileActiveTakeProfit(
 		OrderId:    oid,
 		Action: recomma.Action{
 			Type:   recomma.ActionCancel,
-			Cancel: &cancel,
+			Cancel: cancel,
 			Reason: "stale take profit metadata; cancel before recreation",
 		},
 	}
@@ -310,7 +310,7 @@ func (s *Service) ensureTakeProfit(
 		OrderId:    oid,
 		Action: recomma.Action{
 			Type:   recomma.ActionCreate,
-			Create: &create,
+			Create: create,
 			Reason: "recreate missing take profit",
 		},
 		BotEvent: recomma.BotEvent{BotEvent: *evt},
@@ -395,17 +395,11 @@ func (s *Service) shouldSkipSubmission(ctx context.Context, ident recomma.OrderI
 func submissionMatchesDesired(action recomma.Action, desiredSize float64, requireReduceOnly bool) bool {
 	switch action.Type {
 	case recomma.ActionCreate:
-		if action.Create == nil {
-			return false
-		}
 		if requireReduceOnly && !action.Create.ReduceOnly {
 			return false
 		}
 		return floatsEqual(action.Create.Size, desiredSize)
 	case recomma.ActionModify:
-		if action.Modify == nil {
-			return false
-		}
 		if requireReduceOnly && !action.Modify.Order.ReduceOnly {
 			return false
 		}

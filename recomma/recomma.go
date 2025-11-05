@@ -71,9 +71,9 @@ const (
 
 type Action struct {
 	Type   ActionType
-	Create *hyperliquid.CreateOrderRequest
-	Modify *hyperliquid.ModifyOrderRequest
-	Cancel *hyperliquid.CancelOrderRequestByCloid
+	Create hyperliquid.CreateOrderRequest
+	Modify hyperliquid.ModifyOrderRequest
+	Cancel hyperliquid.CancelOrderRequestByCloid
 	Reason string // optional human hint for ActionNone
 }
 

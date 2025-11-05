@@ -3,6 +3,7 @@ This file is a helper to prepare your environment for the task at hand. Refer to
 
 # Setup
 To be able to run the go tests we need to ensure everything is available.
+We require Go version 1.25
 
 ## Commands
 go mod download

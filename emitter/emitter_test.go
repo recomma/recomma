@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
@@ -40,6 +41,40 @@ func (s *stubExchange) CancelByCloid(ctx context.Context, coin, cloid string) (*
 
 func (s *stubExchange) ModifyOrder(ctx context.Context, req hyperliquid.ModifyOrderRequest) (hyperliquid.OrderStatus, error) {
 	return hyperliquid.OrderStatus{}, nil
+}
+
+type recordingRateGate struct {
+	mu        sync.Mutex
+	waitCalls int
+	cooldowns []time.Duration
+	waitErr   error
+}
+
+func (g *recordingRateGate) Wait(context.Context) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.waitCalls++
+	return g.waitErr
+}
+
+func (g *recordingRateGate) Cooldown(d time.Duration) {
+	g.mu.Lock()
+	g.cooldowns = append(g.cooldowns, d)
+	g.mu.Unlock()
+}
+
+func (g *recordingRateGate) waits() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.waitCalls
+}
+
+func (g *recordingRateGate) cooldownSnapshot() []time.Duration {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	out := make([]time.Duration, len(g.cooldowns))
+	copy(out, g.cooldowns)
+	return out
 }
 
 func TestHyperLiquidEmitterIOCRetriesLogSuccess(t *testing.T) {
@@ -166,6 +201,76 @@ func TestHyperLiquidEmitterIOCRetriesWarnOnFailure(t *testing.T) {
 	}
 
 	require.Equal(t, 1, warnCount, "expected a single warning when retries exhaust")
+}
+
+func TestHyperLiquidEmitterUsesInjectedRateGate(t *testing.T) {
+	t.Parallel()
+
+	gate := &recordingRateGate{}
+	emitter := NewHyperLiquidEmitter(&stubExchange{}, "", nil, newTestStore(t),
+		WithHyperLiquidRateGate(gate),
+	)
+
+	oid := orderid.OrderId{BotID: 10, DealID: 20, BotEventID: 30}
+	cloid := oid.Hex()
+	order := hyperliquid.CreateOrderRequest{
+		Coin:          "ATOM",
+		IsBuy:         true,
+		Price:         11,
+		Size:          1,
+		ClientOrderID: &cloid,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifIoc},
+		},
+	}
+	work := recomma.OrderWork{
+		Identifier: storage.DefaultHyperliquidIdentifier(oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent:   recomma.BotEvent{RowID: 3},
+	}
+
+	err := emitter.Emit(context.Background(), work)
+	require.NoError(t, err)
+	require.Equal(t, 1, gate.waits(), "expected the rate gate to be used for pacing")
+}
+
+func TestHyperLiquidEmitterPropagatesCooldownToRateGate(t *testing.T) {
+	t.Parallel()
+
+	gate := &recordingRateGate{}
+	exchange := &stubExchange{orderErrors: []error{fmt.Errorf("429 rate limit")}}
+	emitter := NewHyperLiquidEmitter(exchange, "", nil, newTestStore(t),
+		WithHyperLiquidRateGate(gate),
+		WithHyperLiquidEmitterConfig(HyperLiquidEmitterConfig{MaxIOCRetries: 1}),
+	)
+
+	oid := orderid.OrderId{BotID: 11, DealID: 21, BotEventID: 31}
+	cloid := oid.Hex()
+	order := hyperliquid.CreateOrderRequest{
+		Coin:          "SOL",
+		IsBuy:         true,
+		Price:         22,
+		Size:          1,
+		ClientOrderID: &cloid,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifIoc},
+		},
+	}
+	work := recomma.OrderWork{
+		Identifier: storage.DefaultHyperliquidIdentifier(oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent:   recomma.BotEvent{RowID: 4},
+	}
+
+	err := emitter.Emit(context.Background(), work)
+	require.Error(t, err)
+	require.Equal(t, 1, gate.waits(), "expected a single pacing attempt")
+
+	cooldowns := gate.cooldownSnapshot()
+	require.Len(t, cooldowns, 1, "expected a cooldown when rate limits are hit")
+	require.Equal(t, 10*time.Second, cooldowns[0])
 }
 
 func TestApplyIOCOffsetIgnoresNonIOCOrders(t *testing.T) {

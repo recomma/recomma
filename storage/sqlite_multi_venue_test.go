@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
+	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	api "github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
@@ -109,4 +111,30 @@ func TestStorageMultiVenueIsolation(t *testing.T) {
 	}
 	require.NotNil(t, alphaEvent, "expected alpha submission event")
 	require.NotNil(t, betaEvent, "expected beta submission event")
+}
+
+func TestHasPrimaryVenueAssignment(t *testing.T) {
+	store := newTestStorage(t)
+	ctx := context.Background()
+
+	has, err := store.HasPrimaryVenueAssignment(ctx, 101)
+	require.NoError(t, err)
+	require.False(t, has)
+
+	_, err = store.UpsertVenue(ctx, "hyperliquid:alpha", api.VenueUpsertRequest{
+		Type:        "hyperliquid",
+		DisplayName: "Alpha",
+		Wallet:      "alpha-wallet",
+	})
+	require.NoError(t, err)
+
+	now := time.Now().UTC()
+	require.NoError(t, store.RecordBot(ctx, tc.Bot{Id: 101}, now))
+
+	_, err = store.UpsertVenueAssignment(ctx, "hyperliquid:alpha", 101, true)
+	require.NoError(t, err)
+
+	has, err = store.HasPrimaryVenueAssignment(ctx, 101)
+	require.NoError(t, err)
+	require.True(t, has)
 }

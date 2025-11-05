@@ -537,6 +537,16 @@ func (e *Engine) adjustActionWithTracker(
 		return action, true
 	}
 
+	// Multi-venue scenario: defer to ReconcileTakeProfits for per-venue sizing
+	// If multiple active TPs exist, this indicates multi-venue and we should not
+	// use global net qty for sizing individual venue TPs
+	if len(snapshot.ActiveTakeProfits) > 1 {
+		logger.Debug("multi-venue take-profit detected; deferring sizing to reconciliation",
+			slog.Int("active_tps", len(snapshot.ActiveTakeProfits)),
+		)
+		return action, true
+	}
+
 	desiredQty := snapshot.Position.NetQty
 	if desiredQty <= qtyTolerance {
 		logger.Info("skipping take profit placement: position flat",
@@ -546,17 +556,16 @@ func (e *Engine) adjustActionWithTracker(
 		return recomma.Action{Type: recomma.ActionNone, Reason: "skip take-profit: position flat"}, false
 	}
 
-	// Check if any active take-profit already matches the desired position
-	if !skipExisting && len(snapshot.ActiveTakeProfits) > 0 {
-		for _, active := range snapshot.ActiveTakeProfits {
-			if active.ReduceOnly && nearlyEqual(active.RemainingQty, desiredQty) {
-				logger.Debug("take profit already matches position",
-					slog.Float64("desired_qty", desiredQty),
-					slog.Float64("existing_qty", active.RemainingQty),
-					slog.String("venue", active.Identifier.Venue()),
-				)
-				return recomma.Action{Type: recomma.ActionNone, Reason: "take-profit already matches position"}, false
-			}
+	// Single-venue scenario: check if the one TP already matches global position
+	if !skipExisting && len(snapshot.ActiveTakeProfits) == 1 {
+		active := snapshot.ActiveTakeProfits[0]
+		if active.ReduceOnly && nearlyEqual(active.RemainingQty, desiredQty) {
+			logger.Debug("take profit already matches position",
+				slog.Float64("desired_qty", desiredQty),
+				slog.Float64("existing_qty", active.RemainingQty),
+				slog.String("venue", active.Identifier.Venue()),
+			)
+			return recomma.Action{Type: recomma.ActionNone, Reason: "take-profit already matches position"}, false
 		}
 	}
 

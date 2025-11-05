@@ -1,0 +1,297 @@
+# Multi-Venue Emission Bug Report
+
+This document catalogs bugs and issues found during review of the `codex/extend-cmd/recomma-to-handle-multiple-venues` branch compared to `main`.
+
+## Critical Issues
+
+### Bug #1: OrderWork Comparability Violation
+**Severity**: Critical
+**Location**: `recomma/recomma.go:50-55`
+
+```go
+type OrderWork struct {
+    Identifier OrderIdentifier
+    OrderId    orderid.OrderId
+    Action     Action  // Contains POINTERS - breaks comparability
+    BotEvent   BotEvent
+}
+```
+
+**Problem**: The `Action` type contains pointer fields (`BuyAction`, `SellAction`, `CancelAction`), making `OrderWork` non-comparable. This violates the contract for using `OrderWork` as a map key in workqueues.
+
+**Fix Required**:
+1. Either remove pointer indirection from Action sub-types, OR
+2. Remove the `comparable` constraint from workqueue and implement custom equality checks
+
+**Files Affected**:
+- `recomma/recomma.go`
+- `emitter/emitter.go` (workqueue map)
+
+---
+
+### Bug #2-4: Scaled Orders Multi-Venue Architecture Broken
+**Severity**: Critical
+**Locations**:
+- `storage/order_scalers.go:482-511`
+- `storage/order_scalers.go:369-422`
+
+#### Bug #2: Hard-coded Default Venue in Queries
+```go
+func (s *Storage) ListScaledOrdersByOrderId(ctx context.Context, oid orderid.OrderId) ([]ScaledOrderAudit, error) {
+    rows, err := s.queries.ListScaledOrdersByOrderId(ctx, sqlcgen.ListScaledOrdersByOrderIdParams{
+        VenueID:       string(defaultHyperliquidVenueID),  // HARD-CODED
+        OrderID:       oid.Hex(),
+        OrderIDPrefix: fmt.Sprintf("%s#%%", oid.Hex()),
+    })
+}
+
+func (s *Storage) ListScaledOrdersByDeal(ctx context.Context, dealID uint32) ([]ScaledOrderAudit, error) {
+    rows, err := s.queries.ListScaledOrdersByDeal(ctx, sqlcgen.ListScaledOrdersByDealParams{
+        DealID:  int64(dealID),
+        VenueID: string(defaultHyperliquidVenueID),  // HARD-CODED
+    })
+}
+```
+
+**Problem**: These functions hard-code the default venue ID, breaking multi-venue support for scaled orders.
+
+**Fix Required**: Change signatures to accept `recomma.OrderIdentifier` or `recomma.VenueID` parameter.
+
+#### Bug #3: Wrong Venue Assignment in InsertScaledOrderAudit
+```go
+func (s *Storage) InsertScaledOrderAudit(ctx context.Context, params ScaledOrderAuditParams) (ScaledOrderAudit, error) {
+    defaultAssignment, err := s.defaultVenueAssignmentLocked(ctx)
+    // ...
+    insert := sqlcgen.InsertScaledOrderParams{
+        VenueID: string(defaultAssignment.VenueID),  // BUG: Always uses default
+        Wallet:  defaultAssignment.Wallet,
+        // ...
+    }
+}
+```
+
+**Problem**: Always inserts scaled orders with the default venue, regardless of which venue the order was actually submitted to.
+
+**Fix Required**:
+1. Change `ScaledOrderAuditParams` to accept `recomma.OrderIdentifier` instead of just `orderid.OrderId`
+2. Use the actual venue from the submission context
+
+#### Bug #4: Missing Caller Context
+The root cause: `ScaledOrderAuditParams` only contains `orderid.OrderId`:
+```go
+type ScaledOrderAuditParams struct {
+    OrderId orderid.OrderId  // Missing venue context
+    // ...
+}
+```
+
+**Problem**: The OrderId alone is insufficient to identify which venue the scaled order belongs to in a multi-venue system.
+
+**Fix Required**: Replace `OrderId orderid.OrderId` with `Identifier recomma.OrderIdentifier` throughout the scaled order audit flow.
+
+**Callers to Update**:
+- `engine/placement.go` (CreateScaledSafetyOrders, CreateScaledTakeProfit)
+- Any other code creating `ScaledOrderAuditParams`
+
+---
+
+### Bug #5: Missing scaled_orders in Wallet Migration
+**Severity**: High
+**Location**: `storage/storage.go:216-273`
+
+**Problem**: The `migrateDefaultVenueWalletLocked` function clones `hyperliquid_submissions` and `hyperliquid_status_history` tables when migrating wallets, but does NOT clone the `scaled_orders` table. This causes data loss for scaled order audit trails.
+
+**Fix Required** (needs sqlc regeneration):
+
+1. Add to `storage/sqlc/queries.sql`:
+```sql
+-- name: CloneScaledOrdersToWallet :exec
+INSERT INTO scaled_orders (
+    venue_id, wallet, order_id, deal_id, bot_id,
+    original_size, scaled_size, multiplier, rounding_delta,
+    stack_index, order_side, multiplier_updated_by,
+    created_at_utc, skipped, skip_reason,
+    payload_type, payload_blob
+)
+SELECT
+    src.venue_id,
+    sqlc.arg(to_wallet) AS wallet,
+    src.order_id, src.deal_id, src.bot_id,
+    src.original_size, src.scaled_size, src.multiplier, src.rounding_delta,
+    src.stack_index, src.order_side, src.multiplier_updated_by,
+    src.created_at_utc, src.skipped, src.skip_reason,
+    src.payload_type, src.payload_blob
+FROM scaled_orders AS src
+WHERE src.venue_id = sqlc.arg(venue_id)
+  AND src.wallet = sqlc.arg(from_wallet)
+ON CONFLICT(venue_id, wallet, order_id) DO NOTHING;
+
+-- name: DeleteScaledOrdersForWallet :exec
+DELETE FROM scaled_orders
+WHERE venue_id = sqlc.arg(venue_id)
+  AND wallet = sqlc.arg(wallet);
+```
+
+2. Run: `go generate ./gen/storage`
+
+3. Add to `storage/storage.go` in `migrateDefaultVenueWalletLocked`:
+```go
+// Clone scaled_orders
+cloneScaledOrdersParams := sqlcgen.CloneScaledOrdersToWalletParams{
+    ToWallet:   toWallet,
+    VenueID:    string(defaultHyperliquidVenueID),
+    FromWallet: fromWallet,
+}
+if err := qtx.CloneScaledOrdersToWallet(ctx, cloneScaledOrdersParams); err != nil {
+    return err
+}
+
+// ... (after other deletes) ...
+
+// Delete old scaled_orders
+deleteScaledOrdersParams := sqlcgen.DeleteScaledOrdersForWalletParams{
+    VenueID: string(defaultHyperliquidVenueID),
+    Wallet:  fromWallet,
+}
+if err := qtx.DeleteScaledOrdersForWallet(ctx, deleteScaledOrdersParams); err != nil {
+    return err
+}
+```
+
+---
+
+### Bug #6: Take Profit Reconciliation Doesn't Fan Out
+**Severity**: Medium
+**Location**: `filltracker/service.go:156-282`
+
+**Problem**: The `reconcileTakeProfits` function only updates one `OrderIdentifier` instead of fanning out to all venues when a deal has take-profits across multiple venues.
+
+**Current Code**:
+```go
+func (s *Service) reconcileTakeProfits(ctx context.Context, ident recomma.OrderIdentifier, dlr Deal) error {
+    // Only uses the single 'ident' passed in
+    // Should query all venues for take-profits related to dlr.DealID
+}
+```
+
+**Fix Required**: Query all venues for take-profits related to the deal and update each one.
+
+---
+
+## High Priority Issues
+
+### Bug #7: Redundant OrderId Field in OrderWork
+**Severity**: Low
+**Location**: `recomma/recomma.go:50-55`
+
+```go
+type OrderWork struct {
+    Identifier OrderIdentifier  // Contains: VenueID, Wallet, OrderId
+    OrderId    orderid.OrderId  // REDUNDANT - duplicates Identifier.OrderId
+    Action     Action
+    BotEvent   BotEvent
+}
+```
+
+**Problem**: `OrderId` duplicates `Identifier.OrderId`, causing maintenance burden and validation overhead.
+
+**Current Workaround**: Validation in `emitter/emitter.go:65-78` checks for consistency.
+
+**Fix Required**: Remove `OrderId` field and use `Identifier.OrderId` throughout the codebase.
+
+**Files to Update**:
+- All code creating `OrderWork` structs
+- Any code accessing `w.OrderId` → change to `w.Identifier.OrderId`
+
+---
+
+## Trivial Issues (SQL Fixes Required)
+
+### Bug #8-10: SQL Duplicate Clauses
+**Severity**: Trivial
+**Location**: `storage/sqlc/queries.sql`
+
+These bugs require sqlc regeneration after fixing.
+
+#### Bug #8 & #9: Duplicate WHERE Clauses
+Lines 249-271:
+```sql
+-- name: FetchLatestHyperliquidStatus :one
+WHERE venue_id = sqlc.arg(venue_id)
+  AND wallet = sqlc.arg(wallet)
+  AND order_id = sqlc.arg(order_id)
+  AND order_id = sqlc.arg(order_id)  -- DUPLICATE
+
+-- name: ListHyperliquidStatuses :many
+WHERE venue_id = sqlc.arg(venue_id)
+  AND wallet = sqlc.arg(wallet)
+  AND order_id = sqlc.arg(order_id)
+  AND order_id = sqlc.arg(order_id)  -- DUPLICATE
+```
+
+**Fix**: Remove duplicate `AND order_id = sqlc.arg(order_id)` lines and regenerate.
+
+#### Bug #10: Duplicate SELECT Column
+Line 319-324:
+```sql
+-- name: ListHyperliquidOrderIds :many
+SELECT
+    venue_id,
+    wallet,
+    order_id,
+    order_id  -- DUPLICATE COLUMN
+FROM hyperliquid_submissions
+```
+
+**Fix**: Remove one `order_id` column and regenerate.
+
+**Note**: The generated struct currently has both `OrderID` and `OrderID_2` fields. After fixing, only `OrderID` will remain. Verify all callers only use `row.OrderID` (they do).
+
+**After fixing all SQL issues, run**: `go generate ./gen/storage`
+
+---
+
+## Medium Priority Issues
+
+### Bug #11: Fill Tracker Unbounded Memory Growth
+**Severity**: Medium
+**Location**: `filltracker/service.go`
+
+**Problem**: The fill tracker maintains in-memory state for all deals without a cleanup mechanism. Over time, this will cause unbounded memory growth.
+
+**Recommendation**: Implement periodic cleanup of stale/completed deals from memory.
+
+---
+
+## Low Priority Issues
+
+### Bug #12: Replay Logic Edge Case
+**Severity**: Low
+**Location**: `engine/placement.go`
+
+**Problem**: When replaying positions, if a venue was added after a deal started, the replay might not create submissions for that venue.
+
+**Impact**: Unlikely in practice but worth noting for completeness.
+
+---
+
+## Testing Recommendations
+
+After fixing the above bugs, add tests for:
+
+1. **Multi-venue scaled orders**: Verify scaled orders are created with correct venue
+2. **Wallet migration**: Verify scaled_orders table is migrated
+3. **Take-profit fan-out**: Verify reconciliation updates all venues
+4. **OrderWork comparability**: Verify workqueue map operations work correctly
+
+---
+
+## Summary
+
+**Critical (must fix)**: Bugs #1-6
+**High priority**: Bug #7
+**Trivial (easy fix, needs sqlc)**: Bugs #8-10
+**Medium (future work)**: Bug #11
+**Low (edge case)**: Bug #12
+
+All SQL-related fixes require running `go generate ./gen/storage` after modifying `storage/sqlc/queries.sql`.

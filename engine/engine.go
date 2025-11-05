@@ -381,7 +381,7 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 				work := recomma.OrderWork{
 					Identifier: ident,
 					OrderId:    oid,
-					Action:     cloneAction(action),
+					Action:     action,
 				}
 				if latestForEmission != nil {
 					work.BotEvent = *latestForEmission
@@ -721,9 +721,4 @@ func compareIdentifiers(a, b recomma.OrderIdentifier) int {
 		return cmp
 	}
 	return strings.Compare(a.Hex(), b.Hex())
-}
-
-func cloneAction(action recomma.Action) recomma.Action {
-	// Since Action fields are now values (not pointers), a simple struct copy is sufficient
-	return action
 }

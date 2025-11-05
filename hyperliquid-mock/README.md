@@ -146,9 +146,130 @@ Health check endpoint.
 }
 ```
 
-## Testing
+## Using in Go Tests
 
-You can test the mock server using curl:
+The mock server can be embedded directly in your Go tests with automatic request capture and inspection.
+
+### Basic Test Usage
+
+```go
+import (
+    "testing"
+    "github.com/recomma/recomma/hyperliquid-mock/server"
+    "github.com/recomma/recomma/hl"
+)
+
+func TestMyHyperliquidCode(t *testing.T) {
+    // Create isolated test server (auto-cleanup)
+    ts := server.NewTestServer(t)
+
+    // Configure your client to use the mock
+    exchange, err := hl.NewExchange(ctx, hl.ClientConfig{
+        BaseURL: ts.URL(), // Use mock server URL
+        Wallet:  "0x...",
+        Key:     "...",
+    })
+
+    // Run your test code
+    status, err := exchange.Order(ctx, orderRequest, nil)
+
+    // Inspect what was sent to the mock server
+    requests := ts.GetExchangeRequests()
+    assert.Len(t, requests, 1)
+    assert.Equal(t, "ETH", extractCoin(requests[0]))
+
+    // Check server state
+    order, exists := ts.GetOrder("my-cloid")
+    assert.True(t, exists)
+    assert.Equal(t, "open", order.Status)
+}
+```
+
+### Test Isolation
+
+Each test gets its own server instance on a random port with isolated request history:
+
+```go
+func TestOrderCreation(t *testing.T) {
+    ts := server.NewTestServer(t)
+    // ts.RequestCount() == 0
+    // Make requests...
+}
+
+func TestOrderCancellation(t *testing.T) {
+    ts := server.NewTestServer(t)
+    // Completely separate from TestOrderCreation
+    // ts.RequestCount() == 0
+}
+```
+
+### Request Inspection
+
+Capture and inspect all requests sent to the mock:
+
+```go
+// Get typed exchange requests
+exchangeReqs := ts.GetExchangeRequests()
+
+// Get typed info requests
+infoReqs := ts.GetInfoRequests()
+
+// Get raw requests with headers/body
+rawReqs := ts.GetRequests()
+for _, req := range rawReqs {
+    fmt.Println(req.Method, req.Path)
+    fmt.Println(string(req.Body))
+    fmt.Println(req.Headers)
+}
+```
+
+### State Inspection
+
+Check the server's internal order state:
+
+```go
+// Get order by CLOID
+order, exists := ts.GetOrder("my-cloid-123")
+if exists {
+    fmt.Println(order.Order.Coin)    // "ETH"
+    fmt.Println(order.Status)         // "open"
+    fmt.Println(order.Order.Oid)      // 1000001
+}
+
+// Get order by OID
+order, exists := ts.GetOrderByOid(1000001)
+```
+
+### Clear Request History
+
+Clear captured requests between test phases:
+
+```go
+// Phase 1: Setup
+makeOrder(ts, "ETH", 1.0)
+assert.Equal(t, 1, ts.RequestCount())
+
+// Clear history
+ts.ClearRequests()
+assert.Equal(t, 0, ts.RequestCount())
+
+// Phase 2: Test actual behavior
+makeOrder(ts, "BTC", 0.5)
+assert.Equal(t, 1, ts.RequestCount())
+```
+
+### Example: Full Integration Test
+
+See `examples_test.go` for complete working examples including:
+- Testing with real go-hyperliquid library
+- Order creation, modification, cancellation
+- Order status queries
+- Parallel test safety
+- Request inspection patterns
+
+## Manual Testing with curl
+
+You can also test the mock server manually using curl:
 
 ```bash
 # Health check
@@ -193,15 +314,19 @@ curl -X POST http://localhost:8080/info \
 
 ```
 hyperliquid-mock/
-├── main.go              # Entry point
-├── go.mod               # Go module file
-├── openapi.yaml         # OpenAPI specification
-├── README.md            # This file
+├── main.go                    # Binary entry point
+├── go.mod                     # Go module file
+├── openapi.yaml               # OpenAPI specification
+├── README.md                  # This file
+├── Makefile                   # Build automation
+├── examples_test.go           # Integration test examples
 └── server/
-    ├── server.go        # HTTP server setup
-    ├── handlers.go      # Request handlers
-    ├── types.go         # Request/response types
-    └── state.go         # In-memory state management
+    ├── server.go              # HTTP server setup
+    ├── handlers.go            # Request handlers
+    ├── types.go               # Request/response types
+    ├── state.go               # In-memory state management
+    ├── testserver.go          # Test helpers & request capture
+    └── testserver_test.go     # Test server examples
 ```
 
 ### Adding new endpoints

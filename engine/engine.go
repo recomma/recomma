@@ -296,7 +296,7 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 		if !shouldEmit && needsReplay {
 			req := adapter.ToCreateOrderRequest(currency, *latestEvent, oid)
 			orderLogger.Info("replaying create for venues missing submissions", slog.Int("venues", len(missingTargets)))
-			action = recomma.Action{Type: recomma.ActionCreate, Create: &req}
+			action = recomma.Action{Type: recomma.ActionCreate, Create: req}
 			shouldEmit = true
 			replayForPrimary = true
 			needsReplay = false
@@ -337,7 +337,7 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 				latestCopy = &copy
 			}
 			emissions = append(emissions, emissionPlan{
-				action:       recomma.Action{Type: recomma.ActionCreate, Create: &req},
+				action:       recomma.Action{Type: recomma.ActionCreate, Create: req},
 				targets:      targets,
 				latest:       latestCopy,
 				skipExisting: true,
@@ -451,7 +451,7 @@ func (e *Engine) reduceOrderEvents(
 			req := adapter.ToCreateOrderRequest(currency, latest, oid)
 			logger.Warn("modify requested before create; falling back", slog.Any("latest", latest))
 			logger.Debug("emit create", slog.Any("request", req))
-			return recomma.Action{Type: recomma.ActionCreate, Create: &req}, &latestCopy, true, nil
+			return recomma.Action{Type: recomma.ActionCreate, Create: req}, &latestCopy, true, nil
 		}
 		logger.Info("emit modify", slog.Any("latest", latest))
 		return action, &latestCopy, true, nil
@@ -551,12 +551,8 @@ func (e *Engine) adjustActionWithTracker(
 			slog.Float64("desired_qty", desiredQty),
 			slog.Float64("price", req.Price),
 		)
-		return recomma.Action{Type: recomma.ActionCreate, Create: &req}, true
+		return recomma.Action{Type: recomma.ActionCreate, Create: req}, true
 	case recomma.ActionCreate:
-		if action.Create == nil {
-			req := adapter.ToCreateOrderRequest(currency, latest, oid)
-			action.Create = &req
-		}
 		action.Create.Size = desiredQty
 		action.Create.ReduceOnly = true
 		logger.Info("creating take profit with tracked size",
@@ -565,15 +561,6 @@ func (e *Engine) adjustActionWithTracker(
 		)
 		return action, true
 	case recomma.ActionModify:
-		if action.Modify == nil {
-			req := adapter.ToCreateOrderRequest(currency, latest, oid)
-			req.Size = desiredQty
-			req.ReduceOnly = true
-			logger.Warn("modify without prior request; emitting create instead",
-				slog.Float64("desired_qty", desiredQty),
-			)
-			return recomma.Action{Type: recomma.ActionCreate, Create: &req}, true
-		}
 		action.Modify.Order.Size = desiredQty
 		action.Modify.Order.ReduceOnly = true
 		logger.Info("modifying take profit to tracked size",
@@ -602,11 +589,8 @@ func (e *Engine) applyScaling(
 
 	switch action.Type {
 	case recomma.ActionCreate:
-		if action.Create == nil {
-			return action, nil, true, nil
-		}
-		req := orderscaler.BuildRequest(oid, latest.BotEvent, *action.Create)
-		result, err := e.scaler.Scale(ctx, req, action.Create)
+		req := orderscaler.BuildRequest(oid, latest.BotEvent, action.Create)
+		result, err := e.scaler.Scale(ctx, req, &action.Create)
 		if err != nil {
 			if errors.Is(err, orderscaler.ErrBelowMinimum) {
 				reason := "scaled order below minimum"
@@ -626,9 +610,6 @@ func (e *Engine) applyScaling(
 		}
 		return action, &result, true, nil
 	case recomma.ActionModify:
-		if action.Modify == nil {
-			return action, nil, true, nil
-		}
 		req := orderscaler.BuildRequest(oid, latest.BotEvent, action.Modify.Order)
 		result, err := e.scaler.Scale(ctx, req, &action.Modify.Order)
 		if err != nil {

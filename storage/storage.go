@@ -1094,7 +1094,7 @@ func (s *Storage) LoadHyperliquidSubmission(ctx context.Context, ident recomma.O
 		if err := json.Unmarshal(row.CreatePayload, &decoded); err != nil {
 			return recomma.Action{}, false, err
 		}
-		action.Create = &decoded
+		action.Create = decoded
 	}
 
 	if len(row.ModifyPayloads) > 0 {
@@ -1104,7 +1104,7 @@ func (s *Storage) LoadHyperliquidSubmission(ctx context.Context, ident recomma.O
 		}
 		if len(decoded) > 0 {
 			last := decoded[len(decoded)-1]
-			action.Modify = &last
+			action.Modify = last
 		}
 	}
 
@@ -1113,10 +1113,10 @@ func (s *Storage) LoadHyperliquidSubmission(ctx context.Context, ident recomma.O
 		if err := json.Unmarshal(row.CancelPayload, &decoded); err != nil {
 			return recomma.Action{}, false, err
 		}
-		action.Cancel = &decoded
+		action.Cancel = decoded
 	}
 
-	if action.Type == recomma.ActionModify && action.Modify == nil {
+	if action.Type == recomma.ActionModify && len(row.ModifyPayloads) == 0 {
 		action.Type = recomma.ActionNone
 		action.Reason = "modify history empty"
 	}

@@ -354,7 +354,6 @@ func TestProcessDeal_AppliesOrderScaler(t *testing.T) {
 
 	require.Len(t, h.emitter.items, 1)
 	work := h.emitter.items[0]
-	require.NotNil(t, work.Action.Create)
 	require.InDelta(t, 1.0, work.Action.Create.Size, 1e-6)
 	require.InDelta(t, 12.34, work.Action.Create.Price, 1e-6)
 	require.InDelta(t, 1.0, work.BotEvent.Size, 1e-6)

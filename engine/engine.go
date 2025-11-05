@@ -360,30 +360,38 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 				}
 			}
 
-			var scaleResult *orderscaler.Result
-			if latestForEmission != nil {
-				var err error
-				action, scaleResult, emit, err = e.applyScaling(ctx, oid, latestForEmission, action, orderLogger)
-				if err != nil {
-					return fmt.Errorf("scale order %d: %w", oid.BotEventID, err)
+			// Scale and emit per-identifier to ensure each venue gets its own audit record
+			for _, ident := range emission.targets {
+				identAction := action
+				var scaleResult *orderscaler.Result
+
+				if latestForEmission != nil {
+					var err error
+					latestCopy := *latestForEmission
+					identAction, scaleResult, emit, err = e.applyScaling(ctx, ident, &latestCopy, identAction, orderLogger)
+					if err != nil {
+						return fmt.Errorf("scale order %d for venue %s: %w", oid.BotEventID, ident.Venue(), err)
+					}
+					if !emit {
+						continue
+					}
 				}
-				if !emit {
-					continue
-				}
-			}
-			if e.tracker != nil && scaleResult != nil {
-				for _, ident := range emission.targets {
+
+				if e.tracker != nil && scaleResult != nil {
 					e.tracker.ApplyScaledOrder(ident, scaleResult.Size, scaleResult.Price)
 				}
-			}
 
-			for _, ident := range emission.targets {
 				work := recomma.OrderWork{
 					Identifier: ident,
 					OrderId:    oid,
-					Action:     action,
+					Action:     identAction,
 				}
-				if latestForEmission != nil {
+				if latestForEmission != nil && scaleResult != nil {
+					// Use the scaled BotEvent
+					work.BotEvent = *latestForEmission
+					work.BotEvent.Size = scaleResult.Size
+					work.BotEvent.Price = scaleResult.Price
+				} else if latestForEmission != nil {
 					work.BotEvent = *latestForEmission
 				}
 				if err := e.emitter.Emit(ctx, work); err != nil {
@@ -578,7 +586,7 @@ func (e *Engine) adjustActionWithTracker(
 
 func (e *Engine) applyScaling(
 	ctx context.Context,
-	oid orderid.OrderId,
+	ident recomma.OrderIdentifier,
 	latest *recomma.BotEvent,
 	action recomma.Action,
 	logger *slog.Logger,
@@ -589,7 +597,7 @@ func (e *Engine) applyScaling(
 
 	switch action.Type {
 	case recomma.ActionCreate:
-		req := orderscaler.BuildRequest(oid, latest.BotEvent, action.Create)
+		req := orderscaler.BuildRequest(ident, latest.BotEvent, action.Create)
 		result, err := e.scaler.Scale(ctx, req, &action.Create)
 		if err != nil {
 			if errors.Is(err, orderscaler.ErrBelowMinimum) {
@@ -610,7 +618,7 @@ func (e *Engine) applyScaling(
 		}
 		return action, &result, true, nil
 	case recomma.ActionModify:
-		req := orderscaler.BuildRequest(oid, latest.BotEvent, action.Modify.Order)
+		req := orderscaler.BuildRequest(ident, latest.BotEvent, action.Modify.Order)
 		result, err := e.scaler.Scale(ctx, req, &action.Modify.Order)
 		if err != nil {
 			if errors.Is(err, orderscaler.ErrBelowMinimum) {

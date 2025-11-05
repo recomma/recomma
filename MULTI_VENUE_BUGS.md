@@ -4,98 +4,7 @@ This document catalogs bugs and issues found during review of the `codex/extend-
 
 ## Critical Issues
 
-### Bug #1: OrderWork Comparability Violation
-**Severity**: Critical
-**Location**: `recomma/recomma.go:50-55`
-
-```go
-type OrderWork struct {
-    Identifier OrderIdentifier
-    OrderId    orderid.OrderId
-    Action     Action  // Contains POINTERS - breaks comparability
-    BotEvent   BotEvent
-}
-```
-
-**Problem**: The `Action` type contains pointer fields (`BuyAction`, `SellAction`, `CancelAction`), making `OrderWork` non-comparable. This violates the contract for using `OrderWork` as a map key in workqueues.
-
-**Fix Required**:
-1. Either remove pointer indirection from Action sub-types, OR
-2. Remove the `comparable` constraint from workqueue and implement custom equality checks
-
-**Files Affected**:
-- `recomma/recomma.go`
-- `emitter/emitter.go` (workqueue map)
-
----
-
-### Bug #2-4: Scaled Orders Multi-Venue Architecture Broken
-**Severity**: Critical
-**Locations**:
-- `storage/order_scalers.go:482-511`
-- `storage/order_scalers.go:369-422`
-
-#### Bug #2: Hard-coded Default Venue in Queries
-```go
-func (s *Storage) ListScaledOrdersByOrderId(ctx context.Context, oid orderid.OrderId) ([]ScaledOrderAudit, error) {
-    rows, err := s.queries.ListScaledOrdersByOrderId(ctx, sqlcgen.ListScaledOrdersByOrderIdParams{
-        VenueID:       string(defaultHyperliquidVenueID),  // HARD-CODED
-        OrderID:       oid.Hex(),
-        OrderIDPrefix: fmt.Sprintf("%s#%%", oid.Hex()),
-    })
-}
-
-func (s *Storage) ListScaledOrdersByDeal(ctx context.Context, dealID uint32) ([]ScaledOrderAudit, error) {
-    rows, err := s.queries.ListScaledOrdersByDeal(ctx, sqlcgen.ListScaledOrdersByDealParams{
-        DealID:  int64(dealID),
-        VenueID: string(defaultHyperliquidVenueID),  // HARD-CODED
-    })
-}
-```
-
-**Problem**: These functions hard-code the default venue ID, breaking multi-venue support for scaled orders.
-
-**Fix Required**: Change signatures to accept `recomma.OrderIdentifier` or `recomma.VenueID` parameter.
-
-#### Bug #3: Wrong Venue Assignment in InsertScaledOrderAudit
-```go
-func (s *Storage) InsertScaledOrderAudit(ctx context.Context, params ScaledOrderAuditParams) (ScaledOrderAudit, error) {
-    defaultAssignment, err := s.defaultVenueAssignmentLocked(ctx)
-    // ...
-    insert := sqlcgen.InsertScaledOrderParams{
-        VenueID: string(defaultAssignment.VenueID),  // BUG: Always uses default
-        Wallet:  defaultAssignment.Wallet,
-        // ...
-    }
-}
-```
-
-**Problem**: Always inserts scaled orders with the default venue, regardless of which venue the order was actually submitted to.
-
-**Fix Required**:
-1. Change `ScaledOrderAuditParams` to accept `recomma.OrderIdentifier` instead of just `orderid.OrderId`
-2. Use the actual venue from the submission context
-
-#### Bug #4: Missing Caller Context
-The root cause: `ScaledOrderAuditParams` only contains `orderid.OrderId`:
-```go
-type ScaledOrderAuditParams struct {
-    OrderId orderid.OrderId  // Missing venue context
-    // ...
-}
-```
-
-**Problem**: The OrderId alone is insufficient to identify which venue the scaled order belongs to in a multi-venue system.
-
-**Fix Required**: Replace `OrderId orderid.OrderId` with `Identifier recomma.OrderIdentifier` throughout the scaled order audit flow.
-
-**Callers to Update**:
-- `engine/placement.go` (CreateScaledSafetyOrders, CreateScaledTakeProfit)
-- Any other code creating `ScaledOrderAuditParams`
-
----
-
-### Bug #5: Missing scaled_orders in Wallet Migration
+### Bug #1: Missing scaled_orders in Wallet Migration
 **Severity**: High
 **Location**: `storage/storage.go:216-273`
 
@@ -160,7 +69,7 @@ if err := qtx.DeleteScaledOrdersForWallet(ctx, deleteScaledOrdersParams); err !=
 
 ---
 
-### Bug #6: Take Profit Reconciliation Doesn't Fan Out
+### Bug #2: Take Profit Reconciliation Doesn't Fan Out
 **Severity**: Medium
 **Location**: `filltracker/service.go:156-282`
 
@@ -180,7 +89,7 @@ func (s *Service) reconcileTakeProfits(ctx context.Context, ident recomma.OrderI
 
 ## Medium Priority Issues
 
-### Bug #7: Fill Tracker Unbounded Memory Growth
+### Bug #3: Fill Tracker Unbounded Memory Growth
 **Severity**: Medium
 **Location**: `filltracker/service.go`
 
@@ -192,7 +101,7 @@ func (s *Service) reconcileTakeProfits(ctx context.Context, ident recomma.OrderI
 
 ## Low Priority Issues
 
-### Bug #8: Replay Logic Edge Case
+### Bug #4: Replay Logic Edge Case
 **Severity**: Low
 **Location**: `engine/placement.go`
 
@@ -206,24 +115,111 @@ func (s *Service) reconcileTakeProfits(ctx context.Context, ident recomma.OrderI
 
 After fixing the above bugs, add tests for:
 
-1. **Multi-venue scaled orders**: Verify scaled orders are created with correct venue
-2. **Wallet migration**: Verify scaled_orders table is migrated
-3. **Take-profit fan-out**: Verify reconciliation updates all venues
-4. **OrderWork comparability**: Verify workqueue map operations work correctly (Bug #1)
+1. **Wallet migration**: Verify scaled_orders table is migrated (Bug #1)
+2. **Take-profit fan-out**: Verify reconciliation updates all venues (Bug #2)
 
 ---
 
 ## Summary
 
-**Critical (must fix)**: Bugs #1-6
-**Medium (future work)**: Bug #7
-**Low (edge case)**: Bug #8
+**Critical (must fix)**: Bugs #1-2
+**Medium (future work)**: Bug #3
+**Low (edge case)**: Bug #4
 
 All SQL-related fixes require running `go generate ./gen/storage` after modifying `storage/sqlc/queries.sql`.
 
 ---
 
 ## Resolved Issues
+
+### OrderWork Comparability Violation - RESOLVED ✓
+**Status**: Fixed
+**Resolution Date**: 2025-11-05
+**PR**: #75
+**Commits**:
+- `a4b8c76` - fix: remove pointer fields from Action struct to make OrderWork comparable
+- `d90e115` - fix: correct remaining pointer-to-value conversions
+- `30a763f` - fix: simplify cloneAction since Action fields are now values
+- `7092f95` - refactor: remove not needed cloneAction
+
+**Original Problem**: The `Action` type contained pointer fields (`*BuyAction`, `*SellAction`, `*CancelAction`), making `OrderWork` non-comparable and violating the contract for using it as a map key in workqueues.
+
+**Fix**: Changed Action struct fields from pointers to values:
+```go
+type Action struct {
+    Type   ActionType
+    Create hyperliquid.CreateOrderRequest    // Changed from pointer
+    Modify hyperliquid.ModifyOrderRequest    // Changed from pointer
+    Cancel hyperliquid.CancelOrderRequestByCloid  // Changed from pointer
+    Reason string
+}
+```
+
+**Files Changed**:
+- `recomma/recomma.go`
+- `emitter/emitter.go`
+- `engine/engine.go`
+- `adapter/adapter.go`
+- `internal/api/handler.go`
+
+---
+
+### Scaled Orders Multi-Venue Architecture - RESOLVED ✓
+**Status**: Fixed
+**Resolution Date**: 2025-11-05
+**PR**: #76
+**Commits**:
+- `a2f5fd0` - fix: resolve multi-venue scaled order bugs
+- `5fd46f2` - fix: update tests to use OrderIdentifier
+- `ed82f06` - chore: gofmt and go generate
+- `5808b73` - fix: match scaled orders by venue in filltracker
+
+**Original Problems**:
+
+1. **Hard-coded Default Venue in Queries**: `ListScaledOrdersByOrderId` and `ListScaledOrdersByDeal` hard-coded `defaultHyperliquidVenueID`.
+
+2. **Wrong Venue Assignment**: `InsertScaledOrderAudit` always used default venue instead of the actual submission venue.
+
+3. **Missing Caller Context**: `ScaledOrderAuditParams` only had `orderid.OrderId` without venue information.
+
+**Fix**:
+
+1. Updated `ScaledOrderAuditParams` to use `Identifier recomma.OrderIdentifier`:
+```go
+type ScaledOrderAuditParams struct {
+    Identifier          recomma.OrderIdentifier  // Now includes VenueID, Wallet, OrderId
+    DealID              uint32
+    // ...
+}
+```
+
+2. Modified `InsertScaledOrderAudit` to use venue from identifier:
+```go
+venueID := params.Identifier.VenueID
+wallet := params.Identifier.Wallet
+```
+
+3. Removed `VenueID` filter from SQL queries:
+```sql
+-- ListScaledOrdersByOrderId: Now queries across all venues
+WHERE order_id = sqlc.arg(order_id)
+   OR order_id LIKE sqlc.arg(order_id_prefix)
+
+-- ListScaledOrdersByDeal: Now queries across all venues
+WHERE deal_id = sqlc.arg(deal_id)
+```
+
+**Files Changed**:
+- `storage/order_scalers.go`
+- `storage/order_scalers_test.go`
+- `storage/sqlc/queries.sql`
+- `storage/sqlcgen/queries.sql.go`
+- `engine/orderscaler/service.go`
+- `engine/orderscaler/service_test.go`
+- `filltracker/service.go`
+- `filltracker/service_test.go`
+
+---
 
 ### ~~Bug: Redundant OrderId Field in OrderWork~~ - NOT A BUG
 **Status**: Resolved - Clarified as working as intended

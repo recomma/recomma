@@ -254,7 +254,6 @@ FROM hyperliquid_status_history
 WHERE venue_id = sqlc.arg(venue_id)
   AND wallet = sqlc.arg(wallet)
   AND order_id = sqlc.arg(order_id)
-  AND order_id = sqlc.arg(order_id)
 ORDER BY recorded_at_utc DESC
 LIMIT 1;
 
@@ -266,7 +265,6 @@ SELECT
 FROM hyperliquid_status_history
 WHERE venue_id = sqlc.arg(venue_id)
   AND wallet = sqlc.arg(wallet)
-  AND order_id = sqlc.arg(order_id)
   AND order_id = sqlc.arg(order_id)
 ORDER BY recorded_at_utc ASC;
 
@@ -320,7 +318,6 @@ LIMIT 1;
 SELECT
     venue_id,
     wallet,
-    order_id,
     order_id
 FROM hyperliquid_submissions
 WHERE venue_id = COALESCE(sqlc.arg(venue_id), venue_id)
@@ -331,7 +328,6 @@ WITH ranked_status AS (
     SELECT
         venue_id,
         wallet,
-        order_id,
         order_id,
         payload_type,
         payload_blob,

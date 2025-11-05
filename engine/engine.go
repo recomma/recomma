@@ -546,13 +546,18 @@ func (e *Engine) adjustActionWithTracker(
 		return recomma.Action{Type: recomma.ActionNone, Reason: "skip take-profit: position flat"}, false
 	}
 
-	active := snapshot.ActiveTakeProfit
-	if !skipExisting && active != nil && active.ReduceOnly && nearlyEqual(active.RemainingQty, desiredQty) {
-		logger.Debug("take profit already matches position",
-			slog.Float64("desired_qty", desiredQty),
-			slog.Float64("existing_qty", active.RemainingQty),
-		)
-		return recomma.Action{Type: recomma.ActionNone, Reason: "take-profit already matches position"}, false
+	// Check if any active take-profit already matches the desired position
+	if !skipExisting && len(snapshot.ActiveTakeProfits) > 0 {
+		for _, active := range snapshot.ActiveTakeProfits {
+			if active.ReduceOnly && nearlyEqual(active.RemainingQty, desiredQty) {
+				logger.Debug("take profit already matches position",
+					slog.Float64("desired_qty", desiredQty),
+					slog.Float64("existing_qty", active.RemainingQty),
+					slog.String("venue", active.Identifier.Venue()),
+				)
+				return recomma.Action{Type: recomma.ActionNone, Reason: "take-profit already matches position"}, false
+			}
+		}
 	}
 
 	switch action.Type {

@@ -283,6 +283,11 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 			assignments = nil
 		}
 
+		// Replay logic: if a venue was added after a deal started and this order is still active,
+		// we'll replay the creation to the new venues. This handles most cases where venues are
+		// added mid-deal. Edge case: If no new events arrive for an order after a venue is added,
+		// this replay won't trigger until the next event. For production use, consider a periodic
+		// reconciliation pass to catch such cases (similar to take-profit reconciliation).
 		missingTargets := missingAssignmentTargets(oid, assignments, storedIdents)
 		needsReplay := len(missingTargets) > 0 && latestEvent != nil && latestEvent.Status == tc.Active
 

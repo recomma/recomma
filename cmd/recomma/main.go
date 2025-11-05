@@ -520,6 +520,11 @@ func main() {
 		fillTracker.ReconcileTakeProfits(ctx, engineEmitter)
 	}
 
+	cleanupStaleDeals := func() {
+		// Clean up deals that have been inactive for more than 1 hour and are fully complete
+		fillTracker.CleanupStaleDeals(time.Hour)
+	}
+
 	reconcileTakeProfits(appCtx)
 
 	// Periodic resync; stops automatically when ctx is cancelled
@@ -527,6 +532,8 @@ func main() {
 	go func() {
 		ticker := time.NewTicker(resync)
 		defer ticker.Stop()
+		cleanupTicker := time.NewTicker(10 * time.Minute)
+		defer cleanupTicker.Stop()
 		for {
 			select {
 			case <-appCtx.Done():
@@ -540,6 +547,11 @@ func main() {
 				}
 				produceOnce(appCtx)
 				reconcileTakeProfits(appCtx)
+			case <-cleanupTicker.C:
+				if appCtx.Err() != nil {
+					return
+				}
+				cleanupStaleDeals()
 			}
 		}
 	}()

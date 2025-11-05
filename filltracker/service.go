@@ -165,32 +165,31 @@ func (s *Service) ReconcileTakeProfits(ctx context.Context, submitter recomma.Em
 
 		desiredQty := snapshot.Position.NetQty
 		if desiredQty <= floatTolerance {
-			if snapshot.ActiveTakeProfit != nil {
-				s.cancelTakeProfit(ctx, submitter, snapshot)
+			// Cancel all active take-profits since position is flat
+			for _, tp := range snapshot.ActiveTakeProfits {
+				s.cancelTakeProfitBySnapshot(ctx, submitter, snapshot, tp)
 			}
 			continue
 		}
 
-		if snapshot.ActiveTakeProfit != nil {
-			if s.reconcileActiveTakeProfit(ctx, submitter, snapshot, desiredQty) {
-				continue
+		// Reconcile each venue's take-profit independently
+		if len(snapshot.ActiveTakeProfits) > 0 {
+			for _, tp := range snapshot.ActiveTakeProfits {
+				s.reconcileActiveTakeProfitBySnapshot(ctx, submitter, snapshot, tp, desiredQty)
 			}
+		} else {
+			// No active take-profits; ensure they exist for all relevant venues
+			s.ensureTakeProfit(ctx, submitter, snapshot, desiredQty, nil, nil, false)
 		}
-
-		s.ensureTakeProfit(ctx, submitter, snapshot, desiredQty, nil, nil, false)
 	}
 }
 
-func (s *Service) cancelTakeProfit(
+func (s *Service) cancelTakeProfitBySnapshot(
 	ctx context.Context,
 	submitter recomma.Emitter,
 	snapshot DealSnapshot,
+	tp OrderSnapshot,
 ) {
-	tp := snapshot.ActiveTakeProfit
-	if tp == nil {
-		return
-	}
-
 	ident := tp.Identifier
 	oid := tp.OrderId
 	cancel := hyperliquid.CancelOrderRequestByCloid{
@@ -211,17 +210,13 @@ func (s *Service) cancelTakeProfit(
 	s.emitOrderWork(ctx, submitter, work, "cancelled take profit for flat position", snapshot, tp.RemainingQty)
 }
 
-func (s *Service) reconcileActiveTakeProfit(
+func (s *Service) reconcileActiveTakeProfitBySnapshot(
 	ctx context.Context,
 	submitter recomma.Emitter,
 	snapshot DealSnapshot,
+	tp OrderSnapshot,
 	desiredQty float64,
 ) bool {
-	tp := snapshot.ActiveTakeProfit
-	if tp == nil {
-		return false
-	}
-
 	if tp.ReduceOnly && floatsEqual(tp.RemainingQty, desiredQty) {
 		return true
 	}
@@ -637,6 +632,52 @@ func (s *Service) listDealIDs() []uint32 {
 	return out
 }
 
+// CleanupStaleDealsstale removes completed/inactive deals from memory to prevent unbounded growth.
+// A deal is considered stale if:
+// - All orders are either filled or cancelled
+// - No updates in the last staleDuration period
+func (s *Service) CleanupStaleDeals(staleDuration time.Duration) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now().UTC()
+	staleDeals := make([]uint32, 0)
+
+	for dealID, deal := range s.deals {
+		if now.Sub(deal.lastUpdate) < staleDuration {
+			continue // Deal was recently updated
+		}
+
+		// Check if all orders are complete (filled or cancelled)
+		allComplete := true
+		for _, order := range deal.orders {
+			if order.isActive() {
+				allComplete = false
+				break
+			}
+		}
+
+		if allComplete {
+			staleDeals = append(staleDeals, dealID)
+		}
+	}
+
+	// Remove stale deals and their associated orders
+	for _, dealID := range staleDeals {
+		deal := s.deals[dealID]
+		for ident := range deal.orders {
+			delete(s.orders, ident)
+		}
+		delete(s.deals, dealID)
+	}
+
+	if len(staleDeals) > 0 {
+		s.logger.Info("cleaned up stale deals", slog.Int("count", len(staleDeals)))
+	}
+
+	return len(staleDeals)
+}
+
 type orderState struct {
 	identifier recomma.OrderIdentifier
 
@@ -859,7 +900,7 @@ func (d *dealState) snapshot() DealSnapshot {
 	allBuysFilled := true
 	var outstandingBuyQty float64
 	var outstandingSellQty float64
-	var activeTP *OrderSnapshot
+	var activeTPs []OrderSnapshot
 	var latestTPEvent *tc.BotEvent
 
 	for _, state := range d.orders {
@@ -877,10 +918,8 @@ func (d *dealState) snapshot() DealSnapshot {
 		} else {
 			outstandingSellQty += state.remainingQty
 			if state.reduceOnly && state.isActive() {
-				if activeTP == nil || snap.StatusTime.After(activeTP.StatusTime) {
-					copy := snap
-					activeTP = &copy
-				}
+				copy := snap
+				activeTPs = append(activeTPs, copy)
 			}
 		}
 
@@ -892,7 +931,7 @@ func (d *dealState) snapshot() DealSnapshot {
 		}
 	}
 
-	out.ActiveTakeProfit = activeTP
+	out.ActiveTakeProfits = activeTPs
 	out.LastTakeProfitEvent = latestTPEvent
 	out.AllBuysFilled = allBuysFilled
 	out.OutstandingBuyQty = outstandingBuyQty
@@ -919,7 +958,7 @@ type DealSnapshot struct {
 
 	Orders []OrderSnapshot
 
-	ActiveTakeProfit    *OrderSnapshot
+	ActiveTakeProfits   []OrderSnapshot
 	LastTakeProfitEvent *tc.BotEvent
 
 	OpenBuys []OrderSnapshot

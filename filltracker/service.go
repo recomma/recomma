@@ -166,24 +166,29 @@ func (s *Service) ReconcileTakeProfits(ctx context.Context, submitter recomma.Em
 		// Calculate per-venue positions from filled orders
 		venuePositions := s.calculateVenuePositions(snapshot)
 
-		// Map existing active take-profits by identifier
-		activeTPs := make(map[recomma.OrderIdentifier]OrderSnapshot)
+		// Map existing active take-profits by venue+wallet (not full identifier)
+		activeTPs := make(map[venueKey]OrderSnapshot)
 		for _, tp := range snapshot.ActiveTakeProfits {
-			activeTPs[tp.Identifier] = tp
+			key := venueKey{venue: tp.Identifier.VenueID, wallet: tp.Identifier.Wallet}
+			activeTPs[key] = tp
 		}
 
 		// Reconcile each venue independently
+		processedVenues := make(map[venueKey]bool)
 		for ident, venueNetQty := range venuePositions {
+			key := venueKey{venue: ident.VenueID, wallet: ident.Wallet}
+			processedVenues[key] = true
+
 			if venueNetQty <= floatTolerance {
 				// Position flat for this venue; cancel TP if it exists
-				if tp, exists := activeTPs[ident]; exists {
+				if tp, exists := activeTPs[key]; exists {
 					s.cancelTakeProfitBySnapshot(ctx, submitter, snapshot, tp)
 				}
 				continue
 			}
 
 			// Check if this venue has an active take-profit
-			if tp, exists := activeTPs[ident]; exists {
+			if tp, exists := activeTPs[key]; exists {
 				// Reconcile existing take-profit to match venue's net position
 				s.reconcileActiveTakeProfitBySnapshot(ctx, submitter, snapshot, tp, venueNetQty)
 			} else {
@@ -191,27 +196,56 @@ func (s *Service) ReconcileTakeProfits(ctx context.Context, submitter recomma.Em
 				s.ensureTakeProfit(ctx, submitter, snapshot, venueNetQty, &ident, nil, false)
 			}
 		}
+
+		// Cancel any TPs for venues that have no position (not in venuePositions map)
+		for key, tp := range activeTPs {
+			if !processedVenues[key] {
+				s.cancelTakeProfitBySnapshot(ctx, submitter, snapshot, tp)
+			}
+		}
 	}
 }
 
+// venueKey uniquely identifies a venue+wallet combination for position tracking.
+type venueKey struct {
+	venue  recomma.VenueID
+	wallet string
+}
+
 // calculateVenuePositions computes the net position per venue from filled orders.
+// Returns a map keyed by venue+wallet (not including OrderId) to properly aggregate
+// all orders for the same venue.
 func (s *Service) calculateVenuePositions(snapshot DealSnapshot) map[recomma.OrderIdentifier]float64 {
-	positions := make(map[recomma.OrderIdentifier]float64)
+	// First, aggregate by venue+wallet only
+	venuePositions := make(map[venueKey]float64)
+	venueIdentifiers := make(map[venueKey]recomma.OrderIdentifier)
 
 	for _, order := range snapshot.Orders {
 		if order.ReduceOnly {
 			continue // Skip take-profits themselves
 		}
 
-		ident := order.Identifier
+		key := venueKey{venue: order.Identifier.VenueID, wallet: order.Identifier.Wallet}
+
+		// Track one identifier per venue for result map (use any order's identifier)
+		if _, exists := venueIdentifiers[key]; !exists {
+			venueIdentifiers[key] = order.Identifier
+		}
+
 		if order.Side == "B" || strings.EqualFold(order.Side, "BUY") {
-			positions[ident] += order.FilledQty
+			venuePositions[key] += order.FilledQty
 		} else {
-			positions[ident] -= order.FilledQty
+			venuePositions[key] -= order.FilledQty
 		}
 	}
 
-	return positions
+	// Convert to map keyed by OrderIdentifier (using representative identifier per venue)
+	result := make(map[recomma.OrderIdentifier]float64)
+	for key, netQty := range venuePositions {
+		result[venueIdentifiers[key]] = netQty
+	}
+
+	return result
 }
 
 func (s *Service) cancelTakeProfitBySnapshot(

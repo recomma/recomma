@@ -236,6 +236,15 @@ func (s *Storage) migrateDefaultVenueWalletLocked(ctx context.Context, qtx *sqlc
 		return err
 	}
 
+	cloneScaledOrdersParams := sqlcgen.CloneScaledOrdersToWalletParams{
+		ToWallet:   toWallet,
+		VenueID:    string(defaultHyperliquidVenueID),
+		FromWallet: fromWallet,
+	}
+	if err := qtx.CloneScaledOrdersToWallet(ctx, cloneScaledOrdersParams); err != nil {
+		return err
+	}
+
 	deleteStatusesParams := sqlcgen.DeleteHyperliquidStatusesForWalletParams{
 		VenueID: string(defaultHyperliquidVenueID),
 		Wallet:  fromWallet,
@@ -251,6 +260,15 @@ func (s *Storage) migrateDefaultVenueWalletLocked(ctx context.Context, qtx *sqlc
 	if err := qtx.DeleteHyperliquidSubmissionsForWallet(ctx, deleteSubmissionsParams); err != nil {
 		return err
 	}
+
+	deleteScaledOrdersParams := sqlcgen.DeleteScaledOrdersForWalletParams{
+		VenueID: string(defaultHyperliquidVenueID),
+		Wallet:  fromWallet,
+	}
+	if err := qtx.DeleteScaledOrdersForWallet(ctx, deleteScaledOrdersParams); err != nil {
+		return err
+	}
+
 	return nil
 }
 

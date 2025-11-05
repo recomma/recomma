@@ -95,6 +95,9 @@
 - SSE buffers are finite; dropping events logs a warning—apply backpressure by consuming streams promptly.
 - Keep generated files checked in; CI relies on repo consistency without rerunning `go generate`.
 
-## Commit Messages
+## Commits
+Prefer smaller commits instead of one massive one. This allows to track the changes more easily.
+
+### Commit Messages
 - All PR titles and commit messages must follow the Conventional Commits specification (https://www.conventionalcommits.org/).
 - Start each message with a valid `<type>[optional scope]:` prefix (e.g. `feat:`, `fix(ui):`, `chore:`), keep the subject in the imperative mood, elaborate in the body.

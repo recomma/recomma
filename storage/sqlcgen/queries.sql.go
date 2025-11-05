@@ -1551,17 +1551,11 @@ SELECT
     payload_blob
 FROM scaled_orders
 WHERE deal_id = ?1
-  AND venue_id = ?2
 ORDER BY created_at_utc ASC, order_id ASC
 `
 
-type ListScaledOrdersByDealParams struct {
-	DealID  int64  `json:"deal_id"`
-	VenueID string `json:"venue_id"`
-}
-
-func (q *Queries) ListScaledOrdersByDeal(ctx context.Context, arg ListScaledOrdersByDealParams) ([]ScaledOrder, error) {
-	rows, err := q.db.QueryContext(ctx, listScaledOrdersByDeal, arg.DealID, arg.VenueID)
+func (q *Queries) ListScaledOrdersByDeal(ctx context.Context, dealID int64) ([]ScaledOrder, error) {
+	rows, err := q.db.QueryContext(ctx, listScaledOrdersByDeal, dealID)
 	if err != nil {
 		return nil, err
 	}
@@ -1621,22 +1615,18 @@ SELECT
     payload_type,
     payload_blob
 FROM scaled_orders
-WHERE venue_id = ?1
-  AND (
-        order_id = ?2
-        OR order_id LIKE ?3
-    )
+WHERE order_id = ?1
+   OR order_id LIKE ?2
 ORDER BY created_at_utc ASC, order_id ASC
 `
 
 type ListScaledOrdersByOrderIdParams struct {
-	VenueID       string `json:"venue_id"`
 	OrderID       string `json:"order_id"`
 	OrderIDPrefix string `json:"order_id_prefix"`
 }
 
 func (q *Queries) ListScaledOrdersByOrderId(ctx context.Context, arg ListScaledOrdersByOrderIdParams) ([]ScaledOrder, error) {
-	rows, err := q.db.QueryContext(ctx, listScaledOrdersByOrderId, arg.VenueID, arg.OrderID, arg.OrderIDPrefix)
+	rows, err := q.db.QueryContext(ctx, listScaledOrdersByOrderId, arg.OrderID, arg.OrderIDPrefix)
 	if err != nil {
 		return nil, err
 	}

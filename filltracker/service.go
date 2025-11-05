@@ -163,25 +163,55 @@ func (s *Service) ReconcileTakeProfits(ctx context.Context, submitter recomma.Em
 			continue
 		}
 
-		desiredQty := snapshot.Position.NetQty
-		if desiredQty <= floatTolerance {
-			// Cancel all active take-profits since position is flat
-			for _, tp := range snapshot.ActiveTakeProfits {
-				s.cancelTakeProfitBySnapshot(ctx, submitter, snapshot, tp)
-			}
-			continue
+		// Calculate per-venue positions from filled orders
+		venuePositions := s.calculateVenuePositions(snapshot)
+
+		// Map existing active take-profits by identifier
+		activeTPs := make(map[recomma.OrderIdentifier]OrderSnapshot)
+		for _, tp := range snapshot.ActiveTakeProfits {
+			activeTPs[tp.Identifier] = tp
 		}
 
-		// Reconcile each venue's take-profit independently
-		if len(snapshot.ActiveTakeProfits) > 0 {
-			for _, tp := range snapshot.ActiveTakeProfits {
-				s.reconcileActiveTakeProfitBySnapshot(ctx, submitter, snapshot, tp, desiredQty)
+		// Reconcile each venue independently
+		for ident, venueNetQty := range venuePositions {
+			if venueNetQty <= floatTolerance {
+				// Position flat for this venue; cancel TP if it exists
+				if tp, exists := activeTPs[ident]; exists {
+					s.cancelTakeProfitBySnapshot(ctx, submitter, snapshot, tp)
+				}
+				continue
 			}
-		} else {
-			// No active take-profits; ensure they exist for all relevant venues
-			s.ensureTakeProfit(ctx, submitter, snapshot, desiredQty, nil, nil, false)
+
+			// Check if this venue has an active take-profit
+			if tp, exists := activeTPs[ident]; exists {
+				// Reconcile existing take-profit to match venue's net position
+				s.reconcileActiveTakeProfitBySnapshot(ctx, submitter, snapshot, tp, venueNetQty)
+			} else {
+				// Create take-profit for this venue
+				s.ensureTakeProfit(ctx, submitter, snapshot, venueNetQty, &ident, nil, false)
+			}
 		}
 	}
+}
+
+// calculateVenuePositions computes the net position per venue from filled orders.
+func (s *Service) calculateVenuePositions(snapshot DealSnapshot) map[recomma.OrderIdentifier]float64 {
+	positions := make(map[recomma.OrderIdentifier]float64)
+
+	for _, order := range snapshot.Orders {
+		if order.ReduceOnly {
+			continue // Skip take-profits themselves
+		}
+
+		ident := order.Identifier
+		if order.Side == "B" || strings.EqualFold(order.Side, "BUY") {
+			positions[ident] += order.FilledQty
+		} else {
+			positions[ident] -= order.FilledQty
+		}
+	}
+
+	return positions
 }
 
 func (s *Service) cancelTakeProfitBySnapshot(

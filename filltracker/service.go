@@ -245,17 +245,14 @@ type venueKey struct {
 
 // calculateVenuePositions computes the net position per venue from filled orders.
 // Returns a map keyed by venue+wallet (not including OrderId) to properly aggregate
-// all orders for the same venue.
+// all orders for the same venue. Includes filled reduce-only orders (take-profits that
+// have executed) but bases calculation on FilledQty to represent actual position changes.
 func (s *Service) calculateVenuePositions(snapshot DealSnapshot) map[recomma.OrderIdentifier]float64 {
 	// First, aggregate by venue+wallet only
 	venuePositions := make(map[venueKey]float64)
 	venueIdentifiers := make(map[venueKey]recomma.OrderIdentifier)
 
 	for _, order := range snapshot.Orders {
-		if order.ReduceOnly {
-			continue // Skip take-profits themselves
-		}
-
 		key := venueKey{venue: order.Identifier.VenueID, wallet: order.Identifier.Wallet}
 
 		// Track one identifier per venue for result map (use any order's identifier)
@@ -263,6 +260,7 @@ func (s *Service) calculateVenuePositions(snapshot DealSnapshot) map[recomma.Ord
 			venueIdentifiers[key] = order.Identifier
 		}
 
+		// Use FilledQty to compute actual position changes (includes filled TPs)
 		if order.Side == "B" || strings.EqualFold(order.Side, "BUY") {
 			venuePositions[key] += order.FilledQty
 		} else {

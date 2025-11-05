@@ -724,18 +724,6 @@ func compareIdentifiers(a, b recomma.OrderIdentifier) int {
 }
 
 func cloneAction(action recomma.Action) recomma.Action {
-	clone := action
-	if action.Create != nil {
-		req := *action.Create
-		clone.Create = &req
-	}
-	if action.Modify != nil {
-		req := *action.Modify
-		clone.Modify = &req
-	}
-	if action.Cancel != nil {
-		req := *action.Cancel
-		clone.Cancel = &req
-	}
-	return clone
+	// Since Action fields are now values (not pointers), a simple struct copy is sufficient
+	return action
 }

@@ -39,6 +39,8 @@ type BotOrderScalerOverride struct {
 }
 
 type ScaledOrderAudit struct {
+	VenueID             string
+	Wallet              string
 	OrderId             orderid.OrderId
 	DealID              uint32
 	BotID               uint32
@@ -649,6 +651,8 @@ func convertScaledOrder(row sqlcgen.ScaledOrder) (ScaledOrderAudit, error) {
 	}
 
 	return ScaledOrderAudit{
+		VenueID:             row.VenueID,
+		Wallet:              row.Wallet,
 		OrderId:             *oid,
 		DealID:              uint32(row.DealID),
 		BotID:               uint32(row.BotID),

@@ -539,16 +539,25 @@ func (s *Service) reloadDeal(ctx context.Context, dealID uint32) error {
 		if err != nil {
 			s.logger.Warn("load scaled orders", slog.Uint64("deal_id", uint64(oid.DealID)), slog.String("error", err.Error()))
 		}
-		var latestScaled *storage.ScaledOrderAudit
-		if err == nil && len(scaledOrders) > 0 {
-			copy := scaledOrders[len(scaledOrders)-1]
-			latestScaled = &copy
-		}
 
 		for _, ident := range identifiers {
 			status, found, err := s.store.LoadHyperliquidStatus(ctx, ident)
 			if err != nil {
 				return err
+			}
+
+			// Find the most recent scaled order that matches this identifier's venue
+			var latestScaled *storage.ScaledOrderAudit
+			if len(scaledOrders) > 0 {
+				for i := len(scaledOrders) - 1; i >= 0; i-- {
+					audit := &scaledOrders[i]
+					// Match by venue_id and wallet
+					if audit.VenueID == string(ident.VenueID) && audit.Wallet == ident.Wallet {
+						copy := scaledOrders[i]
+						latestScaled = &copy
+						break
+					}
+				}
 			}
 
 			s.mu.Lock()

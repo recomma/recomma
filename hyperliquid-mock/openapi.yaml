@@ -1,0 +1,255 @@
+openapi: 3.0.3
+info:
+  title: Hyperliquid Mock API
+  description: |
+    Minimal mock implementation of the Hyperliquid API for E2E testing.
+    This mock does not validate signatures or maintain real order state.
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+    description: Local mock server
+
+paths:
+  /exchange:
+    post:
+      summary: Execute trading actions
+      description: |
+        Handles order creation, modification, and cancellation.
+        Returns success responses without validation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExchangeRequest'
+      responses:
+        '200':
+          description: Action completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExchangeResponse'
+
+  /info:
+    post:
+      summary: Query information
+      description: |
+        Handles queries for order status, metadata, etc.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InfoRequest'
+      responses:
+        '200':
+          description: Query completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InfoResponse'
+
+components:
+  schemas:
+    ExchangeRequest:
+      type: object
+      required:
+        - action
+        - nonce
+        - signature
+      properties:
+        action:
+          type: object
+          description: The action payload (order, modify, cancel)
+        nonce:
+          type: integer
+          format: int64
+        signature:
+          type: object
+          properties:
+            r:
+              type: string
+            s:
+              type: string
+            v:
+              type: integer
+
+    ExchangeResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, err]
+        response:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [order, default]
+            data:
+              type: object
+              properties:
+                statuses:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/OrderStatus'
+
+    OrderStatus:
+      type: object
+      properties:
+        resting:
+          type: object
+          properties:
+            oid:
+              type: integer
+              format: int64
+        filled:
+          type: object
+          properties:
+            totalSz:
+              type: string
+            avgPx:
+              type: string
+            oid:
+              type: integer
+              format: int64
+
+    InfoRequest:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum: [orderStatus, metaAndAssetCtxs, spotMetaAndAssetCtxs]
+        user:
+          type: string
+          description: Wallet address (for orderStatus)
+        oid:
+          type: integer
+          format: int64
+          description: Order ID (for orderStatus)
+
+    InfoResponse:
+      oneOf:
+        - $ref: '#/components/schemas/OrderQueryResult'
+        - $ref: '#/components/schemas/MetaAndAssetCtxs'
+        - $ref: '#/components/schemas/SpotMetaAndAssetCtxs'
+
+    OrderQueryResult:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [success, unknown_cloid]
+        order:
+          type: object
+          properties:
+            order:
+              $ref: '#/components/schemas/OrderDetails'
+            status:
+              type: string
+              enum: [open, filled, canceled, triggered, rejected]
+            statusTimestamp:
+              type: integer
+              format: int64
+
+    OrderDetails:
+      type: object
+      properties:
+        coin:
+          type: string
+        side:
+          type: string
+          enum: [A, B]
+        limitPx:
+          type: string
+        sz:
+          type: string
+        oid:
+          type: integer
+          format: int64
+        timestamp:
+          type: integer
+          format: int64
+        origSz:
+          type: string
+        cloid:
+          type: string
+          nullable: true
+
+    MetaAndAssetCtxs:
+      type: array
+      items:
+        type: object
+        properties:
+          universe:
+            type: array
+            items:
+              type: object
+              properties:
+                name:
+                  type: string
+                szDecimals:
+                  type: integer
+          assetCtxs:
+            type: array
+            items:
+              type: object
+              properties:
+                funding:
+                  type: string
+                openInterest:
+                  type: string
+                prevDayPx:
+                  type: string
+                dayNtlVlm:
+                  type: string
+                premium:
+                  type: string
+                oraclePx:
+                  type: string
+                markPx:
+                  type: string
+                midPx:
+                  type: string
+                impactPxs:
+                  type: array
+                  items:
+                    type: string
+
+    SpotMetaAndAssetCtxs:
+      type: array
+      items:
+        type: object
+        properties:
+          tokens:
+            type: array
+            items:
+              type: object
+              properties:
+                name:
+                  type: string
+                szDecimals:
+                  type: integer
+                weiDecimals:
+                  type: integer
+                index:
+                  type: integer
+                tokenId:
+                  type: string
+                isCanonical:
+                  type: boolean
+          universe:
+            type: array
+            items:
+              type: object
+              properties:
+                tokens:
+                  type: array
+                  items:
+                    type: integer
+                name:
+                  type: string
+                index:
+                  type: integer

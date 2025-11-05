@@ -356,7 +356,6 @@ FROM hyperliquid_status_history
 WHERE venue_id = ?1
   AND wallet = ?2
   AND order_id = ?3
-  AND order_id = ?3
 ORDER BY recorded_at_utc DESC
 LIMIT 1
 `
@@ -1122,7 +1121,6 @@ FROM hyperliquid_status_history
 WHERE venue_id = ?1
   AND wallet = ?2
   AND order_id = ?3
-  AND order_id = ?3
 ORDER BY recorded_at_utc ASC
 `
 
@@ -1297,7 +1295,6 @@ WITH ranked_status AS (
     SELECT
         venue_id,
         wallet,
-        order_id,
         order_id,
         payload_type,
         payload_blob,

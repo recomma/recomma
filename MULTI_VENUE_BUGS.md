@@ -178,82 +178,9 @@ func (s *Service) reconcileTakeProfits(ctx context.Context, ident recomma.OrderI
 
 ---
 
-## High Priority Issues
-
-### Bug #7: Redundant OrderId Field in OrderWork
-**Severity**: Low
-**Location**: `recomma/recomma.go:50-55`
-
-```go
-type OrderWork struct {
-    Identifier OrderIdentifier  // Contains: VenueID, Wallet, OrderId
-    OrderId    orderid.OrderId  // REDUNDANT - duplicates Identifier.OrderId
-    Action     Action
-    BotEvent   BotEvent
-}
-```
-
-**Problem**: `OrderId` duplicates `Identifier.OrderId`, causing maintenance burden and validation overhead.
-
-**Current Workaround**: Validation in `emitter/emitter.go:65-78` checks for consistency.
-
-**Fix Required**: Remove `OrderId` field and use `Identifier.OrderId` throughout the codebase.
-
-**Files to Update**:
-- All code creating `OrderWork` structs
-- Any code accessing `w.OrderId` → change to `w.Identifier.OrderId`
-
----
-
-## Trivial Issues (SQL Fixes Required)
-
-### Bug #8-10: SQL Duplicate Clauses
-**Severity**: Trivial
-**Location**: `storage/sqlc/queries.sql`
-
-These bugs require sqlc regeneration after fixing.
-
-#### Bug #8 & #9: Duplicate WHERE Clauses
-Lines 249-271:
-```sql
--- name: FetchLatestHyperliquidStatus :one
-WHERE venue_id = sqlc.arg(venue_id)
-  AND wallet = sqlc.arg(wallet)
-  AND order_id = sqlc.arg(order_id)
-  AND order_id = sqlc.arg(order_id)  -- DUPLICATE
-
--- name: ListHyperliquidStatuses :many
-WHERE venue_id = sqlc.arg(venue_id)
-  AND wallet = sqlc.arg(wallet)
-  AND order_id = sqlc.arg(order_id)
-  AND order_id = sqlc.arg(order_id)  -- DUPLICATE
-```
-
-**Fix**: Remove duplicate `AND order_id = sqlc.arg(order_id)` lines and regenerate.
-
-#### Bug #10: Duplicate SELECT Column
-Line 319-324:
-```sql
--- name: ListHyperliquidOrderIds :many
-SELECT
-    venue_id,
-    wallet,
-    order_id,
-    order_id  -- DUPLICATE COLUMN
-FROM hyperliquid_submissions
-```
-
-**Fix**: Remove one `order_id` column and regenerate.
-
-**Note**: The generated struct currently has both `OrderID` and `OrderID_2` fields. After fixing, only `OrderID` will remain. Verify all callers only use `row.OrderID` (they do).
-
-**After fixing all SQL issues, run**: `go generate ./gen/storage`
-
----
-
 ## Medium Priority Issues
 
-### Bug #11: Fill Tracker Unbounded Memory Growth
+### Bug #7: Fill Tracker Unbounded Memory Growth
 **Severity**: Medium
 **Location**: `filltracker/service.go`
 
@@ -265,7 +192,7 @@ FROM hyperliquid_submissions
 
 ## Low Priority Issues
 
-### Bug #12: Replay Logic Edge Case
+### Bug #8: Replay Logic Edge Case
 **Severity**: Low
 **Location**: `engine/placement.go`
 
@@ -282,16 +209,49 @@ After fixing the above bugs, add tests for:
 1. **Multi-venue scaled orders**: Verify scaled orders are created with correct venue
 2. **Wallet migration**: Verify scaled_orders table is migrated
 3. **Take-profit fan-out**: Verify reconciliation updates all venues
-4. **OrderWork comparability**: Verify workqueue map operations work correctly
+4. **OrderWork comparability**: Verify workqueue map operations work correctly (Bug #1)
 
 ---
 
 ## Summary
 
 **Critical (must fix)**: Bugs #1-6
-**High priority**: Bug #7
-**Trivial (easy fix, needs sqlc)**: Bugs #8-10
-**Medium (future work)**: Bug #11
-**Low (edge case)**: Bug #12
+**Medium (future work)**: Bug #7
+**Low (edge case)**: Bug #8
 
 All SQL-related fixes require running `go generate ./gen/storage` after modifying `storage/sqlc/queries.sql`.
+
+---
+
+## Resolved Issues
+
+### ~~Bug: Redundant OrderId Field in OrderWork~~ - NOT A BUG
+**Status**: Resolved - Clarified as working as intended
+**Resolution Date**: 2025-11-05
+**Commit**: `aeaf0c2` - chore: clarify orderid purpose
+
+**Original Report**: `OrderId orderid.OrderId` in `OrderWork` was thought to duplicate `Identifier.OrderId`.
+
+**Clarification**: The `OrderId` field tracks **incoming 3commas orders** (BotID + DealID + MessageID fingerprint), while `Identifier.OrderId` tracks the **venue-specific order identifier**. These serve different purposes:
+- `orderid.OrderId`: 3commas order fingerprint for replay/deduplication
+- `recomma.OrderIdentifier`: Multi-venue order tracking (venue + wallet + order)
+
+See `orderid/orderid.go:12` for updated documentation.
+
+---
+
+### SQL Duplicate Clauses - RESOLVED ✓
+**Status**: Fixed
+**Resolution Date**: 2025-11-05
+**Commit**: `cd763cf` - sql: remove duplicates
+
+**Original Bugs**:
+1. Duplicate `AND order_id = sqlc.arg(order_id)` in `FetchLatestHyperliquidStatus`
+2. Duplicate `AND order_id = sqlc.arg(order_id)` in `ListHyperliquidStatuses`
+3. Duplicate `order_id` column in `ListLatestHyperliquidSafetyStatuses` CTE
+
+**Fix**: Removed all duplicate clauses and regenerated sqlc code.
+
+**Files Changed**:
+- `storage/sqlc/queries.sql`
+- `storage/sqlcgen/queries.sql.go`

@@ -147,6 +147,39 @@ func (q *Queries) CloneHyperliquidSubmissionsToWallet(ctx context.Context, arg C
 	return err
 }
 
+const cloneScaledOrdersToWallet = `-- name: CloneScaledOrdersToWallet :exec
+INSERT INTO scaled_orders (
+    venue_id, wallet, order_id, deal_id, bot_id,
+    original_size, scaled_size, multiplier, rounding_delta,
+    stack_index, order_side, multiplier_updated_by,
+    created_at_utc, skipped, skip_reason,
+    payload_type, payload_blob
+)
+SELECT
+    src.venue_id,
+    ?1 AS wallet,
+    src.order_id, src.deal_id, src.bot_id,
+    src.original_size, src.scaled_size, src.multiplier, src.rounding_delta,
+    src.stack_index, src.order_side, src.multiplier_updated_by,
+    src.created_at_utc, src.skipped, src.skip_reason,
+    src.payload_type, src.payload_blob
+FROM scaled_orders AS src
+WHERE src.venue_id = ?2
+  AND src.wallet = ?3
+ON CONFLICT(venue_id, wallet, order_id) DO NOTHING
+`
+
+type CloneScaledOrdersToWalletParams struct {
+	ToWallet   string `json:"to_wallet"`
+	VenueID    string `json:"venue_id"`
+	FromWallet string `json:"from_wallet"`
+}
+
+func (q *Queries) CloneScaledOrdersToWallet(ctx context.Context, arg CloneScaledOrdersToWalletParams) error {
+	_, err := q.db.ExecContext(ctx, cloneScaledOrdersToWallet, arg.ToWallet, arg.VenueID, arg.FromWallet)
+	return err
+}
+
 const deleteBotOrderScaler = `-- name: DeleteBotOrderScaler :exec
 DELETE FROM bot_order_scalers
 WHERE bot_id = ?1
@@ -202,6 +235,22 @@ type DeleteHyperliquidSubmissionsForWalletParams struct {
 
 func (q *Queries) DeleteHyperliquidSubmissionsForWallet(ctx context.Context, arg DeleteHyperliquidSubmissionsForWalletParams) error {
 	_, err := q.db.ExecContext(ctx, deleteHyperliquidSubmissionsForWallet, arg.VenueID, arg.Wallet)
+	return err
+}
+
+const deleteScaledOrdersForWallet = `-- name: DeleteScaledOrdersForWallet :exec
+DELETE FROM scaled_orders
+WHERE venue_id = ?1
+  AND wallet = ?2
+`
+
+type DeleteScaledOrdersForWalletParams struct {
+	VenueID string `json:"venue_id"`
+	Wallet  string `json:"wallet"`
+}
+
+func (q *Queries) DeleteScaledOrdersForWallet(ctx context.Context, arg DeleteScaledOrdersForWalletParams) error {
+	_, err := q.db.ExecContext(ctx, deleteScaledOrdersForWallet, arg.VenueID, arg.Wallet)
 	return err
 }
 

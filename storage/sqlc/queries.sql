@@ -977,3 +977,29 @@ WHERE venue_id = sqlc.arg(venue_id)
   AND created_at_utc >= sqlc.arg(observed_from)
   AND created_at_utc <= sqlc.arg(observed_to)
 ORDER BY created_at_utc ASC, order_id ASC;
+
+-- name: CloneScaledOrdersToWallet :exec
+INSERT INTO scaled_orders (
+    venue_id, wallet, order_id, deal_id, bot_id,
+    original_size, scaled_size, multiplier, rounding_delta,
+    stack_index, order_side, multiplier_updated_by,
+    created_at_utc, skipped, skip_reason,
+    payload_type, payload_blob
+)
+SELECT
+    src.venue_id,
+    sqlc.arg(to_wallet) AS wallet,
+    src.order_id, src.deal_id, src.bot_id,
+    src.original_size, src.scaled_size, src.multiplier, src.rounding_delta,
+    src.stack_index, src.order_side, src.multiplier_updated_by,
+    src.created_at_utc, src.skipped, src.skip_reason,
+    src.payload_type, src.payload_blob
+FROM scaled_orders AS src
+WHERE src.venue_id = sqlc.arg(venue_id)
+  AND src.wallet = sqlc.arg(from_wallet)
+ON CONFLICT(venue_id, wallet, order_id) DO NOTHING;
+
+-- name: DeleteScaledOrdersForWallet :exec
+DELETE FROM scaled_orders
+WHERE venue_id = sqlc.arg(venue_id)
+  AND wallet = sqlc.arg(wallet);

@@ -82,8 +82,8 @@ func TestServiceRebuildAggregatesExecutedOrders(t *testing.T) {
 	require.InDelta(t, 100, snapshot.Position.NetQty, 1e-6)
 	require.InDelta(t, 10, snapshot.Position.AverageEntry, 1e-6)
 	require.True(t, snapshot.AllBuysFilled, "all buys should be filled")
-	require.NotNil(t, snapshot.ActiveTakeProfit)
-	require.InDelta(t, 100, snapshot.ActiveTakeProfit.RemainingQty, 1e-6)
+	require.Len(t, snapshot.ActiveTakeProfits, 1, "should have one active take-profit")
+	require.InDelta(t, 100, snapshot.ActiveTakeProfits[0].RemainingQty, 1e-6)
 }
 
 func TestServiceUpdateStatusAdjustsPosition(t *testing.T) {
@@ -148,8 +148,8 @@ func TestServiceUpdateStatusAdjustsPosition(t *testing.T) {
 	require.InDelta(t, 200, snapshot.Position.TotalBuyQty, 1e-6)
 	require.InDelta(t, 200-80, snapshot.Position.TotalSellQty, 1e-6)
 	require.InDelta(t, 80, snapshot.Position.NetQty, 1e-6)
-	require.NotNil(t, snapshot.ActiveTakeProfit)
-	require.InDelta(t, 80, snapshot.ActiveTakeProfit.RemainingQty, 1e-6)
+	require.Len(t, snapshot.ActiveTakeProfits, 1, "should have one active take-profit")
+	require.InDelta(t, 80, snapshot.ActiveTakeProfits[0].RemainingQty, 1e-6)
 	require.True(t, snapshot.AllBuysFilled, "all buy orders still filled")
 }
 
@@ -199,9 +199,9 @@ func TestReconcileTakeProfits(t *testing.T) {
 
 	snapshot, ok := tracker.Snapshot(dealID)
 	require.True(t, ok)
-	require.NotNil(t, snapshot.ActiveTakeProfit)
-	require.InDelta(t, 40, snapshot.ActiveTakeProfit.RemainingQty, 1e-6)
-	require.WithinDuration(t, now.Add(-2*time.Minute), snapshot.ActiveTakeProfit.StatusTime, time.Second)
+	require.Len(t, snapshot.ActiveTakeProfits, 1, "should have one active take-profit")
+	require.InDelta(t, 40, snapshot.ActiveTakeProfits[0].RemainingQty, 1e-6)
+	require.WithinDuration(t, now.Add(-2*time.Minute), snapshot.ActiveTakeProfits[0].StatusTime, time.Second)
 }
 
 func TestApplyScaledOrderUpdatesSnapshot(t *testing.T) {
@@ -331,7 +331,7 @@ func TestReconcileTakeProfitsCancelsWhenFlat(t *testing.T) {
 
 	snapshot, ok := tracker.Snapshot(dealID)
 	require.True(t, ok)
-	require.NotNil(t, snapshot.ActiveTakeProfit)
+	require.Len(t, snapshot.ActiveTakeProfits, 1, "should have one active take-profit")
 	require.InDelta(t, 0, snapshot.Position.NetQty, 1e-6)
 	require.True(t, snapshot.AllBuysFilled)
 
@@ -402,7 +402,7 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 
 		snapshot, ok := tracker.Snapshot(dealID)
 		require.True(t, ok)
-		require.Nil(t, snapshot.ActiveTakeProfit)
+		require.Empty(t, snapshot.ActiveTakeProfits, "should have no active take-profits")
 		require.NotNil(t, snapshot.LastTakeProfitEvent)
 		require.InDelta(t, 10, snapshot.Position.NetQty, 1e-6)
 
@@ -470,7 +470,7 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 
 		snapshot, ok := tracker.Snapshot(dealID + 1)
 		require.True(t, ok)
-		require.NotNil(t, snapshot.ActiveTakeProfit)
+		require.Len(t, snapshot.ActiveTakeProfits, 1, "should have one active take-profit")
 		require.InDelta(t, 15, snapshot.Position.NetQty, 1e-6)
 
 		emitter := &stubEmitter{}
@@ -551,7 +551,7 @@ func TestEnsureTakeProfitRecreatesAfterStaleSubmission(t *testing.T) {
 
 	snapshot, ok := tracker.Snapshot(dealID)
 	require.True(t, ok)
-	require.Nil(t, snapshot.ActiveTakeProfit)
+	require.Empty(t, snapshot.ActiveTakeProfits, "should have no active take-profits")
 	require.InDelta(t, 10, snapshot.Position.NetQty, 1e-6)
 
 	emitter := &stubEmitter{}
@@ -641,8 +641,8 @@ func TestReconcileTakeProfitsRecreatesAfterCancelWithMissingOrderId(t *testing.T
 
 	snapshot, ok := tracker.Snapshot(dealID)
 	require.True(t, ok)
-	require.NotNil(t, snapshot.ActiveTakeProfit)
-	require.Nil(t, snapshot.ActiveTakeProfit.Event)
+	require.Len(t, snapshot.ActiveTakeProfits, 1, "should have one active take-profit")
+	require.Nil(t, snapshot.ActiveTakeProfits[0].Event)
 	require.Nil(t, snapshot.LastTakeProfitEvent)
 	require.InDelta(t, 8, snapshot.Position.NetQty, 1e-6)
 

@@ -191,9 +191,6 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	if action.Type != recomma.ActionNone {
 		t.Fatalf("expected ActionNone for empty submission, got %v", action.Type)
 	}
-	if action.Create != nil || action.Modify != nil || action.Cancel != nil {
-		t.Fatalf("expected all payloads nil for empty submission, got %#v", action)
-	}
 
 	// we are not testing events here, so we just set a fake event row id
 	if err := store.RecordHyperliquidOrderRequest(ctx, DefaultHyperliquidIdentifier(oid), req1, 123456789); err != nil {
@@ -317,7 +314,7 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadHyperliquidRequest helper: %v", err)
 	}
-	if !foundReq || reqOnly == nil {
+	if !foundReq {
 		t.Fatalf("expected helper to return create payload")
 	}
 	if diff := cmp.Diff(req1, *reqOnly); diff != "" {
@@ -416,7 +413,7 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	if action.Type != recomma.ActionCancel {
 		t.Fatalf("expected ActionCancel at end, got %v", action.Type)
 	}
-	if diff := cmp.Diff(cancelReq, *action.Cancel); diff != "" {
+	if diff := cmp.Diff(cancelReq, action.Cancel); diff != "" {
 		t.Fatalf("cancel payload changed at end (-want +got):\n%s", diff)
 	}
 }

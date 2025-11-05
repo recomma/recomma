@@ -1132,7 +1132,7 @@ func (s *Storage) LoadHyperliquidStatus(ctx context.Context, ident recomma.Order
 
 func (s *Storage) LoadHyperliquidRequest(ctx context.Context, ident recomma.OrderIdentifier) (*hyperliquid.CreateOrderRequest, bool, error) {
 	action, found, err := s.LoadHyperliquidSubmission(ctx, ident)
-	return action.Create, found, err
+	return &action.Create, found, err
 }
 
 func (s *Storage) RecordBot(ctx context.Context, bot tc.Bot, syncedAt time.Time) error {

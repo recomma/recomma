@@ -97,6 +97,7 @@
 
 ## Commits
 Prefer smaller commits instead of one massive one. This allows to track the changes more easily.
+The author of the commit is yourself, not the user you do it for.
 
 ### Commit Messages
 - All PR titles and commit messages must follow the Conventional Commits specification (https://www.conventionalcommits.org/).

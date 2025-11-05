@@ -193,7 +193,9 @@ func (s *Service) ReconcileTakeProfits(ctx context.Context, submitter recomma.Em
 				s.reconcileActiveTakeProfitBySnapshot(ctx, submitter, snapshot, tp, venueNetQty)
 			} else {
 				// Create take-profit for this venue
-				s.ensureTakeProfit(ctx, submitter, snapshot, venueNetQty, &ident, nil, false)
+				// Build the correct identifier with venue+wallet and TP's OrderId (not base order's)
+				tpIdent := s.buildTakeProfitIdentifier(ctx, snapshot, ident.VenueID, ident.Wallet)
+				s.ensureTakeProfit(ctx, submitter, snapshot, venueNetQty, tpIdent, nil, false)
 			}
 		}
 
@@ -204,6 +206,35 @@ func (s *Service) ReconcileTakeProfits(ctx context.Context, submitter recomma.Em
 			}
 		}
 	}
+}
+
+// buildTakeProfitIdentifier constructs an identifier for a TP at a specific venue.
+// It looks up the TP's OrderId and combines it with the target venue+wallet.
+// Returns nil if no TP metadata exists (caller should pass nil to ensureTakeProfit).
+func (s *Service) buildTakeProfitIdentifier(
+	ctx context.Context,
+	snapshot DealSnapshot,
+	targetVenue recomma.VenueID,
+	targetWallet string,
+) *recomma.OrderIdentifier {
+	// Try to find a TP OrderId from the snapshot first
+	for _, order := range snapshot.Orders {
+		if order.ReduceOnly && order.Event != nil {
+			// Found a TP order; use its OrderId with our target venue+wallet
+			ident := recomma.NewOrderIdentifier(targetVenue, targetWallet, order.OrderId)
+			return &ident
+		}
+	}
+
+	// Try loading from storage
+	storedOrderId, _, err := s.store.LoadTakeProfitForDeal(ctx, snapshot.DealID)
+	if err != nil {
+		// No TP metadata available; return nil to let ensureTakeProfit handle lookup
+		return nil
+	}
+
+	ident := recomma.NewOrderIdentifier(targetVenue, targetWallet, *storedOrderId)
+	return &ident
 }
 
 // venueKey uniquely identifies a venue+wallet combination for position tracking.

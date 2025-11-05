@@ -904,20 +904,20 @@ func (h *ApiHandler) CancelOrderByOrderId(ctx context.Context, req CancelOrderBy
 			}
 			return CancelOrderByOrderId500Response{}, nil
 		}
-		if !found || (action.Create == nil && action.Modify == nil) {
+		if !found || (action.Type != recomma.ActionCreate && action.Type != recomma.ActionModify) {
 			continue
 		}
 		anySubmission = true
 
 		if coin == "" {
-			if action.Create != nil && strings.TrimSpace(action.Create.Coin) != "" {
+			if action.Type == recomma.ActionCreate && strings.TrimSpace(action.Create.Coin) != "" {
 				coin = strings.ToUpper(strings.TrimSpace(action.Create.Coin))
-			} else if action.Modify != nil && strings.TrimSpace(action.Modify.Order.Coin) != "" {
+			} else if action.Type == recomma.ActionModify && strings.TrimSpace(action.Modify.Order.Coin) != "" {
 				coin = strings.ToUpper(strings.TrimSpace(action.Modify.Order.Coin))
 			}
 		}
 
-		if action.Cancel != nil {
+		if action.Type == recomma.ActionCancel {
 			anyCancelRecorded = true
 			continue
 		}
@@ -1004,7 +1004,7 @@ func (h *ApiHandler) CancelOrderByOrderId(ctx context.Context, req CancelOrderBy
 			OrderId:    *oid,
 			Action: recomma.Action{
 				Type:   recomma.ActionCancel,
-				Cancel: &cancelPayload,
+				Cancel: cancelPayload,
 			},
 		}
 		if reason != "" {

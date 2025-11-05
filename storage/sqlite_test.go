@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sort"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	api "github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
+	"github.com/recomma/recomma/storage/sqlcgen"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
 	"github.com/stretchr/testify/require"
 )
@@ -189,9 +191,6 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	if action.Type != recomma.ActionNone {
 		t.Fatalf("expected ActionNone for empty submission, got %v", action.Type)
 	}
-	if action.Create != nil || action.Modify != nil || action.Cancel != nil {
-		t.Fatalf("expected all payloads nil for empty submission, got %#v", action)
-	}
 
 	// we are not testing events here, so we just set a fake event row id
 	if err := store.RecordHyperliquidOrderRequest(ctx, DefaultHyperliquidIdentifier(oid), req1, 123456789); err != nil {
@@ -208,13 +207,10 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	if action.Type != recomma.ActionCreate {
 		t.Fatalf("expected ActionCreate, got %v", action.Type)
 	}
-	if action.Create == nil {
-		t.Fatalf("expected create payload after create")
-	}
-	if diff := cmp.Diff(req1, *action.Create); diff != "" {
+	if diff := cmp.Diff(req1, action.Create); diff != "" {
 		t.Fatalf("create payload mismatch (-want +got):\n%s", diff)
 	}
-	if action.Modify != nil || action.Cancel != nil {
+	if action.Type == recomma.ActionModify || action.Type == recomma.ActionCancel {
 		t.Fatalf("unexpected extra payloads after create")
 	}
 
@@ -245,9 +241,6 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	if action.Type != recomma.ActionModify {
 		t.Fatalf("expected ActionModify after first modify, got %v", action.Type)
 	}
-	if action.Modify == nil {
-		t.Fatalf("expected modify payload after first modify")
-	}
 
 	normalize := func(d hyperliquid.ModifyOrderRequest) hyperliquid.ModifyOrderRequest {
 		var out hyperliquid.ModifyOrderRequest
@@ -263,11 +256,8 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 
 	normalized := normalize(modify1)
 
-	if diff := cmp.Diff(normalized, *action.Modify); diff != "" {
+	if diff := cmp.Diff(normalized, action.Modify); diff != "" {
 		t.Fatalf("modify payload mismatch (-want +got):\n%s", diff)
-	}
-	if action.Create == nil {
-		t.Fatalf("expected create payload to remain after modify")
 	}
 
 	modify2 := modify1
@@ -288,13 +278,10 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	if action.Type != recomma.ActionModify {
 		t.Fatalf("expected ActionModify after second modify, got %v", action.Type)
 	}
-	if action.Modify == nil {
-		t.Fatalf("expected modify payload after second modify")
-	}
 
 	normalized2 := normalize(modify2)
 
-	if diff := cmp.Diff(normalized2, *action.Modify); diff != "" {
+	if diff := cmp.Diff(normalized2, action.Modify); diff != "" {
 		t.Fatalf("latest modify payload mismatch (-want +got):\n%s", diff)
 	}
 
@@ -313,22 +300,13 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	if action.Type != recomma.ActionCancel {
 		t.Fatalf("expected ActionCancel after cancel, got %v", action.Type)
 	}
-	if action.Cancel == nil {
-		t.Fatalf("expected cancel payload after cancel")
-	}
-	if diff := cmp.Diff(cancelReq, *action.Cancel); diff != "" {
+	if diff := cmp.Diff(cancelReq, action.Cancel); diff != "" {
 		t.Fatalf("cancel payload mismatch (-want +got):\n%s", diff)
 	}
-	if action.Modify == nil {
-		t.Fatalf("expected last modify to remain available after cancel")
-	}
-	if diff := cmp.Diff(normalize(modify2), *action.Modify); diff != "" {
+	if diff := cmp.Diff(normalize(modify2), action.Modify); diff != "" {
 		t.Fatalf("modify payload changed after cancel (-want +got):\n%s", diff)
 	}
-	if action.Create == nil {
-		t.Fatalf("expected create payload to persist after cancel")
-	}
-	if diff := cmp.Diff(req1, *action.Create); diff != "" {
+	if diff := cmp.Diff(req1, action.Create); diff != "" {
 		t.Fatalf("create payload changed after cancel (-want +got):\n%s", diff)
 	}
 
@@ -336,7 +314,7 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadHyperliquidRequest helper: %v", err)
 	}
-	if !foundReq || reqOnly == nil {
+	if !foundReq {
 		t.Fatalf("expected helper to return create payload")
 	}
 	if diff := cmp.Diff(req1, *reqOnly); diff != "" {
@@ -435,7 +413,7 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	if action.Type != recomma.ActionCancel {
 		t.Fatalf("expected ActionCancel at end, got %v", action.Type)
 	}
-	if diff := cmp.Diff(cancelReq, *action.Cancel); diff != "" {
+	if diff := cmp.Diff(cancelReq, action.Cancel); diff != "" {
 		t.Fatalf("cancel payload changed at end (-want +got):\n%s", diff)
 	}
 }
@@ -551,6 +529,29 @@ func TestEnsureDefaultVenueWalletAlignsIdentifiers(t *testing.T) {
 	require.NotEmpty(t, orders)
 	require.NotNil(t, orders[0].LatestSubmission)
 	require.NotNil(t, orders[0].LatestStatus)
+}
+
+func TestDefaultVenueAssignmentFallsBackToPrimaryAlias(t *testing.T) {
+	store := newTestStorage(t)
+	ctx := context.Background()
+
+	require.NoError(t, store.EnsureDefaultVenueWallet(ctx, ""))
+
+	params := sqlcgen.UpsertVenueParams{
+		ID:          "hyperliquid:primary",
+		Type:        "hyperliquid",
+		DisplayName: "Primary Venue",
+		Wallet:      "hl-primary-wallet",
+		Flags:       json.RawMessage(fmt.Sprintf(`{"%s":true}`, primaryHyperliquidFlagKey)),
+	}
+	require.NoError(t, store.queries.UpsertVenue(ctx, params))
+
+	botID := uint32(9001)
+	assignments, err := store.ListVenuesForBot(ctx, botID)
+	require.NoError(t, err)
+	require.Len(t, assignments, 1)
+	require.Equal(t, recomma.VenueID("hyperliquid:primary"), assignments[0].VenueID)
+	require.Equal(t, "hl-primary-wallet", assignments[0].Wallet)
 }
 
 func ptr[T any](v T) *T {

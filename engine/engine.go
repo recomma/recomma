@@ -283,6 +283,11 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 			assignments = nil
 		}
 
+		// Replay logic: if a venue was added after a deal started and this order is still active,
+		// we'll replay the creation to the new venues. This handles most cases where venues are
+		// added mid-deal. Edge case: If no new events arrive for an order after a venue is added,
+		// this replay won't trigger until the next event. For production use, consider a periodic
+		// reconciliation pass to catch such cases (similar to take-profit reconciliation).
 		missingTargets := missingAssignmentTargets(oid, assignments, storedIdents)
 		needsReplay := len(missingTargets) > 0 && latestEvent != nil && latestEvent.Status == tc.Active
 
@@ -296,7 +301,7 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 		if !shouldEmit && needsReplay {
 			req := adapter.ToCreateOrderRequest(currency, *latestEvent, oid)
 			orderLogger.Info("replaying create for venues missing submissions", slog.Int("venues", len(missingTargets)))
-			action = recomma.Action{Type: recomma.ActionCreate, Create: &req}
+			action = recomma.Action{Type: recomma.ActionCreate, Create: req}
 			shouldEmit = true
 			replayForPrimary = true
 			needsReplay = false
@@ -337,7 +342,7 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 				latestCopy = &copy
 			}
 			emissions = append(emissions, emissionPlan{
-				action:       recomma.Action{Type: recomma.ActionCreate, Create: &req},
+				action:       recomma.Action{Type: recomma.ActionCreate, Create: req},
 				targets:      targets,
 				latest:       latestCopy,
 				skipExisting: true,
@@ -360,30 +365,38 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 				}
 			}
 
-			var scaleResult *orderscaler.Result
-			if latestForEmission != nil {
-				var err error
-				action, scaleResult, emit, err = e.applyScaling(ctx, oid, latestForEmission, action, orderLogger)
-				if err != nil {
-					return fmt.Errorf("scale order %d: %w", oid.BotEventID, err)
+			// Scale and emit per-identifier to ensure each venue gets its own audit record
+			for _, ident := range emission.targets {
+				identAction := action
+				var scaleResult *orderscaler.Result
+
+				if latestForEmission != nil {
+					var err error
+					latestCopy := *latestForEmission
+					identAction, scaleResult, emit, err = e.applyScaling(ctx, ident, &latestCopy, identAction, orderLogger)
+					if err != nil {
+						return fmt.Errorf("scale order %d for venue %s: %w", oid.BotEventID, ident.Venue(), err)
+					}
+					if !emit {
+						continue
+					}
 				}
-				if !emit {
-					continue
-				}
-			}
-			if e.tracker != nil && scaleResult != nil {
-				for _, ident := range emission.targets {
+
+				if e.tracker != nil && scaleResult != nil {
 					e.tracker.ApplyScaledOrder(ident, scaleResult.Size, scaleResult.Price)
 				}
-			}
 
-			for _, ident := range emission.targets {
 				work := recomma.OrderWork{
 					Identifier: ident,
 					OrderId:    oid,
-					Action:     cloneAction(action),
+					Action:     identAction,
 				}
-				if latestForEmission != nil {
+				if latestForEmission != nil && scaleResult != nil {
+					// Use the scaled BotEvent
+					work.BotEvent = *latestForEmission
+					work.BotEvent.Size = scaleResult.Size
+					work.BotEvent.Price = scaleResult.Price
+				} else if latestForEmission != nil {
 					work.BotEvent = *latestForEmission
 				}
 				if err := e.emitter.Emit(ctx, work); err != nil {
@@ -451,7 +464,7 @@ func (e *Engine) reduceOrderEvents(
 			req := adapter.ToCreateOrderRequest(currency, latest, oid)
 			logger.Warn("modify requested before create; falling back", slog.Any("latest", latest))
 			logger.Debug("emit create", slog.Any("request", req))
-			return recomma.Action{Type: recomma.ActionCreate, Create: &req}, &latestCopy, true, nil
+			return recomma.Action{Type: recomma.ActionCreate, Create: req}, &latestCopy, true, nil
 		}
 		logger.Info("emit modify", slog.Any("latest", latest))
 		return action, &latestCopy, true, nil
@@ -524,6 +537,16 @@ func (e *Engine) adjustActionWithTracker(
 		return action, true
 	}
 
+	// Multi-venue scenario: defer to ReconcileTakeProfits for per-venue sizing
+	// If multiple active TPs exist, this indicates multi-venue and we should not
+	// use global net qty for sizing individual venue TPs
+	if len(snapshot.ActiveTakeProfits) > 1 {
+		logger.Debug("multi-venue take-profit detected; deferring sizing to reconciliation",
+			slog.Int("active_tps", len(snapshot.ActiveTakeProfits)),
+		)
+		return action, true
+	}
+
 	desiredQty := snapshot.Position.NetQty
 	if desiredQty <= qtyTolerance {
 		logger.Info("skipping take profit placement: position flat",
@@ -533,13 +556,17 @@ func (e *Engine) adjustActionWithTracker(
 		return recomma.Action{Type: recomma.ActionNone, Reason: "skip take-profit: position flat"}, false
 	}
 
-	active := snapshot.ActiveTakeProfit
-	if !skipExisting && active != nil && active.ReduceOnly && nearlyEqual(active.RemainingQty, desiredQty) {
-		logger.Debug("take profit already matches position",
-			slog.Float64("desired_qty", desiredQty),
-			slog.Float64("existing_qty", active.RemainingQty),
-		)
-		return recomma.Action{Type: recomma.ActionNone, Reason: "take-profit already matches position"}, false
+	// Single-venue scenario: check if the one TP already matches global position
+	if !skipExisting && len(snapshot.ActiveTakeProfits) == 1 {
+		active := snapshot.ActiveTakeProfits[0]
+		if active.ReduceOnly && nearlyEqual(active.RemainingQty, desiredQty) {
+			logger.Debug("take profit already matches position",
+				slog.Float64("desired_qty", desiredQty),
+				slog.Float64("existing_qty", active.RemainingQty),
+				slog.String("venue", active.Identifier.Venue()),
+			)
+			return recomma.Action{Type: recomma.ActionNone, Reason: "take-profit already matches position"}, false
+		}
 	}
 
 	switch action.Type {
@@ -551,12 +578,8 @@ func (e *Engine) adjustActionWithTracker(
 			slog.Float64("desired_qty", desiredQty),
 			slog.Float64("price", req.Price),
 		)
-		return recomma.Action{Type: recomma.ActionCreate, Create: &req}, true
+		return recomma.Action{Type: recomma.ActionCreate, Create: req}, true
 	case recomma.ActionCreate:
-		if action.Create == nil {
-			req := adapter.ToCreateOrderRequest(currency, latest, oid)
-			action.Create = &req
-		}
 		action.Create.Size = desiredQty
 		action.Create.ReduceOnly = true
 		logger.Info("creating take profit with tracked size",
@@ -565,15 +588,6 @@ func (e *Engine) adjustActionWithTracker(
 		)
 		return action, true
 	case recomma.ActionModify:
-		if action.Modify == nil {
-			req := adapter.ToCreateOrderRequest(currency, latest, oid)
-			req.Size = desiredQty
-			req.ReduceOnly = true
-			logger.Warn("modify without prior request; emitting create instead",
-				slog.Float64("desired_qty", desiredQty),
-			)
-			return recomma.Action{Type: recomma.ActionCreate, Create: &req}, true
-		}
 		action.Modify.Order.Size = desiredQty
 		action.Modify.Order.ReduceOnly = true
 		logger.Info("modifying take profit to tracked size",
@@ -591,7 +605,7 @@ func (e *Engine) adjustActionWithTracker(
 
 func (e *Engine) applyScaling(
 	ctx context.Context,
-	oid orderid.OrderId,
+	ident recomma.OrderIdentifier,
 	latest *recomma.BotEvent,
 	action recomma.Action,
 	logger *slog.Logger,
@@ -602,11 +616,8 @@ func (e *Engine) applyScaling(
 
 	switch action.Type {
 	case recomma.ActionCreate:
-		if action.Create == nil {
-			return action, nil, true, nil
-		}
-		req := orderscaler.BuildRequest(oid, latest.BotEvent, *action.Create)
-		result, err := e.scaler.Scale(ctx, req, action.Create)
+		req := orderscaler.BuildRequest(ident, latest.BotEvent, action.Create)
+		result, err := e.scaler.Scale(ctx, req, &action.Create)
 		if err != nil {
 			if errors.Is(err, orderscaler.ErrBelowMinimum) {
 				reason := "scaled order below minimum"
@@ -626,10 +637,7 @@ func (e *Engine) applyScaling(
 		}
 		return action, &result, true, nil
 	case recomma.ActionModify:
-		if action.Modify == nil {
-			return action, nil, true, nil
-		}
-		req := orderscaler.BuildRequest(oid, latest.BotEvent, action.Modify.Order)
+		req := orderscaler.BuildRequest(ident, latest.BotEvent, action.Modify.Order)
 		result, err := e.scaler.Scale(ctx, req, &action.Modify.Order)
 		if err != nil {
 			if errors.Is(err, orderscaler.ErrBelowMinimum) {
@@ -740,21 +748,4 @@ func compareIdentifiers(a, b recomma.OrderIdentifier) int {
 		return cmp
 	}
 	return strings.Compare(a.Hex(), b.Hex())
-}
-
-func cloneAction(action recomma.Action) recomma.Action {
-	clone := action
-	if action.Create != nil {
-		req := *action.Create
-		clone.Create = &req
-	}
-	if action.Modify != nil {
-		req := *action.Modify
-		clone.Modify = &req
-	}
-	if action.Cancel != nil {
-		req := *action.Cancel
-		clone.Cancel = &req
-	}
-	return clone
 }

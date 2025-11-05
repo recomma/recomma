@@ -163,34 +163,126 @@ func (s *Service) ReconcileTakeProfits(ctx context.Context, submitter recomma.Em
 			continue
 		}
 
-		desiredQty := snapshot.Position.NetQty
-		if desiredQty <= floatTolerance {
-			if snapshot.ActiveTakeProfit != nil {
-				s.cancelTakeProfit(ctx, submitter, snapshot)
-			}
-			continue
+		// Calculate per-venue positions from filled orders
+		venuePositions := s.calculateVenuePositions(snapshot)
+
+		// Map existing active take-profits by venue+wallet (not full identifier)
+		activeTPs := make(map[venueKey]OrderSnapshot)
+		for _, tp := range snapshot.ActiveTakeProfits {
+			key := venueKey{venue: tp.Identifier.VenueID, wallet: tp.Identifier.Wallet}
+			activeTPs[key] = tp
 		}
 
-		if snapshot.ActiveTakeProfit != nil {
-			if s.reconcileActiveTakeProfit(ctx, submitter, snapshot, desiredQty) {
+		// Reconcile each venue independently
+		processedVenues := make(map[venueKey]bool)
+		for ident, venueNetQty := range venuePositions {
+			key := venueKey{venue: ident.VenueID, wallet: ident.Wallet}
+			processedVenues[key] = true
+
+			if venueNetQty <= floatTolerance {
+				// Position flat for this venue; cancel TP if it exists
+				if tp, exists := activeTPs[key]; exists {
+					s.cancelTakeProfitBySnapshot(ctx, submitter, snapshot, tp)
+				}
 				continue
 			}
+
+			// Check if this venue has an active take-profit
+			if tp, exists := activeTPs[key]; exists {
+				// Reconcile existing take-profit to match venue's net position
+				s.reconcileActiveTakeProfitBySnapshot(ctx, submitter, snapshot, tp, venueNetQty)
+			} else {
+				// Create take-profit for this venue
+				// Build the correct identifier with venue+wallet and TP's OrderId (not base order's)
+				tpIdent := s.buildTakeProfitIdentifier(ctx, snapshot, ident.VenueID, ident.Wallet)
+				s.ensureTakeProfit(ctx, submitter, snapshot, venueNetQty, tpIdent, nil, false)
+			}
 		}
 
-		s.ensureTakeProfit(ctx, submitter, snapshot, desiredQty, nil, nil, false)
+		// Cancel any TPs for venues that have no position (not in venuePositions map)
+		for key, tp := range activeTPs {
+			if !processedVenues[key] {
+				s.cancelTakeProfitBySnapshot(ctx, submitter, snapshot, tp)
+			}
+		}
 	}
 }
 
-func (s *Service) cancelTakeProfit(
+// buildTakeProfitIdentifier constructs an identifier for a TP at a specific venue.
+// It looks up the TP's OrderId and combines it with the target venue+wallet.
+// Returns nil if no TP metadata exists (caller should pass nil to ensureTakeProfit).
+func (s *Service) buildTakeProfitIdentifier(
+	ctx context.Context,
+	snapshot DealSnapshot,
+	targetVenue recomma.VenueID,
+	targetWallet string,
+) *recomma.OrderIdentifier {
+	// Try to find a TP OrderId from the snapshot first
+	for _, order := range snapshot.Orders {
+		if order.ReduceOnly && order.Event != nil {
+			// Found a TP order; use its OrderId with our target venue+wallet
+			ident := recomma.NewOrderIdentifier(targetVenue, targetWallet, order.OrderId)
+			return &ident
+		}
+	}
+
+	// Try loading from storage
+	storedOrderId, _, err := s.store.LoadTakeProfitForDeal(ctx, snapshot.DealID)
+	if err != nil {
+		// No TP metadata available; return nil to let ensureTakeProfit handle lookup
+		return nil
+	}
+
+	ident := recomma.NewOrderIdentifier(targetVenue, targetWallet, *storedOrderId)
+	return &ident
+}
+
+// venueKey uniquely identifies a venue+wallet combination for position tracking.
+type venueKey struct {
+	venue  recomma.VenueID
+	wallet string
+}
+
+// calculateVenuePositions computes the net position per venue from filled orders.
+// Returns a map keyed by venue+wallet (not including OrderId) to properly aggregate
+// all orders for the same venue. Includes filled reduce-only orders (take-profits that
+// have executed) but bases calculation on FilledQty to represent actual position changes.
+func (s *Service) calculateVenuePositions(snapshot DealSnapshot) map[recomma.OrderIdentifier]float64 {
+	// First, aggregate by venue+wallet only
+	venuePositions := make(map[venueKey]float64)
+	venueIdentifiers := make(map[venueKey]recomma.OrderIdentifier)
+
+	for _, order := range snapshot.Orders {
+		key := venueKey{venue: order.Identifier.VenueID, wallet: order.Identifier.Wallet}
+
+		// Track one identifier per venue for result map (use any order's identifier)
+		if _, exists := venueIdentifiers[key]; !exists {
+			venueIdentifiers[key] = order.Identifier
+		}
+
+		// Use FilledQty to compute actual position changes (includes filled TPs)
+		if order.Side == "B" || strings.EqualFold(order.Side, "BUY") {
+			venuePositions[key] += order.FilledQty
+		} else {
+			venuePositions[key] -= order.FilledQty
+		}
+	}
+
+	// Convert to map keyed by OrderIdentifier (using representative identifier per venue)
+	result := make(map[recomma.OrderIdentifier]float64)
+	for key, netQty := range venuePositions {
+		result[venueIdentifiers[key]] = netQty
+	}
+
+	return result
+}
+
+func (s *Service) cancelTakeProfitBySnapshot(
 	ctx context.Context,
 	submitter recomma.Emitter,
 	snapshot DealSnapshot,
+	tp OrderSnapshot,
 ) {
-	tp := snapshot.ActiveTakeProfit
-	if tp == nil {
-		return
-	}
-
 	ident := tp.Identifier
 	oid := tp.OrderId
 	cancel := hyperliquid.CancelOrderRequestByCloid{
@@ -203,7 +295,7 @@ func (s *Service) cancelTakeProfit(
 		OrderId:    oid,
 		Action: recomma.Action{
 			Type:   recomma.ActionCancel,
-			Cancel: &cancel,
+			Cancel: cancel,
 			Reason: "position closed; cancel stale take profit",
 		},
 	}
@@ -211,17 +303,13 @@ func (s *Service) cancelTakeProfit(
 	s.emitOrderWork(ctx, submitter, work, "cancelled take profit for flat position", snapshot, tp.RemainingQty)
 }
 
-func (s *Service) reconcileActiveTakeProfit(
+func (s *Service) reconcileActiveTakeProfitBySnapshot(
 	ctx context.Context,
 	submitter recomma.Emitter,
 	snapshot DealSnapshot,
+	tp OrderSnapshot,
 	desiredQty float64,
 ) bool {
-	tp := snapshot.ActiveTakeProfit
-	if tp == nil {
-		return false
-	}
-
 	if tp.ReduceOnly && floatsEqual(tp.RemainingQty, desiredQty) {
 		return true
 	}
@@ -248,7 +336,7 @@ func (s *Service) reconcileActiveTakeProfit(
 			OrderId:    oid,
 			Action: recomma.Action{
 				Type:   recomma.ActionModify,
-				Modify: &modify,
+				Modify: modify,
 				Reason: "resize take profit to match net position",
 			},
 			BotEvent: recomma.BotEvent{BotEvent: *evt},
@@ -268,7 +356,7 @@ func (s *Service) reconcileActiveTakeProfit(
 		OrderId:    oid,
 		Action: recomma.Action{
 			Type:   recomma.ActionCancel,
-			Cancel: &cancel,
+			Cancel: cancel,
 			Reason: "stale take profit metadata; cancel before recreation",
 		},
 	}
@@ -310,7 +398,7 @@ func (s *Service) ensureTakeProfit(
 		OrderId:    oid,
 		Action: recomma.Action{
 			Type:   recomma.ActionCreate,
-			Create: &create,
+			Create: create,
 			Reason: "recreate missing take profit",
 		},
 		BotEvent: recomma.BotEvent{BotEvent: *evt},
@@ -395,17 +483,11 @@ func (s *Service) shouldSkipSubmission(ctx context.Context, ident recomma.OrderI
 func submissionMatchesDesired(action recomma.Action, desiredSize float64, requireReduceOnly bool) bool {
 	switch action.Type {
 	case recomma.ActionCreate:
-		if action.Create == nil {
-			return false
-		}
 		if requireReduceOnly && !action.Create.ReduceOnly {
 			return false
 		}
 		return floatsEqual(action.Create.Size, desiredSize)
 	case recomma.ActionModify:
-		if action.Modify == nil {
-			return false
-		}
 		if requireReduceOnly && !action.Modify.Order.ReduceOnly {
 			return false
 		}
@@ -545,16 +627,25 @@ func (s *Service) reloadDeal(ctx context.Context, dealID uint32) error {
 		if err != nil {
 			s.logger.Warn("load scaled orders", slog.Uint64("deal_id", uint64(oid.DealID)), slog.String("error", err.Error()))
 		}
-		var latestScaled *storage.ScaledOrderAudit
-		if err == nil && len(scaledOrders) > 0 {
-			copy := scaledOrders[len(scaledOrders)-1]
-			latestScaled = &copy
-		}
 
 		for _, ident := range identifiers {
 			status, found, err := s.store.LoadHyperliquidStatus(ctx, ident)
 			if err != nil {
 				return err
+			}
+
+			// Find the most recent scaled order that matches this identifier's venue
+			var latestScaled *storage.ScaledOrderAudit
+			if len(scaledOrders) > 0 {
+				for i := len(scaledOrders) - 1; i >= 0; i-- {
+					audit := &scaledOrders[i]
+					// Match by venue_id and wallet
+					if audit.VenueID == string(ident.VenueID) && audit.Wallet == ident.Wallet {
+						copy := scaledOrders[i]
+						latestScaled = &copy
+						break
+					}
+				}
 			}
 
 			s.mu.Lock()
@@ -632,6 +723,52 @@ func (s *Service) listDealIDs() []uint32 {
 		out = append(out, id)
 	}
 	return out
+}
+
+// CleanupStaleDealsstale removes completed/inactive deals from memory to prevent unbounded growth.
+// A deal is considered stale if:
+// - All orders are either filled or cancelled
+// - No updates in the last staleDuration period
+func (s *Service) CleanupStaleDeals(staleDuration time.Duration) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now().UTC()
+	staleDeals := make([]uint32, 0)
+
+	for dealID, deal := range s.deals {
+		if now.Sub(deal.lastUpdate) < staleDuration {
+			continue // Deal was recently updated
+		}
+
+		// Check if all orders are complete (filled or cancelled)
+		allComplete := true
+		for _, order := range deal.orders {
+			if order.isActive() {
+				allComplete = false
+				break
+			}
+		}
+
+		if allComplete {
+			staleDeals = append(staleDeals, dealID)
+		}
+	}
+
+	// Remove stale deals and their associated orders
+	for _, dealID := range staleDeals {
+		deal := s.deals[dealID]
+		for ident := range deal.orders {
+			delete(s.orders, ident)
+		}
+		delete(s.deals, dealID)
+	}
+
+	if len(staleDeals) > 0 {
+		s.logger.Info("cleaned up stale deals", slog.Int("count", len(staleDeals)))
+	}
+
+	return len(staleDeals)
 }
 
 type orderState struct {
@@ -856,7 +993,7 @@ func (d *dealState) snapshot() DealSnapshot {
 	allBuysFilled := true
 	var outstandingBuyQty float64
 	var outstandingSellQty float64
-	var activeTP *OrderSnapshot
+	var activeTPs []OrderSnapshot
 	var latestTPEvent *tc.BotEvent
 
 	for _, state := range d.orders {
@@ -874,10 +1011,8 @@ func (d *dealState) snapshot() DealSnapshot {
 		} else {
 			outstandingSellQty += state.remainingQty
 			if state.reduceOnly && state.isActive() {
-				if activeTP == nil || snap.StatusTime.After(activeTP.StatusTime) {
-					copy := snap
-					activeTP = &copy
-				}
+				copy := snap
+				activeTPs = append(activeTPs, copy)
 			}
 		}
 
@@ -889,7 +1024,7 @@ func (d *dealState) snapshot() DealSnapshot {
 		}
 	}
 
-	out.ActiveTakeProfit = activeTP
+	out.ActiveTakeProfits = activeTPs
 	out.LastTakeProfitEvent = latestTPEvent
 	out.AllBuysFilled = allBuysFilled
 	out.OutstandingBuyQty = outstandingBuyQty
@@ -916,7 +1051,7 @@ type DealSnapshot struct {
 
 	Orders []OrderSnapshot
 
-	ActiveTakeProfit    *OrderSnapshot
+	ActiveTakeProfits   []OrderSnapshot
 	LastTakeProfitEvent *tc.BotEvent
 
 	OpenBuys []OrderSnapshot

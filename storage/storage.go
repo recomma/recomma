@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,12 +28,15 @@ const (
 	defaultHyperliquidVenueType = "hyperliquid"
 	defaultHyperliquidName      = "Default Hyperliquid Venue"
 	defaultHyperliquidWallet    = "default"
+	primaryHyperliquidFlagKey   = "is_primary"
 
 	hyperliquidCreatePayloadType = "hyperliquid.create.v1"
 	hyperliquidModifyPayloadType = "hyperliquid.modify.v1"
 	hyperliquidCancelPayloadType = "hyperliquid.cancel.v1"
 	hyperliquidStatusPayloadType = "hyperliquid.status.v1"
 )
+
+var errPrimaryHyperliquidVenueNotFound = errors.New("storage: primary hyperliquid venue not found")
 
 //go:embed sqlc/schema.sql
 var schemaDDL string
@@ -232,6 +236,15 @@ func (s *Storage) migrateDefaultVenueWalletLocked(ctx context.Context, qtx *sqlc
 		return err
 	}
 
+	cloneScaledOrdersParams := sqlcgen.CloneScaledOrdersToWalletParams{
+		ToWallet:   toWallet,
+		VenueID:    string(defaultHyperliquidVenueID),
+		FromWallet: fromWallet,
+	}
+	if err := qtx.CloneScaledOrdersToWallet(ctx, cloneScaledOrdersParams); err != nil {
+		return err
+	}
+
 	deleteStatusesParams := sqlcgen.DeleteHyperliquidStatusesForWalletParams{
 		VenueID: string(defaultHyperliquidVenueID),
 		Wallet:  fromWallet,
@@ -247,6 +260,15 @@ func (s *Storage) migrateDefaultVenueWalletLocked(ctx context.Context, qtx *sqlc
 	if err := qtx.DeleteHyperliquidSubmissionsForWallet(ctx, deleteSubmissionsParams); err != nil {
 		return err
 	}
+
+	deleteScaledOrdersParams := sqlcgen.DeleteScaledOrdersForWalletParams{
+		VenueID: string(defaultHyperliquidVenueID),
+		Wallet:  fromWallet,
+	}
+	if err := qtx.DeleteScaledOrdersForWallet(ctx, deleteScaledOrdersParams); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -293,11 +315,102 @@ func (s *Storage) defaultVenueAssignmentLocked(ctx context.Context) (VenueAssign
 		wallet = defaultHyperliquidWallet
 	}
 
-	return VenueAssignment{
+	assignment := VenueAssignment{
 		VenueID:   recomma.VenueID(row.ID),
 		Wallet:    wallet,
 		IsPrimary: true,
-	}, nil
+	}
+
+	if wallet != defaultHyperliquidWallet {
+		return assignment, nil
+	}
+
+	primary, err := s.findPrimaryHyperliquidVenueLocked(ctx)
+	if err != nil {
+		if errors.Is(err, errPrimaryHyperliquidVenueNotFound) {
+			return assignment, nil
+		}
+		return VenueAssignment{}, err
+	}
+
+	return primary, nil
+}
+
+func (s *Storage) findPrimaryHyperliquidVenueLocked(ctx context.Context) (VenueAssignment, error) {
+	rows, err := s.queries.ListVenues(ctx)
+	if err != nil {
+		return VenueAssignment{}, err
+	}
+
+	for _, row := range rows {
+		if !strings.EqualFold(row.Type, defaultHyperliquidVenueType) {
+			continue
+		}
+
+		flags, err := decodeVenueFlags(row.Flags)
+		if err != nil {
+			return VenueAssignment{}, fmt.Errorf("decode venue flags: %w", err)
+		}
+
+		if !isPrimaryVenueFlagged(flags) {
+			continue
+		}
+
+		wallet := row.Wallet
+		if wallet == "" {
+			wallet = defaultHyperliquidWallet
+		}
+
+		return VenueAssignment{
+			VenueID:   recomma.VenueID(row.ID),
+			Wallet:    wallet,
+			IsPrimary: true,
+		}, nil
+	}
+
+	return VenueAssignment{}, errPrimaryHyperliquidVenueNotFound
+}
+
+func decodeVenueFlags(raw []byte) (map[string]interface{}, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+
+	var flags map[string]interface{}
+	if err := json.Unmarshal(raw, &flags); err != nil {
+		return nil, err
+	}
+	if len(flags) == 0 {
+		return nil, nil
+	}
+	return flags, nil
+}
+
+func isPrimaryVenueFlagged(flags map[string]interface{}) bool {
+	if len(flags) == 0 {
+		return false
+	}
+
+	raw, ok := flags[primaryHyperliquidFlagKey]
+	if !ok {
+		return false
+	}
+
+	switch v := raw.(type) {
+	case bool:
+		return v
+	case float64:
+		return v != 0
+	case string:
+		if v == "" {
+			return false
+		}
+		if parsed, err := strconv.ParseBool(v); err == nil {
+			return parsed
+		}
+	}
+
+	return false
 }
 
 // ListVenuesForBot returns the configured venue assignments for the given bot.
@@ -999,7 +1112,7 @@ func (s *Storage) LoadHyperliquidSubmission(ctx context.Context, ident recomma.O
 		if err := json.Unmarshal(row.CreatePayload, &decoded); err != nil {
 			return recomma.Action{}, false, err
 		}
-		action.Create = &decoded
+		action.Create = decoded
 	}
 
 	if len(row.ModifyPayloads) > 0 {
@@ -1009,7 +1122,7 @@ func (s *Storage) LoadHyperliquidSubmission(ctx context.Context, ident recomma.O
 		}
 		if len(decoded) > 0 {
 			last := decoded[len(decoded)-1]
-			action.Modify = &last
+			action.Modify = last
 		}
 	}
 
@@ -1018,10 +1131,10 @@ func (s *Storage) LoadHyperliquidSubmission(ctx context.Context, ident recomma.O
 		if err := json.Unmarshal(row.CancelPayload, &decoded); err != nil {
 			return recomma.Action{}, false, err
 		}
-		action.Cancel = &decoded
+		action.Cancel = decoded
 	}
 
-	if action.Type == recomma.ActionModify && action.Modify == nil {
+	if action.Type == recomma.ActionModify && len(row.ModifyPayloads) == 0 {
 		action.Type = recomma.ActionNone
 		action.Reason = "modify history empty"
 	}
@@ -1037,7 +1150,7 @@ func (s *Storage) LoadHyperliquidStatus(ctx context.Context, ident recomma.Order
 
 func (s *Storage) LoadHyperliquidRequest(ctx context.Context, ident recomma.OrderIdentifier) (*hyperliquid.CreateOrderRequest, bool, error) {
 	action, found, err := s.LoadHyperliquidSubmission(ctx, ident)
-	return action.Create, found, err
+	return &action.Create, found, err
 }
 
 func (s *Storage) RecordBot(ctx context.Context, bot tc.Bot, syncedAt time.Time) error {

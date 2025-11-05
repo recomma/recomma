@@ -56,7 +56,7 @@ func TestHyperLiquidEmitterIOCRetriesLogSuccess(t *testing.T) {
 
 	store := newTestStore(t)
 
-	emitter := NewHyperLiquidEmitter(exchange, nil, store,
+	emitter := NewHyperLiquidEmitter(exchange, "", nil, store,
 		WithHyperLiquidEmitterLogger(logger),
 		WithHyperLiquidEmitterConfig(HyperLiquidEmitterConfig{MaxIOCRetries: 3}),
 	)
@@ -76,7 +76,7 @@ func TestHyperLiquidEmitterIOCRetriesLogSuccess(t *testing.T) {
 	work := recomma.OrderWork{
 		Identifier: storage.DefaultHyperliquidIdentifier(oid),
 		OrderId:    oid,
-		Action:     recomma.Action{Type: recomma.ActionCreate, Create: &order},
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
 		BotEvent:   recomma.BotEvent{RowID: 1},
 	}
 
@@ -129,7 +129,7 @@ func TestHyperLiquidEmitterIOCRetriesWarnOnFailure(t *testing.T) {
 
 	store := newTestStore(t)
 
-	emitter := NewHyperLiquidEmitter(exchange, nil, store,
+	emitter := NewHyperLiquidEmitter(exchange, "", nil, store,
 		WithHyperLiquidEmitterLogger(logger),
 		WithHyperLiquidEmitterConfig(HyperLiquidEmitterConfig{MaxIOCRetries: 3}),
 	)
@@ -149,7 +149,7 @@ func TestHyperLiquidEmitterIOCRetriesWarnOnFailure(t *testing.T) {
 	work := recomma.OrderWork{
 		Identifier: storage.DefaultHyperliquidIdentifier(oid),
 		OrderId:    oid,
-		Action:     recomma.Action{Type: recomma.ActionCreate, Create: &order},
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
 		BotEvent:   recomma.BotEvent{RowID: 2},
 	}
 
@@ -171,7 +171,7 @@ func TestHyperLiquidEmitterIOCRetriesWarnOnFailure(t *testing.T) {
 func TestApplyIOCOffsetIgnoresNonIOCOrders(t *testing.T) {
 	t.Parallel()
 
-	emitter := NewHyperLiquidEmitter(&stubExchange{}, nil, newTestStore(t),
+	emitter := NewHyperLiquidEmitter(&stubExchange{}, "", nil, newTestStore(t),
 		WithHyperLiquidEmitterConfig(HyperLiquidEmitterConfig{
 			InitialIOCOffsetBps: 25,
 		}),

@@ -82,8 +82,8 @@ func TestServiceRebuildAggregatesExecutedOrders(t *testing.T) {
 	require.InDelta(t, 100, snapshot.Position.NetQty, 1e-6)
 	require.InDelta(t, 10, snapshot.Position.AverageEntry, 1e-6)
 	require.True(t, snapshot.AllBuysFilled, "all buys should be filled")
-	require.NotNil(t, snapshot.ActiveTakeProfit)
-	require.InDelta(t, 100, snapshot.ActiveTakeProfit.RemainingQty, 1e-6)
+	require.Len(t, snapshot.ActiveTakeProfits, 1, "should have one active take-profit")
+	require.InDelta(t, 100, snapshot.ActiveTakeProfits[0].RemainingQty, 1e-6)
 }
 
 func TestServiceUpdateStatusAdjustsPosition(t *testing.T) {
@@ -148,8 +148,8 @@ func TestServiceUpdateStatusAdjustsPosition(t *testing.T) {
 	require.InDelta(t, 200, snapshot.Position.TotalBuyQty, 1e-6)
 	require.InDelta(t, 200-80, snapshot.Position.TotalSellQty, 1e-6)
 	require.InDelta(t, 80, snapshot.Position.NetQty, 1e-6)
-	require.NotNil(t, snapshot.ActiveTakeProfit)
-	require.InDelta(t, 80, snapshot.ActiveTakeProfit.RemainingQty, 1e-6)
+	require.Len(t, snapshot.ActiveTakeProfits, 1, "should have one active take-profit")
+	require.InDelta(t, 80, snapshot.ActiveTakeProfits[0].RemainingQty, 1e-6)
 	require.True(t, snapshot.AllBuysFilled, "all buy orders still filled")
 }
 
@@ -199,9 +199,9 @@ func TestReconcileTakeProfits(t *testing.T) {
 
 	snapshot, ok := tracker.Snapshot(dealID)
 	require.True(t, ok)
-	require.NotNil(t, snapshot.ActiveTakeProfit)
-	require.InDelta(t, 40, snapshot.ActiveTakeProfit.RemainingQty, 1e-6)
-	require.WithinDuration(t, now.Add(-2*time.Minute), snapshot.ActiveTakeProfit.StatusTime, time.Second)
+	require.Len(t, snapshot.ActiveTakeProfits, 1, "should have one active take-profit")
+	require.InDelta(t, 40, snapshot.ActiveTakeProfits[0].RemainingQty, 1e-6)
+	require.WithinDuration(t, now.Add(-2*time.Minute), snapshot.ActiveTakeProfits[0].StatusTime, time.Second)
 }
 
 func TestApplyScaledOrderUpdatesSnapshot(t *testing.T) {
@@ -331,7 +331,7 @@ func TestReconcileTakeProfitsCancelsWhenFlat(t *testing.T) {
 
 	snapshot, ok := tracker.Snapshot(dealID)
 	require.True(t, ok)
-	require.NotNil(t, snapshot.ActiveTakeProfit)
+	require.Len(t, snapshot.ActiveTakeProfits, 1, "should have one active take-profit")
 	require.InDelta(t, 0, snapshot.Position.NetQty, 1e-6)
 	require.True(t, snapshot.AllBuysFilled)
 
@@ -342,7 +342,6 @@ func TestReconcileTakeProfitsCancelsWhenFlat(t *testing.T) {
 	require.Len(t, actions, 1)
 	work := actions[0]
 	require.Equal(t, recomma.ActionCancel, work.Action.Type)
-	require.NotNil(t, work.Action.Cancel)
 	require.Equal(t, tpOid.Hex(), work.Action.Cancel.Cloid)
 	require.Equal(t, tpIdent, work.Identifier)
 }
@@ -403,7 +402,7 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 
 		snapshot, ok := tracker.Snapshot(dealID)
 		require.True(t, ok)
-		require.Nil(t, snapshot.ActiveTakeProfit)
+		require.Empty(t, snapshot.ActiveTakeProfits, "should have no active take-profits")
 		require.NotNil(t, snapshot.LastTakeProfitEvent)
 		require.InDelta(t, 10, snapshot.Position.NetQty, 1e-6)
 
@@ -414,7 +413,6 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 		require.Len(t, actions, 1)
 		work := actions[0]
 		require.Equal(t, recomma.ActionCreate, work.Action.Type)
-		require.NotNil(t, work.Action.Create)
 		require.InDelta(t, 10, work.Action.Create.Size, 1e-6)
 		require.True(t, work.Action.Create.ReduceOnly)
 		require.Equal(t, tpOid.Hex(), work.OrderId.Hex())
@@ -472,7 +470,7 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 
 		snapshot, ok := tracker.Snapshot(dealID + 1)
 		require.True(t, ok)
-		require.NotNil(t, snapshot.ActiveTakeProfit)
+		require.Len(t, snapshot.ActiveTakeProfits, 1, "should have one active take-profit")
 		require.InDelta(t, 15, snapshot.Position.NetQty, 1e-6)
 
 		emitter := &stubEmitter{}
@@ -482,7 +480,6 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 		require.Len(t, actions, 1)
 		work := actions[0]
 		require.Equal(t, recomma.ActionModify, work.Action.Type)
-		require.NotNil(t, work.Action.Modify)
 		require.InDelta(t, 15, work.Action.Modify.Order.Size, 1e-6)
 		require.True(t, work.Action.Modify.Order.ReduceOnly)
 		oid, ok := work.Action.Modify.Oid.(string)
@@ -554,7 +551,7 @@ func TestEnsureTakeProfitRecreatesAfterStaleSubmission(t *testing.T) {
 
 	snapshot, ok := tracker.Snapshot(dealID)
 	require.True(t, ok)
-	require.Nil(t, snapshot.ActiveTakeProfit)
+	require.Empty(t, snapshot.ActiveTakeProfits, "should have no active take-profits")
 	require.InDelta(t, 10, snapshot.Position.NetQty, 1e-6)
 
 	emitter := &stubEmitter{}
@@ -564,7 +561,6 @@ func TestEnsureTakeProfitRecreatesAfterStaleSubmission(t *testing.T) {
 	require.Len(t, actions, 1)
 	work := actions[0]
 	require.Equal(t, recomma.ActionCreate, work.Action.Type)
-	require.NotNil(t, work.Action.Create)
 	require.InDelta(t, snapshot.Position.NetQty, work.Action.Create.Size, 1e-6)
 	require.True(t, work.Action.Create.ReduceOnly)
 	require.Equal(t, tpOid.Hex(), work.OrderId.Hex())
@@ -645,8 +641,8 @@ func TestReconcileTakeProfitsRecreatesAfterCancelWithMissingOrderId(t *testing.T
 
 	snapshot, ok := tracker.Snapshot(dealID)
 	require.True(t, ok)
-	require.NotNil(t, snapshot.ActiveTakeProfit)
-	require.Nil(t, snapshot.ActiveTakeProfit.Event)
+	require.Len(t, snapshot.ActiveTakeProfits, 1, "should have one active take-profit")
+	require.Nil(t, snapshot.ActiveTakeProfits[0].Event)
 	require.Nil(t, snapshot.LastTakeProfitEvent)
 	require.InDelta(t, 8, snapshot.Position.NetQty, 1e-6)
 
@@ -658,13 +654,11 @@ func TestReconcileTakeProfitsRecreatesAfterCancelWithMissingOrderId(t *testing.T
 
 	cancelWork := actions[0]
 	require.Equal(t, recomma.ActionCancel, cancelWork.Action.Type)
-	require.NotNil(t, cancelWork.Action.Cancel)
 	require.Equal(t, tpOid.Hex(), cancelWork.Action.Cancel.Cloid)
 	require.Equal(t, tpIdent, cancelWork.Identifier)
 
 	createWork := actions[1]
 	require.Equal(t, recomma.ActionCreate, createWork.Action.Type)
-	require.NotNil(t, createWork.Action.Create)
 	require.True(t, createWork.Action.Create.ReduceOnly)
 	require.InDelta(t, snapshot.Position.NetQty, createWork.Action.Create.Size, 1e-6)
 	require.Equal(t, tpOid.Hex(), createWork.OrderId.Hex())

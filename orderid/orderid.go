@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// OrderId tracks an order across different states.
+// OrderId tracks an incoming 3commas order across different states.
 type OrderId struct {
 	BotID      uint32
 	DealID     uint32

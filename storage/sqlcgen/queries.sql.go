@@ -147,6 +147,39 @@ func (q *Queries) CloneHyperliquidSubmissionsToWallet(ctx context.Context, arg C
 	return err
 }
 
+const cloneScaledOrdersToWallet = `-- name: CloneScaledOrdersToWallet :exec
+INSERT INTO scaled_orders (
+    venue_id, wallet, order_id, deal_id, bot_id,
+    original_size, scaled_size, multiplier, rounding_delta,
+    stack_index, order_side, multiplier_updated_by,
+    created_at_utc, skipped, skip_reason,
+    payload_type, payload_blob
+)
+SELECT
+    src.venue_id,
+    ?1 AS wallet,
+    src.order_id, src.deal_id, src.bot_id,
+    src.original_size, src.scaled_size, src.multiplier, src.rounding_delta,
+    src.stack_index, src.order_side, src.multiplier_updated_by,
+    src.created_at_utc, src.skipped, src.skip_reason,
+    src.payload_type, src.payload_blob
+FROM scaled_orders AS src
+WHERE src.venue_id = ?2
+  AND src.wallet = ?3
+ON CONFLICT(venue_id, wallet, order_id) DO NOTHING
+`
+
+type CloneScaledOrdersToWalletParams struct {
+	ToWallet   string `json:"to_wallet"`
+	VenueID    string `json:"venue_id"`
+	FromWallet string `json:"from_wallet"`
+}
+
+func (q *Queries) CloneScaledOrdersToWallet(ctx context.Context, arg CloneScaledOrdersToWalletParams) error {
+	_, err := q.db.ExecContext(ctx, cloneScaledOrdersToWallet, arg.ToWallet, arg.VenueID, arg.FromWallet)
+	return err
+}
+
 const deleteBotOrderScaler = `-- name: DeleteBotOrderScaler :exec
 DELETE FROM bot_order_scalers
 WHERE bot_id = ?1
@@ -202,6 +235,22 @@ type DeleteHyperliquidSubmissionsForWalletParams struct {
 
 func (q *Queries) DeleteHyperliquidSubmissionsForWallet(ctx context.Context, arg DeleteHyperliquidSubmissionsForWalletParams) error {
 	_, err := q.db.ExecContext(ctx, deleteHyperliquidSubmissionsForWallet, arg.VenueID, arg.Wallet)
+	return err
+}
+
+const deleteScaledOrdersForWallet = `-- name: DeleteScaledOrdersForWallet :exec
+DELETE FROM scaled_orders
+WHERE venue_id = ?1
+  AND wallet = ?2
+`
+
+type DeleteScaledOrdersForWalletParams struct {
+	VenueID string `json:"venue_id"`
+	Wallet  string `json:"wallet"`
+}
+
+func (q *Queries) DeleteScaledOrdersForWallet(ctx context.Context, arg DeleteScaledOrdersForWalletParams) error {
+	_, err := q.db.ExecContext(ctx, deleteScaledOrdersForWallet, arg.VenueID, arg.Wallet)
 	return err
 }
 
@@ -355,7 +404,6 @@ SELECT
 FROM hyperliquid_status_history
 WHERE venue_id = ?1
   AND wallet = ?2
-  AND order_id = ?3
   AND order_id = ?3
 ORDER BY recorded_at_utc DESC
 LIMIT 1
@@ -1122,7 +1170,6 @@ FROM hyperliquid_status_history
 WHERE venue_id = ?1
   AND wallet = ?2
   AND order_id = ?3
-  AND order_id = ?3
 ORDER BY recorded_at_utc ASC
 `
 
@@ -1297,7 +1344,6 @@ WITH ranked_status AS (
     SELECT
         venue_id,
         wallet,
-        order_id,
         order_id,
         payload_type,
         payload_blob,
@@ -1554,17 +1600,11 @@ SELECT
     payload_blob
 FROM scaled_orders
 WHERE deal_id = ?1
-  AND venue_id = ?2
 ORDER BY created_at_utc ASC, order_id ASC
 `
 
-type ListScaledOrdersByDealParams struct {
-	DealID  int64  `json:"deal_id"`
-	VenueID string `json:"venue_id"`
-}
-
-func (q *Queries) ListScaledOrdersByDeal(ctx context.Context, arg ListScaledOrdersByDealParams) ([]ScaledOrder, error) {
-	rows, err := q.db.QueryContext(ctx, listScaledOrdersByDeal, arg.DealID, arg.VenueID)
+func (q *Queries) ListScaledOrdersByDeal(ctx context.Context, dealID int64) ([]ScaledOrder, error) {
+	rows, err := q.db.QueryContext(ctx, listScaledOrdersByDeal, dealID)
 	if err != nil {
 		return nil, err
 	}
@@ -1624,22 +1664,18 @@ SELECT
     payload_type,
     payload_blob
 FROM scaled_orders
-WHERE venue_id = ?1
-  AND (
-        order_id = ?2
-        OR order_id LIKE ?3
-    )
+WHERE order_id = ?1
+   OR order_id LIKE ?2
 ORDER BY created_at_utc ASC, order_id ASC
 `
 
 type ListScaledOrdersByOrderIdParams struct {
-	VenueID       string `json:"venue_id"`
 	OrderID       string `json:"order_id"`
 	OrderIDPrefix string `json:"order_id_prefix"`
 }
 
 func (q *Queries) ListScaledOrdersByOrderId(ctx context.Context, arg ListScaledOrdersByOrderIdParams) ([]ScaledOrder, error) {
-	rows, err := q.db.QueryContext(ctx, listScaledOrdersByOrderId, arg.VenueID, arg.OrderID, arg.OrderIDPrefix)
+	rows, err := q.db.QueryContext(ctx, listScaledOrdersByOrderId, arg.OrderID, arg.OrderIDPrefix)
 	if err != nil {
 		return nil, err
 	}

@@ -77,14 +77,45 @@ func TestHandleInfo_Meta(t *testing.T) {
 		t.Error("Expected to find ETH in universe")
 	}
 
-	// Check margin tables
+	// Check margin tables (they are tuples: [[id, {object}], ...])
 	if len(response.MarginTables) == 0 {
 		t.Error("Expected margin tables to exist")
 	}
 
-	for _, mt := range response.MarginTables {
-		if len(mt.MarginTiers) == 0 {
-			t.Errorf("MarginTable %d: expected margin tiers", mt.ID)
+	for i, tuple := range response.MarginTables {
+		if len(tuple) != 2 {
+			t.Errorf("MarginTable %d: expected 2-element tuple, got %d elements", i, len(tuple))
+			continue
+		}
+
+		// Extract id and table object from tuple
+		id, ok := tuple[0].(int)
+		if !ok {
+			t.Errorf("MarginTable %d: expected int id, got %T", i, tuple[0])
+			continue
+		}
+
+		tableObj, ok := tuple[1].(map[string]interface{})
+		if !ok {
+			t.Errorf("MarginTable %d: expected map[string]interface{}, got %T", i, tuple[1])
+			continue
+		}
+
+		// Check marginTiers exists in the table object
+		marginTiers, ok := tableObj["marginTiers"]
+		if !ok {
+			t.Errorf("MarginTable %d (id=%d): missing marginTiers", i, id)
+			continue
+		}
+
+		tiersSlice, ok := marginTiers.([]map[string]interface{})
+		if !ok {
+			t.Errorf("MarginTable %d (id=%d): marginTiers has wrong type %T", i, id, marginTiers)
+			continue
+		}
+
+		if len(tiersSlice) == 0 {
+			t.Errorf("MarginTable %d (id=%d): expected margin tiers", i, id)
 		}
 	}
 

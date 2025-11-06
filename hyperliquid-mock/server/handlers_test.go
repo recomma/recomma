@@ -35,6 +35,9 @@ func TestHandleInfo_Meta(t *testing.T) {
 		return
 	}
 
+	// Log raw JSON response
+	t.Logf("Raw JSON response:\n%s", w.Body.String())
+
 	// Parse response
 	var response Meta
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {

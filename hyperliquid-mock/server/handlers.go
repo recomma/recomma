@@ -246,6 +246,11 @@ func (h *Handler) HandleInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+
+	// Log the JSON response for debugging
+	jsonBytes, _ := json.MarshalIndent(response, "", "  ")
+	log.Printf("Sending %s response:\n%s", req.Type, string(jsonBytes))
+
 	json.NewEncoder(w).Encode(response)
 }
 

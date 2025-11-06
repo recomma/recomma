@@ -28,7 +28,11 @@ func TestIntegrationWithGoHyperliquid(t *testing.T) {
 	pubECDSA, _ := pub.(*ecdsa.PublicKey)
 	walletAddr := crypto.PubkeyToAddress(*pubECDSA).Hex()
 
+	t.Logf("Creating exchange client for wallet: %s", walletAddr)
+	t.Logf("Mock server URL: %s", ts.URL())
+
 	// Create exchange client pointing to mock server
+	// This will internally call NewInfo which fetches meta from the server
 	exchange := hyperliquid.NewExchange(
 		ctx,
 		privateKey,
@@ -38,6 +42,13 @@ func TestIntegrationWithGoHyperliquid(t *testing.T) {
 		walletAddr,
 		nil, // SpotMeta will be fetched from mock
 	)
+
+	// Log what requests were made during exchange creation
+	infoReqs := ts.GetInfoRequests()
+	t.Logf("Info requests made during NewExchange: %d", len(infoReqs))
+	for i, req := range infoReqs {
+		t.Logf("  Request %d: type=%s", i, req.Type)
+	}
 
 	// Create an order using the real go-hyperliquid library
 	cloid := "test-order-1"

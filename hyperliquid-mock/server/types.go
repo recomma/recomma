@@ -103,6 +103,41 @@ type SpotMetaAndAssetCtxs struct {
 	Universe []SpotUniverse `json:"universe"`
 }
 
+// Meta is the response for the "meta" info type (simpler than metaAndAssetCtxs)
+type Meta struct {
+	Universe     []AssetInfo   `json:"universe"`
+	MarginTables []MarginTable `json:"marginTables,omitempty"`
+}
+
+// AssetInfo contains basic asset information for the meta endpoint
+type AssetInfo struct {
+	Name          string `json:"name"`
+	SzDecimals    int    `json:"szDecimals"`
+	MaxLeverage   int    `json:"maxLeverage,omitempty"`
+	MarginTableId int    `json:"marginTableId,omitempty"`
+	OnlyIsolated  bool   `json:"onlyIsolated,omitempty"`
+	IsDelisted    bool   `json:"isDelisted,omitempty"`
+}
+
+// MarginTable defines leverage tiers
+type MarginTable struct {
+	ID          int          `json:"id,omitempty"`
+	Description string       `json:"description,omitempty"`
+	MarginTiers []MarginTier `json:"marginTiers,omitempty"`
+}
+
+// MarginTier defines a margin tier with leverage limits
+type MarginTier struct {
+	LowerBound  string `json:"lowerBound"`
+	MaxLeverage int    `json:"maxLeverage"`
+}
+
+// SpotMeta is the response for the "spotMeta" info type
+type SpotMeta struct {
+	Tokens   []SpotToken    `json:"tokens"`
+	Universe []SpotUniverse `json:"universe"`
+}
+
 // OrderStatusResponse represents an order status in exchange responses
 type OrderStatusResponse struct {
 	Resting *RestingStatus `json:"resting,omitempty"`

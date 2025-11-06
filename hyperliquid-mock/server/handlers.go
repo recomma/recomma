@@ -236,6 +236,10 @@ func (h *Handler) HandleInfo(w http.ResponseWriter, r *http.Request) {
 		response = h.handleMetaAndAssetCtxs()
 	case "spotMetaAndAssetCtxs":
 		response = h.handleSpotMetaAndAssetCtxs()
+	case "meta":
+		response = h.handleMeta()
+	case "spotMeta":
+		response = h.handleSpotMeta()
 	default:
 		http.Error(w, "Unknown info type", http.StatusBadRequest)
 		return
@@ -325,6 +329,53 @@ func (h *Handler) handleMetaAndAssetCtxs() MetaAndAssetCtxs {
 // handleSpotMetaAndAssetCtxs returns mock spot trading metadata
 func (h *Handler) handleSpotMetaAndAssetCtxs() SpotMetaAndAssetCtxs {
 	return SpotMetaAndAssetCtxs{
+		Tokens: []SpotToken{
+			{Name: "USDC", SzDecimals: 6, WeiDecimals: 6, Index: 0, TokenId: "0x1", IsCanonical: true},
+			{Name: "BTC", SzDecimals: 8, WeiDecimals: 8, Index: 1, TokenId: "0x2", IsCanonical: true},
+			{Name: "ETH", SzDecimals: 18, WeiDecimals: 18, Index: 2, TokenId: "0x3", IsCanonical: true},
+		},
+		Universe: []SpotUniverse{
+			{Tokens: []int{1, 0}, Name: "BTC/USDC", Index: 0},
+			{Tokens: []int{2, 0}, Name: "ETH/USDC", Index: 1},
+		},
+	}
+}
+
+// handleMeta returns mock perpetual futures metadata (simpler format than metaAndAssetCtxs)
+func (h *Handler) handleMeta() Meta {
+	return Meta{
+		Universe: []AssetInfo{
+			{Name: "BTC", SzDecimals: 5, MaxLeverage: 50, MarginTableId: 1},
+			{Name: "ETH", SzDecimals: 4, MaxLeverage: 50, MarginTableId: 1},
+			{Name: "SOL", SzDecimals: 1, MaxLeverage: 20, MarginTableId: 2},
+			{Name: "ARB", SzDecimals: 0, MaxLeverage: 20, MarginTableId: 2},
+		},
+		MarginTables: []MarginTable{
+			{
+				ID:          1,
+				Description: "Standard",
+				MarginTiers: []MarginTier{
+					{LowerBound: "0", MaxLeverage: 50},
+					{LowerBound: "100000", MaxLeverage: 25},
+					{LowerBound: "500000", MaxLeverage: 10},
+				},
+			},
+			{
+				ID:          2,
+				Description: "Alt Coins",
+				MarginTiers: []MarginTier{
+					{LowerBound: "0", MaxLeverage: 20},
+					{LowerBound: "50000", MaxLeverage: 10},
+					{LowerBound: "200000", MaxLeverage: 5},
+				},
+			},
+		},
+	}
+}
+
+// handleSpotMeta returns mock spot trading metadata (same structure as spotMetaAndAssetCtxs)
+func (h *Handler) handleSpotMeta() SpotMeta {
+	return SpotMeta{
 		Tokens: []SpotToken{
 			{Name: "USDC", SzDecimals: 6, WeiDecimals: 6, Index: 0, TokenId: "0x1", IsCanonical: true},
 			{Name: "BTC", SzDecimals: 8, WeiDecimals: 8, Index: 1, TokenId: "0x2", IsCanonical: true},

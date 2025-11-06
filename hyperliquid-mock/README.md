@@ -291,7 +291,7 @@ assert.Equal(t, 1, ts.RequestCount())
 
 ### Example: Full Integration Test
 
-See `examples_test.go` for complete working examples including:
+See `server/testserver_test.go` for complete working examples including:
 - Testing with real go-hyperliquid library
 - Order creation, modification, cancellation
 - Order status queries

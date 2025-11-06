@@ -148,7 +148,8 @@ type OrderStatusResponse struct {
 
 // RestingStatus indicates an order is resting on the book
 type RestingStatus struct {
-	Oid int64 `json:"oid"`
+	Oid   int64   `json:"oid"`
+	Cloid *string `json:"cloid,omitempty"`
 }
 
 // FilledStatus indicates an order was filled

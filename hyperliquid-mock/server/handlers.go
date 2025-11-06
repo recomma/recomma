@@ -123,7 +123,7 @@ func (h *Handler) processOrder(orderMap map[string]interface{}) OrderStatusRespo
 	if cloid != "" {
 		if oid, ok := h.state.ModifyOrder(cloid, pxStr, szStr); ok {
 			return OrderStatusResponse{
-				Resting: &RestingStatus{Oid: oid},
+				Resting: &RestingStatus{Oid: oid, Cloid: &cloid},
 			}
 		}
 	}
@@ -136,13 +136,13 @@ func (h *Handler) processOrder(orderMap map[string]interface{}) OrderStatusRespo
 	oid := h.state.CreateOrder(cloid, coin, side, pxStr, szStr)
 
 	return OrderStatusResponse{
-		Resting: &RestingStatus{Oid: oid},
+		Resting: &RestingStatus{Oid: oid, Cloid: &cloid},
 	}
 }
 
 // handleCancel processes order cancellation
 func (h *Handler) handleCancel(action map[string]interface{}) ExchangeResponse {
-	var statuses []OrderStatusResponse
+	var statuses []interface{}
 
 	if cancels, ok := action["cancels"].([]interface{}); ok {
 		for _, c := range cancels {
@@ -151,7 +151,8 @@ func (h *Handler) handleCancel(action map[string]interface{}) ExchangeResponse {
 
 			if cloid != "" {
 				h.state.CancelOrder(cloid)
-				statuses = append(statuses, OrderStatusResponse{})
+				// Real API returns "success" string for successful cancels
+				statuses = append(statuses, "success")
 			}
 		}
 	} else {
@@ -159,14 +160,14 @@ func (h *Handler) handleCancel(action map[string]interface{}) ExchangeResponse {
 		cloid, _ := action["cloid"].(string)
 		if cloid != "" {
 			h.state.CancelOrder(cloid)
-			statuses = append(statuses, OrderStatusResponse{})
+			statuses = append(statuses, "success")
 		}
 	}
 
 	return ExchangeResponse{
 		Status: "ok",
 		Response: &ExchangeActionData{
-			Type: "default",
+			Type: "cancel",
 			Data: map[string]interface{}{
 				"statuses": statuses,
 			},
@@ -193,7 +194,7 @@ func (h *Handler) handleBatchModify(action map[string]interface{}) ExchangeRespo
 
 				if oid, ok := h.state.ModifyOrder(cloid, pxStr, szStr); ok {
 					statuses = append(statuses, OrderStatusResponse{
-						Resting: &RestingStatus{Oid: oid},
+						Resting: &RestingStatus{Oid: oid, Cloid: &cloid},
 					})
 				}
 			}

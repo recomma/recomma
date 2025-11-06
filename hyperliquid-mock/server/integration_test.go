@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"crypto/ecdsa"
+	"fmt"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/crypto"
@@ -136,9 +137,10 @@ func TestOrderModificationWithGoHyperliquid(t *testing.T) {
 	// Clear request history to focus on the modify
 	ts.ClearRequests()
 
-	// Modify the order
+	// Modify the order (use OID as hex string)
+	oidHex := fmt.Sprintf("0x%x", oid)
 	_, err = exchange.ModifyOrder(ctx, hyperliquid.ModifyOrderRequest{
-		Oid: hyperliquid.OrderIdToHex(oid),
+		Oid: oidHex,
 		Order: hyperliquid.CreateOrderRequest{
 			Coin:  "BTC",
 			IsBuy: true,
@@ -308,18 +310,18 @@ func TestMetadataFetchingWithGoHyperliquid(t *testing.T) {
 		t.Fatalf("Failed to fetch metadata: %v", err)
 	}
 
-	// Verify we got mock data back
-	if len(meta) == 0 {
+	// Verify we got mock data back (meta is a pointer)
+	if meta == nil {
 		t.Fatal("Expected metadata response")
 	}
 
-	if len(meta[0].Universe) == 0 {
+	if len(meta.Universe) == 0 {
 		t.Fatal("Expected universe data")
 	}
 
 	// Verify BTC is in the mock universe
 	foundBTC := false
-	for _, asset := range meta[0].Universe {
+	for _, asset := range meta.Universe {
 		if asset.Name == "BTC" {
 			foundBTC = true
 			if asset.SzDecimals != 5 {

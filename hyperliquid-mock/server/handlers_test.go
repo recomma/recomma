@@ -89,9 +89,15 @@ func TestHandleInfo_Meta(t *testing.T) {
 		}
 
 		// Extract id and table object from tuple
-		id, ok := tuple[0].(int)
-		if !ok {
-			t.Errorf("MarginTable %d: expected int id, got %T", i, tuple[0])
+		// JSON unmarshals numbers as float64 when target is interface{}
+		var id int
+		switch v := tuple[0].(type) {
+		case int:
+			id = v
+		case float64:
+			id = int(v)
+		default:
+			t.Errorf("MarginTable %d: expected numeric id, got %T", i, tuple[0])
 			continue
 		}
 

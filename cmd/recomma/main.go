@@ -309,6 +309,7 @@ func main() {
 
 	statusClients := make(hl.StatusClientRegistry)
 	wsClients := make(map[recomma.VenueID]*ws.Client)
+	gateRegistry := make(map[rateGateKey]emitter.RateGate)
 	var venueOrder []recomma.VenueID
 	var venueClosers []func()
 
@@ -397,7 +398,15 @@ func main() {
 		}
 		venueClosers = append(venueClosers, closeVenue)
 
+		gateKey := rateGateKey{venueType: strings.ToLower(venue.Type), wallet: strings.ToLower(wallet)}
+		gate, exists := gateRegistry[gateKey]
+		if !exists {
+			gate = emitter.NewRateGate(0)
+			gateRegistry[gateKey] = gate
+		}
+
 		submitter := emitter.NewHyperLiquidEmitter(exchange, venueIdent, wsClient, store,
+			emitter.WithHyperLiquidRateGate(gate),
 			emitter.WithHyperLiquidEmitterConfig(emitter.HyperLiquidEmitterConfig{
 				InitialIOCOffsetBps: cfg.HyperliquidIOCInitialOffsetBps,
 			}),
@@ -452,6 +461,10 @@ func main() {
 	}
 	if constraintsInfo == nil {
 		fatal("load hyperliquid configuration", errors.New("unable to resolve constraints info client"))
+	}
+
+	if err := syncPrimaryVenueAssignments(appCtx, store, runtimeLogger, primaryIdent); err != nil {
+		fatal("sync primary venue assignments", err)
 	}
 
 	constraints := hl.NewOrderIdCache(constraintsInfo)
@@ -710,6 +723,66 @@ func cloneVenueFlags(src map[string]interface{}) map[string]interface{} {
 		dst[k] = v
 	}
 	return dst
+}
+
+type rateGateKey struct {
+	venueType string
+	wallet    string
+}
+
+func syncPrimaryVenueAssignments(
+	ctx context.Context,
+	store *storage.Storage,
+	logger *slog.Logger,
+	primaryVenue recomma.VenueID,
+) error {
+	if primaryVenue == "" {
+		return nil
+	}
+
+	opts := api.ListBotsOptions{Limit: 100}
+	for {
+		bots, next, err := store.ListBots(ctx, opts)
+		if err != nil {
+			return fmt.Errorf("list bots: %w", err)
+		}
+		if len(bots) == 0 {
+			break
+		}
+
+		for _, bot := range bots {
+			botID := int64(bot.Bot.Id)
+			if botID <= 0 {
+				continue
+			}
+
+			hasPrimary, err := store.HasPrimaryVenueAssignment(ctx, uint32(botID))
+			if err != nil {
+				return fmt.Errorf("check primary venue for bot %d: %w", botID, err)
+			}
+			if hasPrimary {
+				continue
+			}
+
+			if _, err := store.UpsertVenueAssignment(ctx, string(primaryVenue), botID, true); err != nil {
+				return fmt.Errorf("assign primary venue for bot %d: %w", botID, err)
+			}
+
+			if logger != nil {
+				logger.Debug("assigned primary venue to bot",
+					slog.Int64("bot_id", botID),
+					slog.String("venue", string(primaryVenue)),
+				)
+			}
+		}
+
+		if next == nil || *next == "" {
+			break
+		}
+		opts.PageToken = *next
+	}
+
+	return nil
 }
 
 func runWorker(ctx context.Context, wg *sync.WaitGroup, q workqueue.TypedRateLimitingInterface[engine.WorkKey], e *engine.Engine) {

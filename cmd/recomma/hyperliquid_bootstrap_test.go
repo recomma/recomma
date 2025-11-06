@@ -4,15 +4,19 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/emitter"
 	"github.com/recomma/recomma/hl"
 	"github.com/recomma/recomma/hl/ws"
+	api "github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/internal/vault"
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
 	"github.com/sonirico/go-hyperliquid"
+	"github.com/stretchr/testify/require"
 )
 
 type stubQueue struct {
@@ -187,4 +191,69 @@ func TestShouldUseSentinelDefaultHyperliquidWalletDetectsDuplicateWallet(t *test
 	if !shouldUseSentinelDefaultHyperliquidWallet(venues, recomma.VenueID("hyperliquid:primary"), "hl-primary-wallet", defaultIdent) {
 		t.Fatalf("expected sentinel wallet guard to activate when duplicate wallets exist")
 	}
+}
+
+func TestSyncPrimaryVenueAssignments(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStorage(t)
+
+	primary := recomma.VenueID("hyperliquid:primary")
+	_, err := store.UpsertVenue(ctx, string(primary), api.VenueUpsertRequest{
+		Type:        "hyperliquid",
+		DisplayName: "Primary",
+		Wallet:      "primary-wallet",
+	})
+	require.NoError(t, err)
+
+	secondary := recomma.VenueID("hyperliquid:secondary")
+	_, err = store.UpsertVenue(ctx, string(secondary), api.VenueUpsertRequest{
+		Type:        "hyperliquid",
+		DisplayName: "Secondary",
+		Wallet:      "secondary-wallet",
+	})
+	require.NoError(t, err)
+
+	now := time.Now().UTC()
+	require.NoError(t, store.RecordBot(ctx, tc.Bot{Id: 1}, now))
+	require.NoError(t, store.RecordBot(ctx, tc.Bot{Id: 2}, now))
+
+	// Pre-configure bot 2 with a primary venue so it remains untouched.
+	_, err = store.UpsertVenueAssignment(ctx, string(secondary), 2, true)
+	require.NoError(t, err)
+
+	require.NoError(t, syncPrimaryVenueAssignments(ctx, store, nil, primary))
+
+	venuesBot1, err := store.ListVenuesForBot(ctx, 1)
+	require.NoError(t, err)
+	require.NotEmpty(t, venuesBot1)
+	var bot1Primary recomma.VenueID
+	for _, v := range venuesBot1 {
+		if v.IsPrimary {
+			bot1Primary = v.VenueID
+			break
+		}
+	}
+	require.Equal(t, primary, bot1Primary)
+
+	venuesBot2, err := store.ListVenuesForBot(ctx, 2)
+	require.NoError(t, err)
+	require.NotEmpty(t, venuesBot2)
+	var bot2Primary recomma.VenueID
+	for _, v := range venuesBot2 {
+		if v.IsPrimary {
+			bot2Primary = v.VenueID
+			break
+		}
+	}
+	require.Equal(t, secondary, bot2Primary)
+}
+
+func newTestStorage(t *testing.T) *storage.Storage {
+	t.Helper()
+	store, err := storage.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	return store
 }

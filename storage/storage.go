@@ -154,6 +154,23 @@ func (s *Storage) UpsertBotVenueAssignment(ctx context.Context, botID uint32, ve
 	return s.queries.UpsertBotVenueAssignment(ctx, params)
 }
 
+// HasPrimaryVenueAssignment reports whether a bot already has a stored primary
+// venue assignment. Callers can use this to avoid overwriting operator
+// preferences when syncing secrets-derived defaults.
+func (s *Storage) HasPrimaryVenueAssignment(ctx context.Context, botID uint32) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.queries.GetPrimaryVenueForBot(ctx, int64(botID))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *Storage) upsertDefaultVenueLocked(ctx context.Context, wallet string) error {
 	if wallet == "" {
 		wallet = defaultHyperliquidWallet

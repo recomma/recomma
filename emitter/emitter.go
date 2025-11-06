@@ -118,9 +118,7 @@ type iocRetryOrderId struct {
 type HyperLiquidEmitter struct {
 	exchange     hyperliquidExchange
 	store        *storage.Storage
-	mu           sync.Mutex
-	nextAllowed  time.Time
-	minSpacing   time.Duration
+	gate         RateGate
 	logger       *slog.Logger
 	cfg          HyperLiquidEmitterConfig
 	wsMu         sync.RWMutex
@@ -132,8 +130,7 @@ func NewHyperLiquidEmitter(exchange hyperliquidExchange, primaryVenue recomma.Ve
 	emitter := &HyperLiquidEmitter{
 		exchange:     exchange,
 		store:        store,
-		nextAllowed:  time.Now(),
-		minSpacing:   300 * time.Millisecond,
+		gate:         NewRateGate(0),
 		logger:       slog.Default().WithGroup("hl-emitter"),
 		cfg:          defaultHyperLiquidEmitterConfig,
 		primaryVenue: primaryVenue,
@@ -165,6 +162,16 @@ func WithHyperLiquidEmitterLogger(logger *slog.Logger) HyperLiquidEmitterOption 
 func WithHyperLiquidEmitterConfig(cfg HyperLiquidEmitterConfig) HyperLiquidEmitterOption {
 	return func(e *HyperLiquidEmitter) {
 		e.cfg = cfg
+	}
+}
+
+// WithHyperLiquidRateGate injects a shared rate gate so emitters that target the
+// same upstream wallet coordinate pacing.
+func WithHyperLiquidRateGate(gate RateGate) HyperLiquidEmitterOption {
+	return func(e *HyperLiquidEmitter) {
+		if gate != nil {
+			e.gate = gate
+		}
 	}
 }
 
@@ -216,32 +223,17 @@ func (e *HyperLiquidEmitter) wsFor(venue recomma.VenueID) *ws.Client {
 // to avoid bursting into HL rate limits. It spaces calls by minSpacing,
 // and can be tightened by applying a longer cooldown when 429s are seen.
 func (e *HyperLiquidEmitter) waitTurn(ctx context.Context) error {
-	for {
-		e.mu.Lock()
-		wait := time.Until(e.nextAllowed)
-		if wait <= 0 {
-			// reserve our slot and release the lock
-			e.nextAllowed = time.Now().Add(e.minSpacing)
-			e.mu.Unlock()
-			return nil
-		}
-		e.mu.Unlock()
-		select {
-		case <-time.After(wait):
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+	if e.gate == nil {
+		return nil
 	}
+	return e.gate.Wait(ctx)
 }
 
 func (e *HyperLiquidEmitter) applyCooldown(d time.Duration) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	now := time.Now()
-	next := now.Add(d)
-	if next.After(e.nextAllowed) {
-		e.nextAllowed = next
+	if e.gate == nil {
+		return
 	}
+	e.gate.Cooldown(d)
 }
 
 func (e *HyperLiquidEmitter) setMarketPrice(ctx context.Context, wsClient *ws.Client, order hyperliquid.CreateOrderRequest) hyperliquid.CreateOrderRequest {

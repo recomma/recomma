@@ -1,12 +1,16 @@
 package hyperliquidmock_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"encoding/json"
+	"net/http"
 	"testing"
 	"time"
 
-	"github.com/recomma/recomma/hyperliquid-mock/server"
-	"github.com/recomma/recomma/hl"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/recomma/hyperliquid-mock/server"
 	"github.com/sonirico/go-hyperliquid"
 )
 
@@ -26,14 +30,27 @@ func TestRealHyperliquidIntegration(t *testing.T) {
 
 	// Configure Hyperliquid client to use mock server
 	ctx := context.Background()
-	exchange, err := hl.NewExchange(ctx, hl.ClientConfig{
-		BaseURL: ts.URL(), // Point to our mock server!
-		Wallet:  "0x0000000000000000000000000000000000000001",
-		Key:     "0000000000000000000000000000000000000000000000000000000000000001",
-	})
+
+	// Create a test private key
+	privateKey, err := crypto.HexToECDSA("0000000000000000000000000000000000000000000000000000000000000001")
 	if err != nil {
-		t.Fatalf("Failed to create exchange client: %v", err)
+		t.Fatalf("Failed to create private key: %v", err)
 	}
+
+	pub := privateKey.Public()
+	pubECDSA, _ := pub.(*ecdsa.PublicKey)
+	accountAddr := crypto.PubkeyToAddress(*pubECDSA).Hex()
+
+	// Create exchange client pointing to mock server
+	exchange := hyperliquid.NewExchange(
+		ctx,
+		privateKey,
+		ts.URL(), // Point to our mock server!
+		nil,      // Meta will be fetched
+		"",
+		accountAddr,
+		nil, // SpotMeta will be fetched
+	)
 
 	// Create an order using the real go-hyperliquid library
 	orderReq := hyperliquid.CreateOrderRequest{
@@ -99,18 +116,16 @@ func TestOrderModification(t *testing.T) {
 	ts := server.NewTestServer(t)
 	ctx := context.Background()
 
-	exchange, err := hl.NewExchange(ctx, hl.ClientConfig{
-		BaseURL: ts.URL(),
-		Wallet:  "0x0000000000000000000000000000000000000001",
-		Key:     "0000000000000000000000000000000000000000000000000000000000000001",
-	})
-	if err != nil {
-		t.Fatalf("Failed to create exchange: %v", err)
-	}
+	privateKey, _ := crypto.HexToECDSA("0000000000000000000000000000000000000000000000000000000000000001")
+	pub := privateKey.Public()
+	pubECDSA, _ := pub.(*ecdsa.PublicKey)
+	accountAddr := crypto.PubkeyToAddress(*pubECDSA).Hex()
+
+	exchange := hyperliquid.NewExchange(ctx, privateKey, ts.URL(), nil, "", accountAddr, nil)
 
 	// Create initial order
 	cloid := "test-modify-" + time.Now().Format("20060102150405")
-	_, err = exchange.Order(ctx, hyperliquid.CreateOrderRequest{
+	_, err := exchange.Order(ctx, hyperliquid.CreateOrderRequest{
 		Coin:  "BTC",
 		IsBuy: true,
 		Size:  0.5,
@@ -136,7 +151,7 @@ func TestOrderModification(t *testing.T) {
 
 	// Modify the order
 	_, err = exchange.ModifyOrder(ctx, hyperliquid.ModifyOrderRequest{
-		Oid: oidToHex(oid),
+		Oid: hyperliquid.OrderIdToHex(oid),
 		Order: hyperliquid.CreateOrderRequest{
 			Coin:  "BTC",
 			IsBuy: true,
@@ -176,18 +191,16 @@ func TestOrderCancellation(t *testing.T) {
 	ts := server.NewTestServer(t)
 	ctx := context.Background()
 
-	exchange, err := hl.NewExchange(ctx, hl.ClientConfig{
-		BaseURL: ts.URL(),
-		Wallet:  "0x0000000000000000000000000000000000000001",
-		Key:     "0000000000000000000000000000000000000000000000000000000000000001",
-	})
-	if err != nil {
-		t.Fatalf("Failed to create exchange: %v", err)
-	}
+	privateKey, _ := crypto.HexToECDSA("0000000000000000000000000000000000000000000000000000000000000001")
+	pub := privateKey.Public()
+	pubECDSA, _ := pub.(*ecdsa.PublicKey)
+	accountAddr := crypto.PubkeyToAddress(*pubECDSA).Hex()
+
+	exchange := hyperliquid.NewExchange(ctx, privateKey, ts.URL(), nil, "", accountAddr, nil)
 
 	// Create an order
 	cloid := "test-cancel-" + time.Now().Format("20060102150405")
-	_, err = exchange.Order(ctx, hyperliquid.CreateOrderRequest{
+	_, err := exchange.Order(ctx, hyperliquid.CreateOrderRequest{
 		Coin:  "SOL",
 		IsBuy: false,
 		Size:  10.0,
@@ -239,24 +252,16 @@ func TestQueryOrderStatus(t *testing.T) {
 	ts := server.NewTestServer(t)
 	ctx := context.Background()
 
-	// Create Info client (read-only queries)
-	info := hl.NewInfo(ctx, hl.ClientConfig{
-		BaseURL: ts.URL(),
-		Wallet:  "0x0000000000000000000000000000000000000001",
-	})
+	privateKey, _ := crypto.HexToECDSA("0000000000000000000000000000000000000000000000000000000000000001")
+	pub := privateKey.Public()
+	pubECDSA, _ := pub.(*ecdsa.PublicKey)
+	accountAddr := crypto.PubkeyToAddress(*pubECDSA).Hex()
 
-	// First, create an order so we have something to query
-	exchange, err := hl.NewExchange(ctx, hl.ClientConfig{
-		BaseURL: ts.URL(),
-		Wallet:  "0x0000000000000000000000000000000000000001",
-		Key:     "0000000000000000000000000000000000000000000000000000000000000001",
-	})
-	if err != nil {
-		t.Fatalf("Failed to create exchange: %v", err)
-	}
+	// Create exchange to make an order
+	exchange := hyperliquid.NewExchange(ctx, privateKey, ts.URL(), nil, "", accountAddr, nil)
 
 	cloid := "test-query-" + time.Now().Format("20060102150405")
-	_, err = exchange.Order(ctx, hyperliquid.CreateOrderRequest{
+	_, err := exchange.Order(ctx, hyperliquid.CreateOrderRequest{
 		Coin:  "ARB",
 		IsBuy: true,
 		Size:  100.0,
@@ -273,8 +278,11 @@ func TestQueryOrderStatus(t *testing.T) {
 	// Clear exchange request
 	ts.ClearRequests()
 
+	// Create Info client for read-only queries
+	info := hyperliquid.NewInfo(ctx, ts.URL(), false, nil, nil)
+
 	// Query the order status
-	result, err := info.QueryOrderByCloid(ctx, cloid)
+	result, err := info.QueryOrderByCloid(ctx, accountAddr, cloid)
 	if err != nil {
 		t.Fatalf("Failed to query order: %v", err)
 	}
@@ -304,22 +312,36 @@ func TestMetadataQueries(t *testing.T) {
 	ts := server.NewTestServer(t)
 	ctx := context.Background()
 
-	info := hl.NewInfo(ctx, hl.ClientConfig{
-		BaseURL: ts.URL(),
-		Wallet:  "0x0000000000000000000000000000000000000001",
-	})
+	// Create Info client for metadata queries
+	info := hyperliquid.NewInfo(ctx, ts.URL(), false, nil, nil)
 
-	// This would trigger metadata fetch inside the library
-	// The go-hyperliquid library auto-fetches metadata on initialization
-	// We can verify it hit our mock server
+	// Query perpetual futures metadata
+	meta, err := info.MetaAndAssetCtxs(ctx)
+	if err != nil {
+		t.Fatalf("Failed to fetch metadata: %v", err)
+	}
 
-	// For now, just verify info requests were made
-	// In a real test, you'd call methods that trigger metadata fetches
+	// Verify we got mock data back
+	if len(meta) == 0 {
+		t.Fatal("Expected metadata response")
+	}
+
+	if len(meta[0].Universe) == 0 {
+		t.Fatal("Expected universe data")
+	}
+
+	// Verify the request was captured
 	infoReqs := ts.GetInfoRequests()
+	foundMetaRequest := false
+	for _, req := range infoReqs {
+		if req.Type == "metaAndAssetCtxs" {
+			foundMetaRequest = true
+			break
+		}
+	}
 
-	// The library should have fetched metadata during initialization
-	if len(infoReqs) < 1 {
-		t.Logf("Note: go-hyperliquid library may have cached metadata")
+	if !foundMetaRequest {
+		t.Log("Note: Metadata may be cached by the library")
 	}
 }
 
@@ -330,7 +352,7 @@ func TestParallelTests(t *testing.T) {
 		ts := server.NewTestServer(t)
 
 		// Make requests specific to this test
-		makeTestOrder(t, ts, "ETH", 1.0, 3000.0)
+		makeTestOrderHTTP(t, ts, "ETH", 1.0, 3000.0)
 
 		if ts.RequestCount() != 1 {
 			t.Errorf("Test1: Expected 1 request, got %d", ts.RequestCount())
@@ -342,8 +364,8 @@ func TestParallelTests(t *testing.T) {
 		ts := server.NewTestServer(t)
 
 		// Make different requests
-		makeTestOrder(t, ts, "BTC", 0.5, 50000.0)
-		makeTestOrder(t, ts, "SOL", 10.0, 100.0)
+		makeTestOrderHTTP(t, ts, "BTC", 0.5, 50000.0)
+		makeTestOrderHTTP(t, ts, "SOL", 10.0, 100.0)
 
 		if ts.RequestCount() != 2 {
 			t.Errorf("Test2: Expected 2 requests, got %d", ts.RequestCount())
@@ -359,36 +381,46 @@ func strPtr(s string) *string {
 	return &s
 }
 
-func oidToHex(oid int64) string {
-	// Convert OID to hex string format
-	return hyperliquid.OrderIdToHex(oid)
-}
-
-func makeTestOrder(t *testing.T, ts *server.TestServer, coin string, size, price float64) {
+// makeTestOrderHTTP makes a raw HTTP request to create an order (for tests that don't use the library)
+func makeTestOrderHTTP(t *testing.T, ts *server.TestServer, coin string, size, price float64) {
 	t.Helper()
 
-	ctx := context.Background()
-	exchange, err := hl.NewExchange(ctx, hl.ClientConfig{
-		BaseURL: ts.URL(),
-		Wallet:  "0x0000000000000000000000000000000000000001",
-		Key:     "0000000000000000000000000000000000000000000000000000000000000001",
-	})
-	if err != nil {
-		t.Fatalf("Failed to create exchange: %v", err)
+	cloid := "test-" + coin + "-" + time.Now().Format("20060102150405")
+
+	payload := map[string]interface{}{
+		"action": map[string]interface{}{
+			"type": "order",
+			"orders": []map[string]interface{}{
+				{
+					"coin":     coin,
+					"is_buy":   true,
+					"sz":       size,
+					"limit_px": price,
+					"cloid":    cloid,
+					"order_type": map[string]interface{}{
+						"limit": map[string]interface{}{
+							"tif": "Gtc",
+						},
+					},
+				},
+			},
+		},
+		"nonce": time.Now().Unix(),
+		"signature": map[string]interface{}{
+			"r": "0x1234",
+			"s": "0x5678",
+			"v": 27,
+		},
 	}
 
-	cloid := "test-" + coin + "-" + time.Now().Format("20060102150405")
-	_, err = exchange.Order(ctx, hyperliquid.CreateOrderRequest{
-		Coin:  coin,
-		IsBuy: true,
-		Size:  size,
-		Price: price,
-		OrderType: hyperliquid.OrderType{
-			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
-		},
-		Cloid: &cloid,
-	}, nil)
+	body, _ := json.Marshal(payload)
+	resp, err := http.Post(ts.URL()+"/exchange", "application/json", bytes.NewReader(body))
 	if err != nil {
-		t.Fatalf("Failed to create order: %v", err)
+		t.Fatalf("Failed to make request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", resp.StatusCode)
 	}
 }

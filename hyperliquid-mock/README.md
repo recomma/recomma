@@ -11,9 +11,24 @@ A minimal Go implementation of the Hyperliquid API for E2E testing without requi
 
 ## Installation
 
+### As a standalone binary
+
 ```bash
+git clone https://github.com/recomma/hyperliquid-mock.git
 cd hyperliquid-mock
 go build -o hyperliquid-mock
+```
+
+### As a Go module (for testing)
+
+```bash
+go get github.com/recomma/hyperliquid-mock
+```
+
+Then import in your tests:
+
+```go
+import "github.com/recomma/hyperliquid-mock/server"
 ```
 
 ## Usage
@@ -154,29 +169,45 @@ The mock server can be embedded directly in your Go tests with automatic request
 
 ```go
 import (
+    "context"
+    "crypto/ecdsa"
     "testing"
-    "github.com/recomma/recomma/hyperliquid-mock/server"
-    "github.com/recomma/recomma/hl"
+
+    "github.com/ethereum/go-ethereum/crypto"
+    "github.com/recomma/hyperliquid-mock/server"
+    "github.com/sonirico/go-hyperliquid"
 )
 
 func TestMyHyperliquidCode(t *testing.T) {
     // Create isolated test server (auto-cleanup)
     ts := server.NewTestServer(t)
+    ctx := context.Background()
 
-    // Configure your client to use the mock
-    exchange, err := hl.NewExchange(ctx, hl.ClientConfig{
-        BaseURL: ts.URL(), // Use mock server URL
-        Wallet:  "0x...",
-        Key:     "...",
-    })
+    // Configure Hyperliquid client to use the mock
+    privateKey, _ := crypto.HexToECDSA("your-private-key-hex")
+    pub := privateKey.Public()
+    pubECDSA, _ := pub.(*ecdsa.PublicKey)
+    accountAddr := crypto.PubkeyToAddress(*pubECDSA).Hex()
+
+    exchange := hyperliquid.NewExchange(
+        ctx,
+        privateKey,
+        ts.URL(), // Use mock server URL
+        nil, "", accountAddr, nil,
+    )
 
     // Run your test code
-    status, err := exchange.Order(ctx, orderRequest, nil)
+    status, err := exchange.Order(ctx, hyperliquid.CreateOrderRequest{
+        Coin: "ETH", IsBuy: true, Size: 1.0, Price: 3000.0,
+        OrderType: hyperliquid.OrderType{
+            Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
+        },
+        Cloid: strPtr("my-cloid"),
+    }, nil)
 
     // Inspect what was sent to the mock server
     requests := ts.GetExchangeRequests()
     assert.Len(t, requests, 1)
-    assert.Equal(t, "ETH", extractCoin(requests[0]))
 
     // Check server state
     order, exists := ts.GetOrder("my-cloid")

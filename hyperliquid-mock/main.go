@@ -4,7 +4,7 @@ import (
 	"flag"
 	"log"
 
-	"github.com/recomma/recomma/hyperliquid-mock/server"
+	"github.com/recomma/hyperliquid-mock/server"
 )
 
 func main() {

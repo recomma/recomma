@@ -187,32 +187,45 @@ func TestMyHyperliquidCode(t *testing.T) {
     privateKey, _ := crypto.HexToECDSA("your-private-key-hex")
     pub := privateKey.Public()
     pubECDSA, _ := pub.(*ecdsa.PublicKey)
-    accountAddr := crypto.PubkeyToAddress(*pubECDSA).Hex()
+    walletAddr := crypto.PubkeyToAddress(*pubECDSA).Hex()
 
     exchange := hyperliquid.NewExchange(
         ctx,
         privateKey,
         ts.URL(), // Use mock server URL
-        nil, "", accountAddr, nil,
+        nil,      // meta
+        "",       // vaultAddr (empty for non-vault)
+        walletAddr,
+        nil,      // spotMeta
     )
 
     // Run your test code
+    cloid := "my-cloid"
     status, err := exchange.Order(ctx, hyperliquid.CreateOrderRequest{
-        Coin: "ETH", IsBuy: true, Size: 1.0, Price: 3000.0,
+        Coin:  "ETH",
+        IsBuy: true,
+        Size:  1.0,
+        Price: 3000.0,
         OrderType: hyperliquid.OrderType{
             Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
         },
-        Cloid: strPtr("my-cloid"),
+        ClientOrderID: &cloid,
     }, nil)
 
     // Inspect what was sent to the mock server
     requests := ts.GetExchangeRequests()
-    assert.Len(t, requests, 1)
+    if len(requests) != 1 {
+        t.Fatalf("Expected 1 request, got %d", len(requests))
+    }
 
     // Check server state
     order, exists := ts.GetOrder("my-cloid")
-    assert.True(t, exists)
-    assert.Equal(t, "open", order.Status)
+    if !exists {
+        t.Fatal("Order not found")
+    }
+    if order.Status != "open" {
+        t.Errorf("Expected status open, got %s", order.Status)
+    }
 }
 ```
 
@@ -291,7 +304,7 @@ assert.Equal(t, 1, ts.RequestCount())
 
 ### Example: Full Integration Test
 
-See `server/testserver_test.go` for complete working examples including:
+See `server/integration_test.go` for complete working examples including:
 - Testing with real go-hyperliquid library
 - Order creation, modification, cancellation
 - Order status queries

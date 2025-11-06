@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/recomma/recomma/hyperliquid-mock/server"
+	"github.com/recomma/hyperliquid-mock/server"
 )
 
 // TestServerIsolation demonstrates that each test gets its own isolated server

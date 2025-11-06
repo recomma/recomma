@@ -355,25 +355,24 @@ func (h *Handler) handleMeta() Meta {
 			{Name: "SOL", SzDecimals: 1, MaxLeverage: 20, MarginTableId: 2},
 			{Name: "ARB", SzDecimals: 0, MaxLeverage: 20, MarginTableId: 2},
 		},
-		MarginTables: []MarginTable{
-			{
-				ID:          1,
-				Description: "Standard",
-				MarginTiers: []MarginTier{
-					{LowerBound: "0", MaxLeverage: 50},
-					{LowerBound: "100000", MaxLeverage: 25},
-					{LowerBound: "500000", MaxLeverage: 10},
+		// MarginTables is an array of tuples: [[id, {description, marginTiers}], ...]
+		MarginTables: [][]interface{}{
+			{1, map[string]interface{}{
+				"description": "Standard",
+				"marginTiers": []map[string]interface{}{
+					{"lowerBound": "0.0", "maxLeverage": 50},
+					{"lowerBound": "100000.0", "maxLeverage": 25},
+					{"lowerBound": "500000.0", "maxLeverage": 10},
 				},
-			},
-			{
-				ID:          2,
-				Description: "Alt Coins",
-				MarginTiers: []MarginTier{
-					{LowerBound: "0", MaxLeverage: 20},
-					{LowerBound: "50000", MaxLeverage: 10},
-					{LowerBound: "200000", MaxLeverage: 5},
+			}},
+			{2, map[string]interface{}{
+				"description": "Alt Coins",
+				"marginTiers": []map[string]interface{}{
+					{"lowerBound": "0.0", "maxLeverage": 20},
+					{"lowerBound": "50000.0", "maxLeverage": 10},
+					{"lowerBound": "200000.0", "maxLeverage": 5},
 				},
-			},
+			}},
 		},
 	}
 }

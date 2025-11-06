@@ -104,9 +104,10 @@ type SpotMetaAndAssetCtxs struct {
 }
 
 // Meta is the response for the "meta" info type (simpler than metaAndAssetCtxs)
+// MarginTables is an array of tuples: [[id, {description, marginTiers}], ...]
 type Meta struct {
-	Universe     []AssetInfo   `json:"universe"`
-	MarginTables []MarginTable `json:"marginTables,omitempty"`
+	Universe     []AssetInfo     `json:"universe"`
+	MarginTables [][]interface{} `json:"marginTables,omitempty"`
 }
 
 // AssetInfo contains basic asset information for the meta endpoint

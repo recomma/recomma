@@ -16,6 +16,19 @@ type OrderWork struct {
 	BotEvent BotEvent
 }
 
+type VenueID string
+
+// OrderIdentifier uniquely identifies an order submission within a venue.
+//
+// Venue-aware components should rely on the venue and wallet fields for
+// aggregation or routing rather than the opaque OrderId, which is kept for
+// backwards compatibility with existing identifiers.
+type OrderIdentifier struct {
+	VenueID VenueID
+	Wallet  string
+	OrderId orderid.OrderId
+}
+
 type Emitter interface {
 	Emit(ctx context.Context, w OrderWork) error
 }

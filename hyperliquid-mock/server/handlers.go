@@ -269,74 +269,70 @@ func (h *Handler) handleOrderStatus(req InfoRequest) OrderQueryResult {
 }
 
 // handleMetaAndAssetCtxs returns mock perpetual futures metadata
-func (h *Handler) handleMetaAndAssetCtxs() []MetaAndAssetCtxs {
-	return []MetaAndAssetCtxs{
-		{
-			Universe: []MetaUniverse{
-				{Name: "BTC", SzDecimals: 5},
-				{Name: "ETH", SzDecimals: 4},
-				{Name: "SOL", SzDecimals: 1},
-				{Name: "ARB", SzDecimals: 0},
+func (h *Handler) handleMetaAndAssetCtxs() MetaAndAssetCtxs {
+	return MetaAndAssetCtxs{
+		Universe: []MetaUniverse{
+			{Name: "BTC", SzDecimals: 5},
+			{Name: "ETH", SzDecimals: 4},
+			{Name: "SOL", SzDecimals: 1},
+			{Name: "ARB", SzDecimals: 0},
+		},
+		AssetCtxs: []AssetCtx{
+			{
+				Funding:      "0.0001",
+				OpenInterest: "1000000",
+				PrevDayPx:    "50000",
+				DayNtlVlm:    "100000000",
+				Premium:      "0.0005",
+				OraclePx:     "50123.45",
+				MarkPx:       "50125.00",
+				MidPx:        "50124.00",
 			},
-			AssetCtxs: []AssetCtx{
-				{
-					Funding:      "0.0001",
-					OpenInterest: "1000000",
-					PrevDayPx:    "50000",
-					DayNtlVlm:    "100000000",
-					Premium:      "0.0005",
-					OraclePx:     "50123.45",
-					MarkPx:       "50125.00",
-					MidPx:        "50124.00",
-				},
-				{
-					Funding:      "0.00015",
-					OpenInterest: "500000",
-					PrevDayPx:    "3000",
-					DayNtlVlm:    "50000000",
-					Premium:      "0.0003",
-					OraclePx:     "3012.34",
-					MarkPx:       "3013.00",
-					MidPx:        "3012.50",
-				},
-				{
-					Funding:      "0.0002",
-					OpenInterest: "100000",
-					PrevDayPx:    "100",
-					DayNtlVlm:    "10000000",
-					Premium:      "0.0002",
-					OraclePx:     "101.23",
-					MarkPx:       "101.25",
-					MidPx:        "101.24",
-				},
-				{
-					Funding:      "0.0001",
-					OpenInterest: "50000",
-					PrevDayPx:    "1.5",
-					DayNtlVlm:    "5000000",
-					Premium:      "0.0001",
-					OraclePx:     "1.51",
-					MarkPx:       "1.52",
-					MidPx:        "1.515",
-				},
+			{
+				Funding:      "0.00015",
+				OpenInterest: "500000",
+				PrevDayPx:    "3000",
+				DayNtlVlm:    "50000000",
+				Premium:      "0.0003",
+				OraclePx:     "3012.34",
+				MarkPx:       "3013.00",
+				MidPx:        "3012.50",
+			},
+			{
+				Funding:      "0.0002",
+				OpenInterest: "100000",
+				PrevDayPx:    "100",
+				DayNtlVlm:    "10000000",
+				Premium:      "0.0002",
+				OraclePx:     "101.23",
+				MarkPx:       "101.25",
+				MidPx:        "101.24",
+			},
+			{
+				Funding:      "0.0001",
+				OpenInterest: "50000",
+				PrevDayPx:    "1.5",
+				DayNtlVlm:    "5000000",
+				Premium:      "0.0001",
+				OraclePx:     "1.51",
+				MarkPx:       "1.52",
+				MidPx:        "1.515",
 			},
 		},
 	}
 }
 
 // handleSpotMetaAndAssetCtxs returns mock spot trading metadata
-func (h *Handler) handleSpotMetaAndAssetCtxs() []SpotMetaAndAssetCtxs {
-	return []SpotMetaAndAssetCtxs{
-		{
-			Tokens: []SpotToken{
-				{Name: "USDC", SzDecimals: 6, WeiDecimals: 6, Index: 0, TokenId: "0x1", IsCanonical: true},
-				{Name: "BTC", SzDecimals: 8, WeiDecimals: 8, Index: 1, TokenId: "0x2", IsCanonical: true},
-				{Name: "ETH", SzDecimals: 18, WeiDecimals: 18, Index: 2, TokenId: "0x3", IsCanonical: true},
-			},
-			Universe: []SpotUniverse{
-				{Tokens: []int{1, 0}, Name: "BTC/USDC", Index: 0},
-				{Tokens: []int{2, 0}, Name: "ETH/USDC", Index: 1},
-			},
+func (h *Handler) handleSpotMetaAndAssetCtxs() SpotMetaAndAssetCtxs {
+	return SpotMetaAndAssetCtxs{
+		Tokens: []SpotToken{
+			{Name: "USDC", SzDecimals: 6, WeiDecimals: 6, Index: 0, TokenId: "0x1", IsCanonical: true},
+			{Name: "BTC", SzDecimals: 8, WeiDecimals: 8, Index: 1, TokenId: "0x2", IsCanonical: true},
+			{Name: "ETH", SzDecimals: 18, WeiDecimals: 18, Index: 2, TokenId: "0x3", IsCanonical: true},
+		},
+		Universe: []SpotUniverse{
+			{Tokens: []int{1, 0}, Name: "BTC/USDC", Index: 0},
+			{Tokens: []int{2, 0}, Name: "ETH/USDC", Index: 1},
 		},
 	}
 }

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
@@ -26,6 +27,17 @@ type capturingEmitter struct {
 func (c *capturingEmitter) Emit(_ context.Context, w recomma.OrderWork) error {
 	c.items = append(c.items, w)
 	return nil
+}
+
+type failingEmitter struct {
+	err error
+}
+
+func (f *failingEmitter) Emit(context.Context, recomma.OrderWork) error {
+	if f.err == nil {
+		return nil
+	}
+	return f.err
 }
 
 type staticConstraints struct {
@@ -208,6 +220,29 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestProcessDeal_ReturnsErrorWhenEmitterFails(t *testing.T) {
+	t.Parallel()
+
+	const (
+		botID  = uint32(99)
+		dealID = uint32(101)
+	)
+
+	h := newHarness(t, botID, dealID)
+	defer h.store.Close()
+
+	// Replace the harness emitter with one that always fails.
+	emitErr := errors.New("emitter unavailable")
+	h.engine.emitter = &failingEmitter{err: emitErr}
+
+	// Seed a create event so the engine will attempt to emit work.
+	evt, _ := testutil.NewBotEvent(t, time.Now(), botID, dealID)
+
+	err := h.engine.processDeal(h.ctx, h.key, h.deal.ToCurrency, []tc.BotEvent{evt})
+	require.Error(t, err)
+	require.ErrorIs(t, err, emitErr)
 }
 
 func TestProcessDeal_TakeProfitSizedFromTracker(t *testing.T) {

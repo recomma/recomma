@@ -302,7 +302,7 @@ func TestMultiWalletConcurrentBBOSubscriptions(t *testing.T) {
 			defer wg.Done()
 
 			wallet := fmt.Sprintf("0xwallet%d", idx)
-			venueID := recomma.VenueID(idx + 1)
+			venueID := recomma.VenueID(fmt.Sprintf("test-venue-%d", idx+1))
 
 			wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
 			if err != nil {
@@ -367,7 +367,7 @@ func TestMultiWalletOrderAndBBOConcurrent(t *testing.T) {
 			defer wg.Done()
 
 			wallet := fmt.Sprintf("0xwallet%d", idx)
-			venueID := recomma.VenueID(idx + 1)
+			venueID := recomma.VenueID(fmt.Sprintf("test-venue-%d", idx+1))
 
 			wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
 			require.NoError(t, err)

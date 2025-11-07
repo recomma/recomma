@@ -200,6 +200,43 @@ func TestReconcileTakeProfits(t *testing.T) {
 	require.WithinDuration(t, now.Add(-2*time.Minute), snapshot.ActiveTakeProfit.StatusTime, time.Second)
 }
 
+func TestCalculateVenuePositionsGroupsByVenueAndWallet(t *testing.T) {
+	t.Parallel()
+
+	svc := &Service{}
+	snapshot := DealSnapshot{
+		Orders: []OrderSnapshot{
+			{
+				Identifier: recomma.OrderIdentifier{VenueID: "hl", Wallet: "0xabc"},
+				Side:       "BUY",
+				FilledQty:  3,
+			},
+			{
+				Identifier: recomma.OrderIdentifier{VenueID: "hl", Wallet: "0xabc"},
+				Side:       "SELL",
+				FilledQty:  1,
+			},
+			{
+				Identifier: recomma.OrderIdentifier{VenueID: "hl", Wallet: "0xdef"},
+				Side:       "B",
+				FilledQty:  2,
+			},
+			{
+				Identifier: recomma.OrderIdentifier{VenueID: "spot", Wallet: "0xdef"},
+				Side:       "S",
+				FilledQty:  2,
+			},
+		},
+	}
+
+	positions := svc.calculateVenuePositions(snapshot)
+
+	require.Len(t, positions, 3)
+	require.InDelta(t, 2, positions[venueKey{venue: "hl", wallet: "0xabc"}], 1e-6)
+	require.InDelta(t, 2, positions[venueKey{venue: "hl", wallet: "0xdef"}], 1e-6)
+	require.InDelta(t, -2, positions[venueKey{venue: "spot", wallet: "0xdef"}], 1e-6)
+}
+
 func TestApplyScaledOrderUpdatesSnapshot(t *testing.T) {
 	t.Parallel()
 

@@ -737,7 +737,10 @@ func (o *orderState) snapshot() OrderSnapshot {
 	}
 
 	return OrderSnapshot{
-		OrderId:        o.oid,
+		OrderId: o.oid,
+		Identifier: recomma.OrderIdentifier{
+			OrderId: o.oid,
+		},
 		Coin:           o.coin,
 		OrderType:      o.orderType,
 		Side:           o.side,
@@ -900,8 +903,9 @@ type DealPosition struct {
 
 // OrderSnapshot describes a single order tracked by the fill tracker.
 type OrderSnapshot struct {
-	OrderId orderid.OrderId
-	Coin    string
+	OrderId    orderid.OrderId
+	Identifier recomma.OrderIdentifier
+	Coin       string
 
 	OrderType string
 	Side      string
@@ -920,6 +924,35 @@ type OrderSnapshot struct {
 	LastUpdate time.Time
 
 	Event *tc.BotEvent
+}
+
+func (o OrderSnapshot) isBuy() bool {
+	return strings.EqualFold(o.Side, "B") || strings.EqualFold(o.Side, "BUY")
+}
+
+type venueKey struct {
+	venue  recomma.VenueID
+	wallet string
+}
+
+func (s *Service) calculateVenuePositions(snapshot DealSnapshot) map[venueKey]float64 {
+	positions := make(map[venueKey]float64)
+
+	for _, order := range snapshot.Orders {
+		if math.Abs(order.FilledQty) <= floatTolerance {
+			continue
+		}
+
+		key := venueKey{venue: order.Identifier.VenueID, wallet: order.Identifier.Wallet}
+		if order.isBuy() {
+			positions[key] += order.FilledQty
+			continue
+		}
+
+		positions[key] -= order.FilledQty
+	}
+
+	return positions
 }
 
 func parseFloat(in string) (float64, error) {

@@ -286,7 +286,7 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 			work.BotEvent = *latestEvent
 		}
 		if err := e.emitter.Emit(ctx, work); err != nil {
-			e.logger.Warn("could not submit order", slog.Any("orderid", oid), slog.Any("action", action), slog.String("error", err.Error()))
+			return fmt.Errorf("emit order %s: %w", oid.Hex(), err)
 		}
 	}
 

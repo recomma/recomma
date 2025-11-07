@@ -22,8 +22,6 @@ import (
 func TestFillTrackerWithHyperliquidStatusUpdates(t *testing.T) {
 	t.Parallel()
 
-	t.Skip("mock server lacks fill simulation support for fill tracker integration coverage")
-
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)
 	store := newHyperliquidTestStore(t)
@@ -97,8 +95,6 @@ func TestFillTrackerWithHyperliquidStatusUpdates(t *testing.T) {
 // TestFillTrackerPartialFillsFromHyperliquid tests tracking of partial fills
 func TestFillTrackerPartialFillsFromHyperliquid(t *testing.T) {
 	t.Parallel()
-
-	t.Skip("mock server lacks partial fill simulation for fill tracker integration coverage")
 
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)
@@ -180,8 +176,6 @@ func TestFillTrackerPartialFillsFromHyperliquid(t *testing.T) {
 // TestFillTrackerTakeProfitCancellation tests take profit handling with real HyperLiquid status
 func TestFillTrackerTakeProfitCancellation(t *testing.T) {
 	t.Parallel()
-
-	t.Skip("mock server lacks fill simulation for take profit integration coverage")
 
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)
@@ -292,8 +286,6 @@ func TestFillTrackerTakeProfitCancellation(t *testing.T) {
 // TestFillTrackerMultipleOrdersFromHyperliquid tests tracking multiple concurrent orders
 func TestFillTrackerMultipleOrdersFromHyperliquid(t *testing.T) {
 	t.Parallel()
-
-	t.Skip("mock server lacks fill simulation for multi-order integration coverage")
 
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)
@@ -433,6 +425,10 @@ func makeStatusFromMockOrder(ts *mockserver.TestServer, oid orderid.OrderId, coi
 
 	// Parse order details from mock server response
 	sz, _ := strconv.ParseFloat(storedOrder.Order.Sz, 64)
+	origSz := storedOrder.Order.OrigSz
+	if origSz == "" {
+		origSz = storedOrder.Order.Sz
+	}
 
 	var status hyperliquid.OrderStatusValue
 	switch storedOrder.Status {
@@ -460,7 +456,7 @@ func makeStatusFromMockOrder(ts *mockserver.TestServer, oid orderid.OrderId, coi
 			Sz:        formatFloat(remainingSz),
 			Oid:       storedOrder.Order.Oid,
 			Timestamp: time.Now().UnixMilli(),
-			OrigSz:    storedOrder.Order.Sz,
+			OrigSz:    origSz,
 			Cloid:     &cloid,
 		},
 		Status:          status,
@@ -488,9 +484,11 @@ func simulateOrderFill(t *testing.T, ts *mockserver.TestServer, cloid string, pr
 			opt(&args)
 		}
 	}
-	sizeDesc := "full"
+	var fillOpts []mockserver.FillOption
 	if args.filledSize != nil {
-		sizeDesc = strconv.FormatFloat(*args.filledSize, 'f', -1, 64)
+		fillOpts = append(fillOpts, mockserver.WithFillSize(*args.filledSize))
 	}
-	t.Fatalf("mock server fill simulation not implemented: update to call TestServer.FillOrder when available (cloid=%s price=%.8f size=%s)", cloid, price, sizeDesc)
+	if err := ts.FillOrder(cloid, price, fillOpts...); err != nil {
+		t.Fatalf("mock server fill simulation failed: %v", err)
+	}
 }

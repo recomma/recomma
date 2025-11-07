@@ -114,8 +114,6 @@ func TestInfoQueryCanceledOrder(t *testing.T) {
 func TestInfoQueryFilledOrder(t *testing.T) {
 	t.Parallel()
 
-	t.Skip("filled order simulation not supported by mock server")
-
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)
 
@@ -154,8 +152,6 @@ func TestInfoQueryFilledOrder(t *testing.T) {
 
 func TestInfoQueryPartiallyFilledOrder(t *testing.T) {
 	t.Parallel()
-
-	t.Skip("partial fill simulation not supported by mock server")
 
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)
@@ -287,10 +283,22 @@ func TestInfoQueryOrderConversionToWsOrder(t *testing.T) {
 
 func simulateOrderFilled(t *testing.T, ts *mockserver.TestServer, cloid string, price float64, size float64) {
 	t.Helper()
-	t.Fatalf("mock server fill simulation not implemented: update to call TestServer.FillOrder when available (cloid=%s price=%.8f size=%.8f)", cloid, price, size)
+	var opts []mockserver.FillOption
+	if size > 0 {
+		opts = append(opts, mockserver.WithFillSize(size))
+	}
+	if err := ts.FillOrder(cloid, price, opts...); err != nil {
+		t.Fatalf("mock server fill simulation failed: %v", err)
+	}
 }
 
 func simulateOrderPartiallyFilled(t *testing.T, ts *mockserver.TestServer, cloid string, price float64, filledSize float64) {
 	t.Helper()
-	t.Fatalf("mock server partial fill simulation not implemented: update to call TestServer.FillOrder when available (cloid=%s price=%.8f filledSize=%.8f)", cloid, price, filledSize)
+	var opts []mockserver.FillOption
+	if filledSize > 0 {
+		opts = append(opts, mockserver.WithFillSize(filledSize))
+	}
+	if err := ts.FillOrder(cloid, price, opts...); err != nil {
+		t.Fatalf("mock server partial fill simulation failed: %v", err)
+	}
 }

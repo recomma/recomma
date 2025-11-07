@@ -241,6 +241,8 @@ github.com/recomma/hyperliquid-mock v0.0.0-20251106223503-dea2f9c00088 h1:a+Qkn7
 github.com/recomma/hyperliquid-mock v0.0.0-20251106223503-dea2f9c00088/go.mod h1:KTOo4H1/VfhtWm2ecYKKQR+G4UoxUDJeGBo4+f54K6I=
 github.com/recomma/hyperliquid-mock v0.0.0-20251106223712-375d3e44a6cd h1:QURgjQphsNkTXiVuv4lAwGYvYRj1ysApYCJjAziYmrA=
 github.com/recomma/hyperliquid-mock v0.0.0-20251106223712-375d3e44a6cd/go.mod h1:KTOo4H1/VfhtWm2ecYKKQR+G4UoxUDJeGBo4+f54K6I=
+github.com/recomma/hyperliquid-mock v0.0.1 h1:IaNf97mnli+UK2V56b4zoZURuXNg0N7eJVwd4fFd/ZI=
+github.com/recomma/hyperliquid-mock v0.0.1/go.mod h1:KTOo4H1/VfhtWm2ecYKKQR+G4UoxUDJeGBo4+f54K6I=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
 github.com/rivo/uniseg v0.4.7 h1:WUdvkW8uEhrYfLC4ZzdpI2ztxP1I582+49Oc5Mq64VQ=

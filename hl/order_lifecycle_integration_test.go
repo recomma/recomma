@@ -53,6 +53,16 @@ func TestOrderLifecycleCreateAndQuery(t *testing.T) {
 	require.Equal(t, "BTC", result.Order.Order.Coin)
 }
 
+func TestOrderLifecycleCreateFillCancel(t *testing.T) {
+	t.Skip("fill and cancel simulation not yet supported by mock server")
+	t.Parallel()
+}
+
+func TestOrderLifecyclePartialFill(t *testing.T) {
+	t.Skip("partial fill simulation not supported by mock server")
+	t.Parallel()
+}
+
 func TestOrderLifecycleCancelOrder(t *testing.T) {
 	t.Parallel()
 

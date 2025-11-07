@@ -21,10 +21,11 @@ func TestHyperLiquidEmitterModifyOrder(t *testing.T) {
 	exchange, ts := newMockExchangeWithServer(t, nil)
 	store := newModifyTestStore(t)
 
-	emitter := NewHyperLiquidEmitter(exchange, nil, store)
+	emitter := NewHyperLiquidEmitter(exchange, "hyperliquid:default", nil, store)
 
 	// Create initial order
 	oid := orderid.OrderId{BotID: 1, DealID: 2, BotEventID: 3}
+	ident := storage.DefaultHyperliquidIdentifier(oid)
 	cloid := oid.Hex()
 	originalOrder := hyperliquid.CreateOrderRequest{
 		Coin:          "BTC",
@@ -38,9 +39,10 @@ func TestHyperLiquidEmitterModifyOrder(t *testing.T) {
 	}
 
 	createWork := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionCreate, Create: &originalOrder},
-		BotEvent: recomma.BotEvent{RowID: 1},
+		Identifier: ident,
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: originalOrder},
+		BotEvent:   recomma.BotEvent{RowID: 1},
 	}
 
 	require.NoError(t, emitter.Emit(ctx, createWork))
@@ -71,9 +73,10 @@ func TestHyperLiquidEmitterModifyOrder(t *testing.T) {
 	}
 
 	modifyWork := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionModify, Modify: &modifyReq},
-		BotEvent: recomma.BotEvent{RowID: 2},
+		Identifier: ident,
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionModify, Modify: modifyReq},
+		BotEvent:   recomma.BotEvent{RowID: 2},
 	}
 
 	require.NoError(t, emitter.Emit(ctx, modifyWork))
@@ -89,7 +92,7 @@ func TestHyperLiquidEmitterModifyOrder(t *testing.T) {
 	require.InDelta(t, 1.5, modifiedSize, 1e-6)
 
 	// Verify modification was persisted
-	action, found, err := store.LoadHyperliquidSubmission(ctx, oid)
+	action, found, err := store.LoadHyperliquidSubmission(ctx, ident)
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, recomma.ActionModify, action.Type)
@@ -105,9 +108,10 @@ func TestHyperLiquidEmitterModifyThenFill(t *testing.T) {
 	exchange, ts := newMockExchangeWithServer(t, nil)
 	store := newModifyTestStore(t)
 
-	emitter := NewHyperLiquidEmitter(exchange, nil, store)
+	emitter := NewHyperLiquidEmitter(exchange, "hyperliquid:default", nil, store)
 
 	oid := orderid.OrderId{BotID: 10, DealID: 20, BotEventID: 30}
+	ident := storage.DefaultHyperliquidIdentifier(oid)
 	cloid := oid.Hex()
 	order := hyperliquid.CreateOrderRequest{
 		Coin:          "ETH",
@@ -121,9 +125,10 @@ func TestHyperLiquidEmitterModifyThenFill(t *testing.T) {
 	}
 
 	createWork := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionCreate, Create: &order},
-		BotEvent: recomma.BotEvent{RowID: 1},
+		Identifier: ident,
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent:   recomma.BotEvent{RowID: 1},
 	}
 
 	require.NoError(t, emitter.Emit(ctx, createWork))
@@ -147,9 +152,10 @@ func TestHyperLiquidEmitterModifyThenFill(t *testing.T) {
 	}
 
 	modifyWork := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionModify, Modify: &modifyReq},
-		BotEvent: recomma.BotEvent{RowID: 2},
+		Identifier: ident,
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionModify, Modify: modifyReq},
+		BotEvent:   recomma.BotEvent{RowID: 2},
 	}
 
 	require.NoError(t, emitter.Emit(ctx, modifyWork))
@@ -169,9 +175,10 @@ func TestHyperLiquidEmitterModifyThenCancel(t *testing.T) {
 	exchange, ts := newMockExchangeWithServer(t, nil)
 	store := newModifyTestStore(t)
 
-	emitter := NewHyperLiquidEmitter(exchange, nil, store)
+	emitter := NewHyperLiquidEmitter(exchange, "hyperliquid:default", nil, store)
 
 	oid := orderid.OrderId{BotID: 100, DealID: 200, BotEventID: 300}
+	ident := storage.DefaultHyperliquidIdentifier(oid)
 	cloid := oid.Hex()
 	order := hyperliquid.CreateOrderRequest{
 		Coin:          "SOL",
@@ -185,9 +192,10 @@ func TestHyperLiquidEmitterModifyThenCancel(t *testing.T) {
 	}
 
 	createWork := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionCreate, Create: &order},
-		BotEvent: recomma.BotEvent{RowID: 1},
+		Identifier: ident,
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent:   recomma.BotEvent{RowID: 1},
 	}
 
 	require.NoError(t, emitter.Emit(ctx, createWork))
@@ -211,9 +219,10 @@ func TestHyperLiquidEmitterModifyThenCancel(t *testing.T) {
 	}
 
 	modifyWork := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionModify, Modify: &modifyReq},
-		BotEvent: recomma.BotEvent{RowID: 2},
+		Identifier: ident,
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionModify, Modify: modifyReq},
+		BotEvent:   recomma.BotEvent{RowID: 2},
 	}
 
 	require.NoError(t, emitter.Emit(ctx, modifyWork))
@@ -225,9 +234,10 @@ func TestHyperLiquidEmitterModifyThenCancel(t *testing.T) {
 	}
 
 	cancelWork := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionCancel, Cancel: &cancelReq},
-		BotEvent: recomma.BotEvent{RowID: 3},
+		Identifier: ident,
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCancel, Cancel: cancelReq},
+		BotEvent:   recomma.BotEvent{RowID: 3},
 	}
 
 	require.NoError(t, emitter.Emit(ctx, cancelWork))
@@ -244,9 +254,10 @@ func TestHyperLiquidEmitterMultipleModifications(t *testing.T) {
 	exchange, ts := newMockExchangeWithServer(t, nil)
 	store := newModifyTestStore(t)
 
-	emitter := NewHyperLiquidEmitter(exchange, nil, store)
+	emitter := NewHyperLiquidEmitter(exchange, "hyperliquid:default", nil, store)
 
 	oid := orderid.OrderId{BotID: 500, DealID: 600, BotEventID: 700}
+	ident := storage.DefaultHyperliquidIdentifier(oid)
 	cloid := oid.Hex()
 	order := hyperliquid.CreateOrderRequest{
 		Coin:          "ARB",
@@ -260,9 +271,10 @@ func TestHyperLiquidEmitterMultipleModifications(t *testing.T) {
 	}
 
 	createWork := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionCreate, Create: &order},
-		BotEvent: recomma.BotEvent{RowID: 1},
+		Identifier: ident,
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent:   recomma.BotEvent{RowID: 1},
 	}
 
 	require.NoError(t, emitter.Emit(ctx, createWork))
@@ -286,9 +298,10 @@ func TestHyperLiquidEmitterMultipleModifications(t *testing.T) {
 	}
 
 	modifyWork1 := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionModify, Modify: &modifyReq1},
-		BotEvent: recomma.BotEvent{RowID: 2},
+		Identifier: ident,
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionModify, Modify: modifyReq1},
+		BotEvent:   recomma.BotEvent{RowID: 2},
 	}
 
 	require.NoError(t, emitter.Emit(ctx, modifyWork1))
@@ -313,9 +326,10 @@ func TestHyperLiquidEmitterMultipleModifications(t *testing.T) {
 	}
 
 	modifyWork2 := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionModify, Modify: &modifyReq2},
-		BotEvent: recomma.BotEvent{RowID: 3},
+		Identifier: ident,
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionModify, Modify: modifyReq2},
+		BotEvent:   recomma.BotEvent{RowID: 3},
 	}
 
 	require.NoError(t, emitter.Emit(ctx, modifyWork2))
@@ -338,10 +352,11 @@ func TestHyperLiquidEmitterModifyReduceOnlyOrder(t *testing.T) {
 	exchange, ts := newMockExchangeWithServer(t, nil)
 	store := newModifyTestStore(t)
 
-	emitter := NewHyperLiquidEmitter(exchange, nil, store)
+	emitter := NewHyperLiquidEmitter(exchange, "hyperliquid:default", nil, store)
 
 	// Create a reduce-only order (e.g., take profit)
 	oid := orderid.OrderId{BotID: 1000, DealID: 2000, BotEventID: 3000}
+	ident := storage.DefaultHyperliquidIdentifier(oid)
 	cloid := oid.Hex()
 	order := hyperliquid.CreateOrderRequest{
 		Coin:          "BTC",
@@ -356,9 +371,10 @@ func TestHyperLiquidEmitterModifyReduceOnlyOrder(t *testing.T) {
 	}
 
 	createWork := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionCreate, Create: &order},
-		BotEvent: recomma.BotEvent{RowID: 1},
+		Identifier: ident,
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent:   recomma.BotEvent{RowID: 1},
 	}
 
 	require.NoError(t, emitter.Emit(ctx, createWork))
@@ -382,9 +398,10 @@ func TestHyperLiquidEmitterModifyReduceOnlyOrder(t *testing.T) {
 	}
 
 	modifyWork := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionModify, Modify: &modifyReq},
-		BotEvent: recomma.BotEvent{RowID: 2},
+		Identifier: ident,
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionModify, Modify: modifyReq},
+		BotEvent:   recomma.BotEvent{RowID: 2},
 	}
 
 	require.NoError(t, emitter.Emit(ctx, modifyWork))

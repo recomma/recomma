@@ -12,6 +12,7 @@ import (
 	mockserver "github.com/recomma/hyperliquid-mock/server"
 	"github.com/recomma/recomma/hl"
 	"github.com/recomma/recomma/orderid"
+	"github.com/recomma/recomma/recomma"
 	"github.com/sonirico/go-hyperliquid"
 	"github.com/stretchr/testify/require"
 )
@@ -63,19 +64,25 @@ func TestStatusRefresherWithMockServer(t *testing.T) {
 	require.NoError(t, err)
 
 	// Record orders in storage
-	store.RecordOrder(oid1)
-	store.RecordOrder(oid2)
+	ident1 := testIdentifier(oid1)
+	ident2 := testIdentifier(oid2)
+	store.RecordOrder(ident1)
+	store.RecordOrder(ident2)
 
 	// Run status refresh
-	refresher := hl.NewStatusRefresher(info, store, hl.WithStatusRefresherConcurrency(2))
+	refresher := hl.NewStatusRefresher(
+		hl.StatusClientRegistry{hyperliquidTestVenue: info},
+		store,
+		hl.WithStatusRefresherConcurrency(2),
+	)
 	require.NoError(t, refresher.Refresh(ctx))
 
 	// Verify statuses were stored
-	status1, found := store.Status(oid1)
+	status1, found := store.Status(ident1)
 	require.True(t, found, "expected status1 to be stored")
 	require.Equal(t, "BTC", status1.Order.Coin)
 
-	status2, found := store.Status(oid2)
+	status2, found := store.Status(ident2)
 	require.True(t, found, "expected status2 to be stored")
 	require.Equal(t, "ETH", status2.Order.Coin)
 }
@@ -88,7 +95,8 @@ func TestStatusRefresherHandlesFilledOrders(t *testing.T) {
 
 	oid := orderid.OrderId{BotID: 5, DealID: 10, BotEventID: 15}
 	cloid := oid.Hex()
-	store.RecordOrder(oid)
+	ident := testIdentifier(oid)
+	store.RecordOrder(ident)
 
 	filledOrder := hyperliquid.OrderQueryResponse{
 		Status: hyperliquid.OrderStatusValueFilled,
@@ -112,10 +120,13 @@ func TestStatusRefresherHandlesFilledOrders(t *testing.T) {
 		},
 	}
 
-	refresher := hl.NewStatusRefresher(info, store)
+	refresher := hl.NewStatusRefresher(
+		hl.StatusClientRegistry{hyperliquidTestVenue: info},
+		store,
+	)
 	require.NoError(t, refresher.Refresh(ctx))
 
-	status, found := store.Status(oid)
+	status, found := store.Status(ident)
 	require.True(t, found)
 	require.Equal(t, hyperliquid.OrderStatusValueFilled, status.Status)
 	require.Equal(t, "SOL", status.Order.Coin)
@@ -150,16 +161,20 @@ func TestStatusRefresherHandlesCanceledOrders(t *testing.T) {
 	_, err := exchange.Order(ctx, order, nil)
 	require.NoError(t, err)
 
-	store.RecordOrder(oid)
+	ident := testIdentifier(oid)
+	store.RecordOrder(ident)
 
 	// Cancel the order
 	_, err = exchange.CancelByCloid(ctx, order.Coin, cloid)
 	require.NoError(t, err)
 
-	refresher := hl.NewStatusRefresher(info, store)
+	refresher := hl.NewStatusRefresher(
+		hl.StatusClientRegistry{hyperliquidTestVenue: info},
+		store,
+	)
 	require.NoError(t, refresher.Refresh(ctx))
 
-	status, found := store.Status(oid)
+	status, found := store.Status(ident)
 	require.True(t, found)
 	require.Equal(t, hyperliquid.OrderStatusValueCanceled, status.Status)
 }
@@ -195,9 +210,14 @@ func TestStatusRefresherWithFillTracker(t *testing.T) {
 	_, err := exchange.Order(ctx, order, nil)
 	require.NoError(t, err)
 
-	store.RecordOrder(oid)
+	ident := testIdentifier(oid)
+	store.RecordOrder(ident)
 
-	refresher := hl.NewStatusRefresher(info, store, hl.WithStatusRefresherTracker(tracker))
+	refresher := hl.NewStatusRefresher(
+		hl.StatusClientRegistry{hyperliquidTestVenue: info},
+		store,
+		hl.WithStatusRefresherTracker(tracker),
+	)
 	require.NoError(t, refresher.Refresh(ctx))
 
 	// Verify tracker was updated
@@ -241,16 +261,20 @@ func TestStatusRefresherConcurrentRefresh(t *testing.T) {
 
 		_, err := exchange.Order(ctx, order, nil)
 		require.NoError(t, err)
-		store.RecordOrder(oid)
+		store.RecordOrder(testIdentifier(oid))
 	}
 
 	// Refresh with concurrency
-	refresher := hl.NewStatusRefresher(info, store, hl.WithStatusRefresherConcurrency(4))
+	refresher := hl.NewStatusRefresher(
+		hl.StatusClientRegistry{hyperliquidTestVenue: info},
+		store,
+		hl.WithStatusRefresherConcurrency(4),
+	)
 	require.NoError(t, refresher.Refresh(ctx))
 
 	// Verify all orders were refreshed
 	for _, oid := range oids {
-		status, found := store.Status(oid)
+		status, found := store.Status(testIdentifier(oid))
 		require.True(t, found, "expected status for order %s", oid.Hex())
 		require.NotNil(t, status)
 	}
@@ -285,10 +309,12 @@ func TestStatusRefresherTimeout(t *testing.T) {
 	_, err := exchange.Order(ctx, order, nil)
 	require.NoError(t, err)
 
-	store.RecordOrder(oid)
+	store.RecordOrder(testIdentifier(oid))
 
 	// Set a very short timeout - might fail but should not panic
-	refresher := hl.NewStatusRefresher(info, store,
+	refresher := hl.NewStatusRefresher(
+		hl.StatusClientRegistry{hyperliquidTestVenue: info},
+		store,
 		hl.WithStatusRefresherTimeout(1*time.Nanosecond),
 		hl.WithStatusRefresherConcurrency(1),
 	)
@@ -301,14 +327,14 @@ type mockStatusTracker struct {
 	updates map[string]hyperliquid.WsOrder
 }
 
-func (m *mockStatusTracker) UpdateStatus(_ context.Context, oid orderid.OrderId, status hyperliquid.WsOrder) error {
-	m.updates[oid.Hex()] = status
+func (m *mockStatusTracker) UpdateStatus(_ context.Context, ident recomma.OrderIdentifier, status hyperliquid.WsOrder) error {
+	m.updates[ident.Hex()] = status
 	return nil
 }
 
 type integrationStatusStore struct {
 	mu       sync.Mutex
-	oids     []orderid.OrderId
+	idents   []recomma.OrderIdentifier
 	statuses map[string]hyperliquid.WsOrder
 }
 
@@ -319,32 +345,36 @@ func newIntegrationTestStore(t *testing.T) *integrationStatusStore {
 	}
 }
 
-func (s *integrationStatusStore) RecordOrder(oid orderid.OrderId) {
+func (s *integrationStatusStore) RecordOrder(ident recomma.OrderIdentifier) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.oids = append(s.oids, oid)
+	s.idents = append(s.idents, ident)
 }
 
-func (s *integrationStatusStore) ListHyperliquidOrderIds(context.Context) ([]orderid.OrderId, error) {
+func (s *integrationStatusStore) ListHyperliquidOrderIds(context.Context) ([]recomma.OrderIdentifier, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	oids := make([]orderid.OrderId, len(s.oids))
-	copy(oids, s.oids)
-	return oids, nil
+	idents := make([]recomma.OrderIdentifier, len(s.idents))
+	copy(idents, s.idents)
+	return idents, nil
 }
 
-func (s *integrationStatusStore) RecordHyperliquidStatus(_ context.Context, oid orderid.OrderId, status hyperliquid.WsOrder) error {
+func (s *integrationStatusStore) RecordHyperliquidStatus(_ context.Context, ident recomma.OrderIdentifier, status hyperliquid.WsOrder) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.statuses[oid.Hex()] = status
+	s.statuses[s.key(ident)] = status
 	return nil
 }
 
-func (s *integrationStatusStore) Status(oid orderid.OrderId) (hyperliquid.WsOrder, bool) {
+func (s *integrationStatusStore) Status(ident recomma.OrderIdentifier) (hyperliquid.WsOrder, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	status, ok := s.statuses[oid.Hex()]
+	status, ok := s.statuses[s.key(ident)]
 	return status, ok
+}
+
+func (s *integrationStatusStore) key(ident recomma.OrderIdentifier) string {
+	return ident.Venue() + ":" + ident.Hex()
 }
 
 type stubOrderStatusClient struct {

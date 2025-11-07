@@ -72,9 +72,11 @@ func TestFillTrackerWithHyperliquidStatusUpdates(t *testing.T) {
 	_, err := exchange.Order(ctx, order, nil)
 	require.NoError(t, err)
 
+	baseIdent := storage.DefaultHyperliquidIdentifier(baseOid)
+
 	// Get initial status and record it
 	initialStatus := makeStatusFromMockOrder(ts, baseOid, coin)
-	require.NoError(t, recordStatus(store, baseOid, initialStatus))
+	require.NoError(t, recordStatus(store, baseIdent, initialStatus))
 	require.NoError(t, tracker.Rebuild(ctx))
 
 	// Simulate fill on HyperLiquid
@@ -82,8 +84,8 @@ func TestFillTrackerWithHyperliquidStatusUpdates(t *testing.T) {
 
 	// Get updated status and update tracker
 	filledStatus := makeStatusFromMockOrder(ts, baseOid, coin)
-	require.NoError(t, recordStatus(store, baseOid, filledStatus))
-	require.NoError(t, tracker.UpdateStatus(ctx, baseOid, filledStatus))
+	require.NoError(t, recordStatus(store, baseIdent, filledStatus))
+	require.NoError(t, tracker.UpdateStatus(ctx, baseIdent, filledStatus))
 
 	// Verify position
 	snapshot, ok := tracker.Snapshot(dealID)
@@ -142,9 +144,11 @@ func TestFillTrackerPartialFillsFromHyperliquid(t *testing.T) {
 	_, err := exchange.Order(ctx, order, nil)
 	require.NoError(t, err)
 
+	ident := storage.DefaultHyperliquidIdentifier(oid)
+
 	// Initial status
 	initialStatus := makeStatusFromMockOrder(ts, oid, coin)
-	require.NoError(t, recordStatus(store, oid, initialStatus))
+	require.NoError(t, recordStatus(store, ident, initialStatus))
 	require.NoError(t, tracker.Rebuild(ctx))
 
 	// Partial fill (30%)
@@ -152,8 +156,8 @@ func TestFillTrackerPartialFillsFromHyperliquid(t *testing.T) {
 
 	// Update tracker with partial fill
 	partialStatus := makeStatusFromMockOrder(ts, oid, coin)
-	require.NoError(t, recordStatus(store, oid, partialStatus))
-	require.NoError(t, tracker.UpdateStatus(ctx, oid, partialStatus))
+	require.NoError(t, recordStatus(store, ident, partialStatus))
+	require.NoError(t, tracker.UpdateStatus(ctx, ident, partialStatus))
 
 	snapshot, ok := tracker.Snapshot(dealID)
 	require.True(t, ok)
@@ -164,8 +168,8 @@ func TestFillTrackerPartialFillsFromHyperliquid(t *testing.T) {
 	simulateOrderFill(t, ts, cloid, 3000) // Fill remaining
 
 	filledStatus := makeStatusFromMockOrder(ts, oid, coin)
-	require.NoError(t, recordStatus(store, oid, filledStatus))
-	require.NoError(t, tracker.UpdateStatus(ctx, oid, filledStatus))
+	require.NoError(t, recordStatus(store, ident, filledStatus))
+	require.NoError(t, tracker.UpdateStatus(ctx, ident, filledStatus))
 
 	snapshot, ok = tracker.Snapshot(dealID)
 	require.True(t, ok)
@@ -224,8 +228,10 @@ func TestFillTrackerTakeProfitCancellation(t *testing.T) {
 	require.NoError(t, err)
 	simulateOrderFill(t, ts, baseCloid, 100)
 
+	baseIdent := storage.DefaultHyperliquidIdentifier(baseOid)
+
 	baseStatus := makeStatusFromMockOrder(ts, baseOid, coin)
-	require.NoError(t, recordStatus(store, baseOid, baseStatus))
+	require.NoError(t, recordStatus(store, baseIdent, baseStatus))
 
 	// Create take profit order
 	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
@@ -258,27 +264,29 @@ func TestFillTrackerTakeProfitCancellation(t *testing.T) {
 	_, err = exchange.Order(ctx, tpOrder, nil)
 	require.NoError(t, err)
 
+	tpIdent := storage.DefaultHyperliquidIdentifier(tpOid)
+
 	tpStatus := makeStatusFromMockOrder(ts, tpOid, coin)
-	require.NoError(t, recordStatus(store, tpOid, tpStatus))
+	require.NoError(t, recordStatus(store, tpIdent, tpStatus))
 
 	require.NoError(t, tracker.Rebuild(ctx))
 
 	snapshot, ok := tracker.Snapshot(dealID)
 	require.True(t, ok)
-	require.NotNil(t, snapshot.ActiveTakeProfit)
-	require.InDelta(t, 50, snapshot.ActiveTakeProfit.RemainingQty, 1e-6)
+	require.Len(t, snapshot.ActiveTakeProfits, 1, "expected single active take-profit")
+	require.InDelta(t, 50, snapshot.ActiveTakeProfits[0].RemainingQty, 1e-6)
 
 	// Cancel the take profit order
 	_, err = exchange.CancelByCloid(ctx, coin, tpCloid)
 	require.NoError(t, err)
 
 	canceledStatus := makeStatusFromMockOrder(ts, tpOid, coin)
-	require.NoError(t, recordStatus(store, tpOid, canceledStatus))
-	require.NoError(t, tracker.UpdateStatus(ctx, tpOid, canceledStatus))
+	require.NoError(t, recordStatus(store, tpIdent, canceledStatus))
+	require.NoError(t, tracker.UpdateStatus(ctx, tpIdent, canceledStatus))
 
 	snapshot, ok = tracker.Snapshot(dealID)
 	require.True(t, ok)
-	require.Nil(t, snapshot.ActiveTakeProfit, "take profit should be nil after cancellation")
+	require.Empty(t, snapshot.ActiveTakeProfits, "take profit should be removed after cancellation")
 }
 
 // TestFillTrackerMultipleOrdersFromHyperliquid tests tracking multiple concurrent orders
@@ -340,11 +348,13 @@ func TestFillTrackerMultipleOrdersFromHyperliquid(t *testing.T) {
 			},
 		}
 
+		ident := storage.DefaultHyperliquidIdentifier(oid)
+
 		_, err := exchange.Order(ctx, order, nil)
 		require.NoError(t, err)
 
 		status := makeStatusFromMockOrder(ts, oid, coin)
-		require.NoError(t, recordStatus(store, oid, status))
+		require.NoError(t, recordStatus(store, ident, status))
 	}
 
 	require.NoError(t, tracker.Rebuild(ctx))
@@ -355,9 +365,11 @@ func TestFillTrackerMultipleOrdersFromHyperliquid(t *testing.T) {
 		cloid := oid.Hex()
 		simulateOrderFill(t, ts, cloid, o.price)
 
+		ident := storage.DefaultHyperliquidIdentifier(oid)
+
 		filledStatus := makeStatusFromMockOrder(ts, oid, coin)
-		require.NoError(t, recordStatus(store, oid, filledStatus))
-		require.NoError(t, tracker.UpdateStatus(ctx, oid, filledStatus))
+		require.NoError(t, recordStatus(store, ident, filledStatus))
+		require.NoError(t, tracker.UpdateStatus(ctx, ident, filledStatus))
 	}
 
 	// Verify final position

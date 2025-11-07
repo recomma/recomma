@@ -268,12 +268,16 @@ func TestInfoQueryOrderConversionToWsOrder(t *testing.T) {
 	require.NoError(t, err)
 
 	store := newIntegrationTestStore(t)
-	store.RecordOrder(oid)
+	ident := testIdentifier(oid)
+	store.RecordOrder(ident)
 
-	refresher := hl.NewStatusRefresher(info, store)
+	refresher := hl.NewStatusRefresher(
+		hl.StatusClientRegistry{hyperliquidTestVenue: info},
+		store,
+	)
 	require.NoError(t, refresher.Refresh(ctx))
 
-	status, found := store.Status(oid)
+	status, found := store.Status(ident)
 	require.True(t, found)
 	require.Equal(t, "ARB", status.Order.Coin)
 	require.NotNil(t, status.Order.Cloid)

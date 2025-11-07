@@ -102,8 +102,6 @@ func TestHyperLiquidEmitterModifyOrder(t *testing.T) {
 func TestHyperLiquidEmitterModifyThenFill(t *testing.T) {
 	t.Parallel()
 
-	t.Skip("mock server lacks fill simulation support for modify-fill scenarios")
-
 	ctx := context.Background()
 	exchange, ts := newMockExchangeWithServer(t, nil)
 	store := newModifyTestStore(t)
@@ -427,5 +425,11 @@ func newModifyTestStore(t *testing.T) *storage.Storage {
 
 func simulateModifyFill(t *testing.T, ts *mockserver.TestServer, cloid string, price float64, size float64) {
 	t.Helper()
-	t.Fatalf("mock server fill simulation not implemented: update to call TestServer.FillOrder when available (cloid=%s price=%.8f size=%.8f)", cloid, price, size)
+	var opts []mockserver.FillOption
+	if size > 0 {
+		opts = append(opts, mockserver.WithFillSize(size))
+	}
+	if err := ts.FillOrder(cloid, price, opts...); err != nil {
+		t.Fatalf("mock server fill simulation failed: %v", err)
+	}
 }

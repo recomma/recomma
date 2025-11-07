@@ -56,8 +56,6 @@ func TestOrderLifecycleCreateAndQuery(t *testing.T) {
 func TestOrderLifecycleCreateFillCancel(t *testing.T) {
 	t.Parallel()
 
-	t.Skip("fill and cancel simulation not yet supported by mock server")
-
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)
 	exchange := newMockExchange(t, ts.URL())
@@ -121,8 +119,6 @@ func TestOrderLifecycleCreateFillCancel(t *testing.T) {
 
 func TestOrderLifecyclePartialFill(t *testing.T) {
 	t.Parallel()
-
-	t.Skip("partial fill simulation not supported by mock server")
 
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)

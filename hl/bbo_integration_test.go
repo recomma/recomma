@@ -9,7 +9,6 @@ import (
 	"github.com/recomma/recomma/hl"
 	"github.com/recomma/recomma/hl/ws"
 	"github.com/recomma/recomma/recomma"
-	"github.com/recomma/recomma/storage"
 	"github.com/stretchr/testify/require"
 )
 

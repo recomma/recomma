@@ -177,8 +177,7 @@ func TestWebSocketWithFillTracker(t *testing.T) {
 	wallet := "0xtest"
 
 	// Create fill tracker
-	tracker, err := filltracker.NewService(ctx, store, store)
-	require.NoError(t, err)
+	tracker := filltracker.New(store, nil)
 
 	// Create WebSocket client with fill tracker
 	wsClient, err := ws.New(ctx, store, tracker, venueID, wallet, ts.URL())

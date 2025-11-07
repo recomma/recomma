@@ -75,9 +75,17 @@ func LoadSecretsFromEnv() (*vault.Secrets, error) {
 		Secrets: vault.Data{
 			THREECOMMASAPIKEY:     threeCommasAPIKey,
 			THREECOMMASPRIVATEKEY: threeCommasPrivateKey,
-			HYPERLIQUIDWALLET:     hyperliquidWallet,
-			HYPERLIQUIDPRIVATEKEY: hyperliquidPrivateKey,
-			HYPERLIQUIDURL:        hyperliquidURL,
+			Venues: []vault.VenueSecret{
+				{
+					ID:          "hyperliquid:default",
+					Type:        "hyperliquid",
+					DisplayName: "Default Hyperliquid Venue",
+					Wallet:      hyperliquidWallet,
+					PrivateKey:  hyperliquidPrivateKey,
+					APIURL:      hyperliquidURL,
+					Primary:     true,
+				},
+			},
 		},
 		ReceivedAt: now,
 	}

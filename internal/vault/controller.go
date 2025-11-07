@@ -10,6 +10,10 @@ import (
 // ErrInvalidTransition is returned when an invalid state change is attempted.
 var ErrInvalidTransition = errors.New("invalid vault state transition")
 
+// ErrPrimaryVenueRequired is returned when decrypted secrets omit a primary
+// venue definition.
+var ErrPrimaryVenueRequired = errors.New("vault: at least one primary venue required")
+
 // Controller orchestrates the in-memory vault state lifecycle.
 type Controller struct {
 	mu  sync.RWMutex
@@ -220,6 +224,10 @@ func (c *Controller) Unseal(secrets Secrets, sessionExpiresAt *time.Time) error 
 		return ErrInvalidTransition
 	}
 
+	if err := ensurePrimaryVenuePresent(secrets.Secrets); err != nil {
+		return err
+	}
+
 	cloned := secrets.Clone()
 	c.secrets = &cloned
 	if sessionExpiresAt != nil {
@@ -267,4 +275,16 @@ func (c *Controller) resetReadyLocked() {
 	} else if c.ready == nil {
 		c.ready = make(chan struct{})
 	}
+}
+
+func ensurePrimaryVenuePresent(data Data) error {
+	if len(data.Venues) == 0 {
+		return ErrPrimaryVenueRequired
+	}
+	for _, venue := range data.Venues {
+		if venue.Primary {
+			return nil
+		}
+	}
+	return ErrPrimaryVenueRequired
 }

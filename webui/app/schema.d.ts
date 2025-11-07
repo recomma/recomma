@@ -492,13 +492,29 @@ export interface components {
                 THREECOMMAS_API_KEY: string;
                 /** @description Private API key for the 3Commas integration. */
                 THREECOMMAS_PRIVATE_KEY: string;
-                /** @description Hyperliquid wallet address. */
-                HYPERLIQUID_WALLET: string;
-                /** @description Hyperliquid private key corresponding to the wallet. */
-                HYPERLIQUID_PRIVATE_KEY: string;
-                /** @description Hyperliquid URL, mainnet https://api.hyperliquid.xyz testnet https://api.hyperliquid-testnet.xyz or custom */
-                HYPERLIQUID_URL: string;
+                /** @description Collection of venue credentials encrypted within the vault. */
+                venues: components["schemas"]["VaultVenueSecret"][];
             };
+        };
+        VaultVenueSecret: {
+            /** @description Unique identifier for the venue. */
+            id: string;
+            /** @description Connector type backing the venue (for example `hyperliquid`). */
+            type: string;
+            /** @description Human readable venue label. */
+            display_name?: string;
+            /** @description Wallet address used for submissions to this venue. */
+            wallet: string;
+            /** @description Secret key associated with the configured wallet. */
+            private_key: string;
+            /** @description Optional API base URL for the venue. */
+            api_url?: string | null;
+            /** @description Connector specific options encoded alongside the venue metadata. */
+            flags?: {
+                [key: string]: unknown;
+            } | null;
+            /** @description Indicates whether this venue should be treated as primary. */
+            is_primary: boolean;
         };
         VaultSetupRequest: {
             /** @description Logical username for the vault owner. */
@@ -583,6 +599,8 @@ export interface components {
              * @description When the originating 3Commas event was created.
              */
             created_at: string;
+            /** @description Upstream venue identifier associated with the submission. */
+            venue_id?: string;
         };
         ThreeCommasOrderState: {
             /** @description Parsed 3Commas bot event emitted for this OrderId. */

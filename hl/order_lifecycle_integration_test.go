@@ -54,13 +54,111 @@ func TestOrderLifecycleCreateAndQuery(t *testing.T) {
 }
 
 func TestOrderLifecycleCreateFillCancel(t *testing.T) {
-	t.Skip("fill and cancel simulation not yet supported by mock server")
 	t.Parallel()
+
+	t.Skip("fill and cancel simulation not yet supported by mock server")
+
+	ctx := context.Background()
+	ts := mockserver.NewTestServer(t)
+	exchange := newMockExchange(t, ts.URL())
+	info := hl.NewInfo(ctx, hl.ClientConfig{
+		BaseURL: ts.URL(),
+		Wallet:  "0xtest",
+	})
+
+	oid := orderid.OrderId{BotID: 5, DealID: 10, BotEventID: 15}
+	cloid := oid.Hex()
+
+	order := hyperliquid.CreateOrderRequest{
+		Coin:          "ETH",
+		IsBuy:         true,
+		Price:         3000,
+		Size:          2.0,
+		ClientOrderID: &cloid,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
+		},
+	}
+
+	_, err := exchange.Order(ctx, order, nil)
+	require.NoError(t, err)
+
+	storedOrder, exists := ts.GetOrder(cloid)
+	require.True(t, exists)
+	require.Equal(t, "open", storedOrder.Status)
+
+	simulateOrderFilled(t, ts, cloid, 3000, 2.0)
+
+	storedOrder, exists = ts.GetOrder(cloid)
+	require.True(t, exists)
+	require.Equal(t, "filled", storedOrder.Status)
+
+	result, err := info.QueryOrderByCloid(ctx, cloid)
+	require.NoError(t, err)
+	require.Equal(t, hyperliquid.OrderQueryStatusSuccess, result.Status)
+	require.Equal(t, hyperliquid.OrderStatusValueFilled, result.Order.Status)
+
+	oid2 := orderid.OrderId{BotID: 5, DealID: 10, BotEventID: 16}
+	cloid2 := oid2.Hex()
+	order2 := order
+	order2.ClientOrderID = &cloid2
+
+	_, err = exchange.Order(ctx, order2, nil)
+	require.NoError(t, err)
+
+	_, err = exchange.CancelByCloid(ctx, order2.Coin, cloid2)
+	require.NoError(t, err)
+
+	storedOrder2, exists := ts.GetOrder(cloid2)
+	require.True(t, exists)
+	require.Equal(t, "canceled", storedOrder2.Status)
+
+	result, err = info.QueryOrderByCloid(ctx, cloid2)
+	require.NoError(t, err)
+	require.Equal(t, hyperliquid.OrderQueryStatusSuccess, result.Status)
+	require.Equal(t, hyperliquid.OrderStatusValueCanceled, result.Order.Status)
 }
 
 func TestOrderLifecyclePartialFill(t *testing.T) {
-	t.Skip("partial fill simulation not supported by mock server")
 	t.Parallel()
+
+	t.Skip("partial fill simulation not supported by mock server")
+
+	ctx := context.Background()
+	ts := mockserver.NewTestServer(t)
+	exchange := newMockExchange(t, ts.URL())
+	info := hl.NewInfo(ctx, hl.ClientConfig{
+		BaseURL: ts.URL(),
+		Wallet:  "0xtest",
+	})
+
+	oid := orderid.OrderId{BotID: 20, DealID: 30, BotEventID: 40}
+	cloid := oid.Hex()
+
+	order := hyperliquid.CreateOrderRequest{
+		Coin:          "SOL",
+		IsBuy:         true,
+		Price:         100,
+		Size:          10.0,
+		ClientOrderID: &cloid,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
+		},
+	}
+
+	_, err := exchange.Order(ctx, order, nil)
+	require.NoError(t, err)
+
+	simulateOrderPartiallyFilled(t, ts, cloid, 100, 3.0)
+
+	storedOrder, exists := ts.GetOrder(cloid)
+	require.True(t, exists)
+	require.Equal(t, "open", storedOrder.Status)
+
+	result, err := info.QueryOrderByCloid(ctx, cloid)
+	require.NoError(t, err)
+	require.Equal(t, hyperliquid.OrderQueryStatusSuccess, result.Status)
+	require.Equal(t, hyperliquid.OrderStatusValueOpen, result.Order.Status)
 }
 
 func TestOrderLifecycleCancelOrder(t *testing.T) {

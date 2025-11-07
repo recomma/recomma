@@ -111,8 +111,85 @@ func TestInfoQueryCanceledOrder(t *testing.T) {
 	require.Equal(t, hyperliquid.OrderStatusValueCanceled, result.Order.Status)
 }
 
+func TestInfoQueryFilledOrder(t *testing.T) {
+	t.Parallel()
+
+	t.Skip("filled order simulation not supported by mock server")
+
+	ctx := context.Background()
+	ts := mockserver.NewTestServer(t)
+
+	info := hl.NewInfo(ctx, hl.ClientConfig{
+		BaseURL: ts.URL(),
+		Wallet:  "0xtest",
+	})
+
+	exchange := newMockExchange(t, ts.URL())
+
+	oid := orderid.OrderId{BotID: 10, DealID: 20, BotEventID: 30}
+	cloid := oid.Hex()
+	order := hyperliquid.CreateOrderRequest{
+		Coin:          "ETH",
+		IsBuy:         true,
+		Price:         3000,
+		Size:          2.0,
+		ClientOrderID: &cloid,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
+		},
+	}
+
+	_, err := exchange.Order(ctx, order, nil)
+	require.NoError(t, err)
+
+	simulateOrderFilled(t, ts, cloid, 3000, 2.0)
+
+	result, err := info.QueryOrderByCloid(ctx, cloid)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, hyperliquid.OrderQueryStatusSuccess, result.Status)
+	require.Equal(t, hyperliquid.OrderStatusValueFilled, result.Order.Status)
+	require.Equal(t, "ETH", result.Order.Order.Coin)
+}
+
 func TestInfoQueryPartiallyFilledOrder(t *testing.T) {
+	t.Parallel()
+
 	t.Skip("partial fill simulation not supported by mock server")
+
+	ctx := context.Background()
+	ts := mockserver.NewTestServer(t)
+
+	info := hl.NewInfo(ctx, hl.ClientConfig{
+		BaseURL: ts.URL(),
+		Wallet:  "0xtest",
+	})
+
+	exchange := newMockExchange(t, ts.URL())
+
+	oid := orderid.OrderId{BotID: 15, DealID: 25, BotEventID: 35}
+	cloid := oid.Hex()
+	order := hyperliquid.CreateOrderRequest{
+		Coin:          "DOGE",
+		IsBuy:         true,
+		Price:         0.15,
+		Size:          1000.0,
+		ClientOrderID: &cloid,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
+		},
+	}
+
+	_, err := exchange.Order(ctx, order, nil)
+	require.NoError(t, err)
+
+	simulateOrderPartiallyFilled(t, ts, cloid, 0.15, 500.0)
+
+	result, err := info.QueryOrderByCloid(ctx, cloid)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, hyperliquid.OrderQueryStatusSuccess, result.Status)
+	require.Equal(t, hyperliquid.OrderStatusValueOpen, result.Order.Status)
 }
 
 func TestInfoQueryMultipleOrders(t *testing.T) {
@@ -202,4 +279,14 @@ func TestInfoQueryOrderConversionToWsOrder(t *testing.T) {
 	require.NotNil(t, status.Order.Cloid)
 	require.Equal(t, cloid, *status.Order.Cloid)
 	require.Equal(t, hyperliquid.OrderStatusValueOpen, status.Status)
+}
+
+func simulateOrderFilled(t *testing.T, ts *mockserver.TestServer, cloid string, price float64, size float64) {
+	t.Helper()
+	t.Fatalf("mock server fill simulation not implemented: update to call TestServer.FillOrder when available (cloid=%s price=%.8f size=%.8f)", cloid, price, size)
+}
+
+func simulateOrderPartiallyFilled(t *testing.T, ts *mockserver.TestServer, cloid string, price float64, filledSize float64) {
+	t.Helper()
+	t.Fatalf("mock server partial fill simulation not implemented: update to call TestServer.FillOrder when available (cloid=%s price=%.8f filledSize=%.8f)", cloid, price, filledSize)
 }

@@ -3,6 +3,7 @@ package emitter
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -16,6 +17,10 @@ import (
 	"github.com/recomma/recomma/storage"
 	"github.com/sonirico/go-hyperliquid"
 	"github.com/stretchr/testify/require"
+
+	gethCrypto "github.com/ethereum/go-ethereum/crypto"
+
+	mockserver "github.com/recomma/hyperliquid-mock/server"
 )
 
 type stubExchange struct {
@@ -75,6 +80,44 @@ func (g *recordingRateGate) cooldownSnapshot() []time.Duration {
 	out := make([]time.Duration, len(g.cooldowns))
 	copy(out, g.cooldowns)
 	return out
+}
+
+func NewMockExchange(t *testing.T, logger *slog.Logger) *hyperliquid.Exchange {
+	t.Helper()
+	exchange, _ := newMockExchangeWithServer(t, logger)
+	return exchange
+}
+
+func newMockExchangeWithServer(t *testing.T, logger *slog.Logger) (*hyperliquid.Exchange, *mockserver.TestServer) {
+	t.Helper()
+
+	opts := []mockserver.TestServerOption{}
+	if logger != nil {
+		opts = append(opts, mockserver.WithLogger(logger))
+	}
+
+	ts := mockserver.NewTestServer(t, opts...)
+	ctx := context.Background()
+
+	privateKey, err := gethCrypto.GenerateKey()
+	require.NoError(t, err)
+
+	pub := privateKey.Public()
+	pubECDSA, ok := pub.(*ecdsa.PublicKey)
+	require.True(t, ok, "expected ECDSA public key")
+	walletAddr := gethCrypto.PubkeyToAddress(*pubECDSA).Hex()
+
+	exchange := hyperliquid.NewExchange(
+		ctx,
+		privateKey,
+		ts.URL(), // Use mock server URL
+		nil,      // meta
+		"",       // vaultAddr (empty for non-vault)
+		walletAddr,
+		nil, // spotMeta
+	)
+
+	return exchange, ts
 }
 
 func TestHyperLiquidEmitterIOCRetriesLogSuccess(t *testing.T) {
@@ -273,6 +316,68 @@ func TestHyperLiquidEmitterPropagatesCooldownToRateGate(t *testing.T) {
 	require.Equal(t, 10*time.Second, cooldowns[0])
 }
 
+func TestHyperLiquidEmitterMockExchangeCancelOrder(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	exchange, ts := newMockExchangeWithServer(t, nil)
+	store := newTestStore(t)
+
+	emitter := NewHyperLiquidEmitter(exchange, "", nil, store,
+		WithHyperLiquidEmitterConfig(HyperLiquidEmitterConfig{MaxIOCRetries: 1}),
+	)
+
+	oid := orderid.OrderId{BotID: 12, DealID: 34, BotEventID: 56}
+	cloid := oid.Hex()
+	order := hyperliquid.CreateOrderRequest{
+		Coin:          "ETH",
+		IsBuy:         true,
+		Price:         3000,
+		Size:          0.25,
+		ClientOrderID: &cloid,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
+		},
+	}
+
+	createWork := recomma.OrderWork{
+		OrderId:  oid,
+		Action:   recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent: recomma.BotEvent{RowID: 1},
+	}
+
+	require.NoError(t, emitter.Emit(ctx, createWork))
+
+	storedOrder, exists := ts.GetOrder(cloid)
+	require.True(t, exists)
+	require.Equal(t, "open", strings.ToLower(storedOrder.Status))
+
+	cancelReq := hyperliquid.CancelOrderRequestByCloid{
+		Coin:  order.Coin,
+		Cloid: cloid,
+	}
+	cancelWork := recomma.OrderWork{
+		OrderId:  oid,
+		Action:   recomma.Action{Type: recomma.ActionCancel, Cancel: cancelReq},
+		BotEvent: recomma.BotEvent{RowID: 2},
+	}
+
+	require.NoError(t, emitter.Emit(ctx, cancelWork))
+
+	ident := recomma.NewOrderIdentifier("", "", oid)
+	action, found, err := store.LoadHyperliquidSubmission(ctx, ident)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, recomma.ActionCancel, action.Type)
+	require.NotNil(t, action.Cancel)
+	require.Equal(t, cloid, action.Cancel.Cloid)
+
+	canceledOrder, exists := ts.GetOrder(cloid)
+	require.True(t, exists)
+	require.Equal(t, "canceled", strings.ToLower(canceledOrder.Status))
+}
+
 func TestApplyIOCOffsetIgnoresNonIOCOrders(t *testing.T) {
 	t.Parallel()
 
@@ -330,6 +435,143 @@ func parseLogs(t *testing.T, raw string) []logEntry {
 		entries = append(entries, entry)
 	}
 	return entries
+}
+
+func TestHyperLiquidEmitterMockExchangeIOCRetrySuccess(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	buf := &bytes.Buffer{}
+	logger := slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	exchange := NewMockExchange(t, nil)
+	store := newTestStore(t)
+
+	emitter := NewHyperLiquidEmitter(exchange, "", nil, store,
+		WithHyperLiquidEmitterLogger(logger),
+		WithHyperLiquidEmitterConfig(HyperLiquidEmitterConfig{MaxIOCRetries: 2}),
+		WithHyperLiquidRateGate(NewRateGate(0)),
+	)
+
+	oid := orderid.OrderId{BotID: 9001, DealID: 42, BotEventID: 7}
+	cloid := oid.Hex()
+	originalPrice := 87000.0
+	order := hyperliquid.CreateOrderRequest{
+		Coin:          "BTC",
+		IsBuy:         true,
+		Price:         originalPrice,
+		Size:          0.5,
+		ClientOrderID: &cloid,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifIoc},
+		},
+	}
+
+	work := recomma.OrderWork{
+		OrderId:  oid,
+		Action:   recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent: recomma.BotEvent{RowID: 1001},
+	}
+
+	err := emitter.Emit(ctx, work)
+	require.NoError(t, err)
+
+	ident := recomma.NewOrderIdentifier("", "", oid)
+	storedReq, found, err := store.LoadHyperliquidRequest(ctx, ident)
+	require.NoError(t, err)
+	require.True(t, found, "expected create request persisted after success")
+	require.NotNil(t, storedReq)
+	require.Greater(t, storedReq.Price, originalPrice, "retry offset should lift IOC price above the rejection threshold")
+	require.InDelta(t, order.Size, storedReq.Size, 1e-9)
+
+	logs := parseLogs(t, buf.String())
+
+	retryInfos := 0
+	warnCount := 0
+	var final *logEntry
+	for i := range logs {
+		entry := logs[i]
+		if entry.Level == "INFO" && entry.Message == "IOC did not immediately match; retrying" {
+			retryInfos++
+		}
+		if entry.Level == "WARN" {
+			warnCount++
+		}
+		if entry.Level == "INFO" && entry.Message == "Order sent after IOC retries" {
+			final = &logs[i]
+		}
+	}
+
+	require.Zero(t, warnCount, "successful retries should not warn")
+	require.Equal(t, 1, retryInfos, "expected a single retry before success")
+	require.NotNil(t, final, "missing final success log")
+	retries, ok := final.Attrs["ioc-retries"].(float64)
+	require.True(t, ok, "expected ioc-retries attribute")
+	require.Equal(t, float64(1), retries)
+	lastErr, ok := final.Attrs["last-error"].(string)
+	require.True(t, ok, "expected last-error attribute")
+	require.Contains(t, lastErr, "Order could not immediately match")
+}
+
+func TestHyperLiquidEmitterMockExchangeIOCRetriesExhausted(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	buf := &bytes.Buffer{}
+	logger := slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	exchange := NewMockExchange(t, nil)
+	store := newTestStore(t)
+
+	emitter := NewHyperLiquidEmitter(exchange, "", nil, store,
+		WithHyperLiquidEmitterLogger(logger),
+		WithHyperLiquidEmitterConfig(HyperLiquidEmitterConfig{MaxIOCRetries: 3}),
+		WithHyperLiquidRateGate(NewRateGate(0)),
+	)
+
+	oid := orderid.OrderId{BotID: 9002, DealID: 43, BotEventID: 8}
+	cloid := oid.Hex()
+	order := hyperliquid.CreateOrderRequest{
+		Coin:          "BTC",
+		IsBuy:         true,
+		Price:         100.0,
+		Size:          0.25,
+		ClientOrderID: &cloid,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifIoc},
+		},
+	}
+
+	work := recomma.OrderWork{
+		OrderId:  oid,
+		Action:   recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent: recomma.BotEvent{RowID: 2002},
+	}
+
+	err := emitter.Emit(ctx, work)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "could not place order")
+
+	ident := recomma.NewOrderIdentifier("", "", oid)
+	storedReq, found, err := store.LoadHyperliquidRequest(ctx, ident)
+	require.NoError(t, err)
+	require.False(t, found, "failed IOC retries must not persist the request")
+	require.Nil(t, storedReq)
+
+	logs := parseLogs(t, buf.String())
+	retryInfos := 0
+	warnCount := 0
+	for _, entry := range logs {
+		if entry.Level == "INFO" && entry.Message == "IOC did not immediately match; retrying" {
+			retryInfos++
+		}
+		if entry.Level == "WARN" && strings.Contains(fmt.Sprint(entry.Attrs["error"]), "Order could not immediately match") {
+			warnCount++
+		}
+	}
+
+	require.Equal(t, 2, retryInfos, "max IOC retries should log before the final attempt fails")
+	require.Equal(t, 1, warnCount, "expected a single warning when retries exhaust")
 }
 
 func newTestStore(t *testing.T) *storage.Storage {

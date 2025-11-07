@@ -324,7 +324,7 @@ func TestHyperLiquidEmitterMockExchangeCancelOrder(t *testing.T) {
 	exchange, ts := newMockExchangeWithServer(t, nil)
 	store := newTestStore(t)
 
-	emitter := NewHyperLiquidEmitter(exchange, "", nil, store,
+	emitter := NewHyperLiquidEmitter(exchange, "hyperliquid:default", nil, store,
 		WithHyperLiquidEmitterConfig(HyperLiquidEmitterConfig{MaxIOCRetries: 1}),
 	)
 
@@ -342,9 +342,10 @@ func TestHyperLiquidEmitterMockExchangeCancelOrder(t *testing.T) {
 	}
 
 	createWork := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionCreate, Create: order},
-		BotEvent: recomma.BotEvent{RowID: 1},
+		Identifier: recomma.NewOrderIdentifier("hyperliquid:default", "default", oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent:   recomma.BotEvent{RowID: 1},
 	}
 
 	require.NoError(t, emitter.Emit(ctx, createWork))
@@ -358,14 +359,15 @@ func TestHyperLiquidEmitterMockExchangeCancelOrder(t *testing.T) {
 		Cloid: cloid,
 	}
 	cancelWork := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionCancel, Cancel: cancelReq},
-		BotEvent: recomma.BotEvent{RowID: 2},
+		Identifier: recomma.NewOrderIdentifier("hyperliquid:default", "default", oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCancel, Cancel: cancelReq},
+		BotEvent:   recomma.BotEvent{RowID: 2},
 	}
 
 	require.NoError(t, emitter.Emit(ctx, cancelWork))
 
-	ident := recomma.NewOrderIdentifier("", "", oid)
+	ident := recomma.NewOrderIdentifier("hyperliquid:default", "default", oid)
 	action, found, err := store.LoadHyperliquidSubmission(ctx, ident)
 	require.NoError(t, err)
 	require.True(t, found)
@@ -468,15 +470,16 @@ func TestHyperLiquidEmitterMockExchangeIOCRetrySuccess(t *testing.T) {
 	}
 
 	work := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionCreate, Create: order},
-		BotEvent: recomma.BotEvent{RowID: 1001},
+		Identifier: recomma.NewOrderIdentifier("hyperliquid:default", "default", oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent:   recomma.BotEvent{RowID: 1001},
 	}
 
 	err := emitter.Emit(ctx, work)
 	require.NoError(t, err)
 
-	ident := recomma.NewOrderIdentifier("", "", oid)
+	ident := recomma.NewOrderIdentifier("hyperliquid:default", "default", oid)
 	storedReq, found, err := store.LoadHyperliquidRequest(ctx, ident)
 	require.NoError(t, err)
 	require.True(t, found, "expected create request persisted after success")
@@ -523,7 +526,7 @@ func TestHyperLiquidEmitterMockExchangeIOCRetriesExhausted(t *testing.T) {
 	exchange := NewMockExchange(t, nil)
 	store := newTestStore(t)
 
-	emitter := NewHyperLiquidEmitter(exchange, "", nil, store,
+	emitter := NewHyperLiquidEmitter(exchange, "hyperliquid:default", nil, store,
 		WithHyperLiquidEmitterLogger(logger),
 		WithHyperLiquidEmitterConfig(HyperLiquidEmitterConfig{MaxIOCRetries: 3}),
 		WithHyperLiquidRateGate(NewRateGate(0)),
@@ -543,16 +546,17 @@ func TestHyperLiquidEmitterMockExchangeIOCRetriesExhausted(t *testing.T) {
 	}
 
 	work := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionCreate, Create: order},
-		BotEvent: recomma.BotEvent{RowID: 2002},
+		Identifier: recomma.NewOrderIdentifier("hyperliquid:default", "default", oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent:   recomma.BotEvent{RowID: 2002},
 	}
 
 	err := emitter.Emit(ctx, work)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "could not place order")
 
-	ident := recomma.NewOrderIdentifier("", "", oid)
+	ident := recomma.NewOrderIdentifier("hyperliquid:default", "default", oid)
 	storedReq, found, err := store.LoadHyperliquidRequest(ctx, ident)
 	require.NoError(t, err)
 	require.False(t, found, "failed IOC retries must not persist the request")

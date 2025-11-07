@@ -1,4 +1,4 @@
-package hl
+package hl_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 
 	gethCrypto "github.com/ethereum/go-ethereum/crypto"
 	mockserver "github.com/recomma/hyperliquid-mock/server"
+	"github.com/recomma/recomma/hl"
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/storage"
 	"github.com/sonirico/go-hyperliquid"
@@ -22,7 +23,7 @@ func TestStatusRefresherWithMockServer(t *testing.T) {
 	ts := mockserver.NewTestServer(t)
 	store := newIntegrationTestStore(t)
 
-	info := NewInfo(ctx, ClientConfig{
+	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
 		Wallet:  "0xtest",
 	})
@@ -66,7 +67,7 @@ func TestStatusRefresherWithMockServer(t *testing.T) {
 	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, oid2, order2, 2))
 
 	// Run status refresh
-	refresher := NewStatusRefresher(info, store, WithStatusRefresherConcurrency(2))
+	refresher := hl.NewStatusRefresher(info, store, hl.WithStatusRefresherConcurrency(2))
 	require.NoError(t, refresher.Refresh(ctx))
 
 	// Verify statuses were stored
@@ -88,7 +89,7 @@ func TestStatusRefresherHandlesFilledOrders(t *testing.T) {
 	ts := mockserver.NewTestServer(t)
 	store := newIntegrationTestStore(t)
 
-	info := NewInfo(ctx, ClientConfig{
+	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
 		Wallet:  "0xtest",
 	})
@@ -115,7 +116,7 @@ func TestStatusRefresherHandlesFilledOrders(t *testing.T) {
 	// Simulate order fill by updating mock server state
 	ts.FillOrder(cloid, 100)
 
-	refresher := NewStatusRefresher(info, store)
+	refresher := hl.NewStatusRefresher(info, store)
 	require.NoError(t, refresher.Refresh(ctx))
 
 	status, found, err := store.LoadHyperliquidStatus(ctx, oid)
@@ -131,7 +132,7 @@ func TestStatusRefresherHandlesCanceledOrders(t *testing.T) {
 	ts := mockserver.NewTestServer(t)
 	store := newIntegrationTestStore(t)
 
-	info := NewInfo(ctx, ClientConfig{
+	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
 		Wallet:  "0xtest",
 	})
@@ -159,7 +160,7 @@ func TestStatusRefresherHandlesCanceledOrders(t *testing.T) {
 	_, err = exchange.CancelByCloid(ctx, order.Coin, cloid)
 	require.NoError(t, err)
 
-	refresher := NewStatusRefresher(info, store)
+	refresher := hl.NewStatusRefresher(info, store)
 	require.NoError(t, refresher.Refresh(ctx))
 
 	status, found, err := store.LoadHyperliquidStatus(ctx, oid)
@@ -175,7 +176,7 @@ func TestStatusRefresherWithFillTracker(t *testing.T) {
 	ts := mockserver.NewTestServer(t)
 	store := newIntegrationTestStore(t)
 
-	info := NewInfo(ctx, ClientConfig{
+	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
 		Wallet:  "0xtest",
 	})
@@ -201,7 +202,7 @@ func TestStatusRefresherWithFillTracker(t *testing.T) {
 
 	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, oid, order, 1))
 
-	refresher := NewStatusRefresher(info, store, WithStatusRefresherTracker(tracker))
+	refresher := hl.NewStatusRefresher(info, store, hl.WithStatusRefresherTracker(tracker))
 	require.NoError(t, refresher.Refresh(ctx))
 
 	// Verify tracker was updated
@@ -217,7 +218,7 @@ func TestStatusRefresherConcurrentRefresh(t *testing.T) {
 	ts := mockserver.NewTestServer(t)
 	store := newIntegrationTestStore(t)
 
-	info := NewInfo(ctx, ClientConfig{
+	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
 		Wallet:  "0xtest",
 	})
@@ -249,7 +250,7 @@ func TestStatusRefresherConcurrentRefresh(t *testing.T) {
 	}
 
 	// Refresh with concurrency
-	refresher := NewStatusRefresher(info, store, WithStatusRefresherConcurrency(4))
+	refresher := hl.NewStatusRefresher(info, store, hl.WithStatusRefresherConcurrency(4))
 	require.NoError(t, refresher.Refresh(ctx))
 
 	// Verify all orders were refreshed
@@ -268,7 +269,7 @@ func TestStatusRefresherTimeout(t *testing.T) {
 	ts := mockserver.NewTestServer(t)
 	store := newIntegrationTestStore(t)
 
-	info := NewInfo(ctx, ClientConfig{
+	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
 		Wallet:  "0xtest",
 	})
@@ -293,9 +294,9 @@ func TestStatusRefresherTimeout(t *testing.T) {
 	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, oid, order, 1))
 
 	// Set a very short timeout - might fail but should not panic
-	refresher := NewStatusRefresher(info, store,
-		WithStatusRefresherTimeout(1*time.Nanosecond),
-		WithStatusRefresherConcurrency(1),
+	refresher := hl.NewStatusRefresher(info, store,
+		hl.WithStatusRefresherTimeout(1*time.Nanosecond),
+		hl.WithStatusRefresherConcurrency(1),
 	)
 	_ = refresher.Refresh(ctx) // May error due to timeout, that's expected
 }

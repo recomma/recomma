@@ -11,6 +11,8 @@ We've expanded test coverage for HyperLiquid integration from **2 test files** t
 ### 1. `hl/status_refresher_integration_test.go`
 Tests the StatusRefresher component that queries HyperLiquid for order status updates.
 
+**Package:** `hl_test` (uses external test package to avoid import cycles with `storage`)
+
 **Tests:**
 - ✅ Basic status refresh with mock server
 - ✅ Handling filled orders

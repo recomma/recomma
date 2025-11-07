@@ -22,7 +22,7 @@ func TestBBOSubscription(t *testing.T) {
 
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
-	venueID := recomma.VenueID(1)
+	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
 	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
@@ -51,7 +51,7 @@ func TestBBOMultipleCoins(t *testing.T) {
 
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
-	venueID := recomma.VenueID(1)
+	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
 	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
@@ -86,7 +86,7 @@ func TestBBOSubscriptionChannel(t *testing.T) {
 
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
-	venueID := recomma.VenueID(1)
+	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
 	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
@@ -122,7 +122,7 @@ func TestBBOMultipleSubscribers(t *testing.T) {
 
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
-	venueID := recomma.VenueID(1)
+	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
 	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
@@ -182,7 +182,7 @@ func TestBBOCaseInsensitive(t *testing.T) {
 
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
-	venueID := recomma.VenueID(1)
+	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
 	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
@@ -214,7 +214,7 @@ func TestBBOTimeout(t *testing.T) {
 
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
-	venueID := recomma.VenueID(1)
+	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
 	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
@@ -241,7 +241,7 @@ func TestBBOSubscriptionCleanup(t *testing.T) {
 
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
-	venueID := recomma.VenueID(1)
+	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
 	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
@@ -284,7 +284,7 @@ func TestBBOForIOCOrder(t *testing.T) {
 
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
-	venueID := recomma.VenueID(1)
+	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
 	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
@@ -322,7 +322,7 @@ func TestBBOConcurrentCoins(t *testing.T) {
 
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
-	venueID := recomma.VenueID(1)
+	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
 	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())

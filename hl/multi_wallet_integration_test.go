@@ -29,8 +29,8 @@ func TestMultiWalletOrderIsolation(t *testing.T) {
 	// Create two separate wallets with different venue IDs
 	wallet1 := "0xwallet1"
 	wallet2 := "0xwallet2"
-	venueID1 := recomma.VenueID(1)
-	venueID2 := recomma.VenueID(2)
+	venueID1 := recomma.VenueID("test-venue-1")
+	venueID2 := recomma.VenueID("test-venue-2")
 
 	// Create WebSocket clients for both wallets
 	wsClient1, err := ws.New(ctx, store, nil, venueID1, wallet1, ts.URL())
@@ -139,7 +139,7 @@ func TestMultiWalletConcurrentOrders(t *testing.T) {
 	// Create wallets and WebSocket clients
 	for i := 0; i < walletCount; i++ {
 		wallet := fmt.Sprintf("0xwallet%d", i)
-		venueID := recomma.VenueID(i + 1)
+		venueID := recomma.VenueID(fmt.Sprintf("test-venue-%d", i+1))
 
 		wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
 		require.NoError(t, err)
@@ -240,9 +240,9 @@ func TestMultiWalletBBOSharing(t *testing.T) {
 		wallet  string
 		venueID recomma.VenueID
 	}{
-		{"0xwallet1", recomma.VenueID(1)},
-		{"0xwallet2", recomma.VenueID(2)},
-		{"0xwallet3", recomma.VenueID(3)},
+		{"0xwallet1", recomma.VenueID("test-venue-1")},
+		{"0xwallet2", recomma.VenueID("test-venue-2")},
+		{"0xwallet3", recomma.VenueID("test-venue-3")},
 	}
 
 	clients := make([]*ws.Client, len(wallets))

@@ -25,7 +25,7 @@ func TestWebSocketOrderUpdates(t *testing.T) {
 
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
-	venueID := recomma.VenueID(1)
+	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
 	// Create WebSocket client
@@ -107,7 +107,7 @@ func TestWebSocketOrderFillUpdates(t *testing.T) {
 
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
-	venueID := recomma.VenueID(1)
+	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
 	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
@@ -173,7 +173,7 @@ func TestWebSocketWithFillTracker(t *testing.T) {
 
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
-	venueID := recomma.VenueID(1)
+	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
 	// Create fill tracker
@@ -237,7 +237,7 @@ func TestWebSocketMultipleOrders(t *testing.T) {
 
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
-	venueID := recomma.VenueID(1)
+	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
 	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
@@ -317,7 +317,7 @@ func TestWebSocketReconnection(t *testing.T) {
 
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
-	venueID := recomma.VenueID(1)
+	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
 	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())

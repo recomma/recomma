@@ -50,6 +50,12 @@ func (s *stubExchange) ModifyOrder(ctx context.Context, req hyperliquid.ModifyOr
 
 func NewMockExchange(t *testing.T, logger *slog.Logger) *hyperliquid.Exchange {
 	t.Helper()
+	exchange, _ := newMockExchangeWithServer(t, logger)
+	return exchange
+}
+
+func newMockExchangeWithServer(t *testing.T, logger *slog.Logger) (*hyperliquid.Exchange, *mockserver.TestServer) {
+	t.Helper()
 
 	opts := []mockserver.TestServerOption{}
 	if logger != nil {
@@ -59,10 +65,12 @@ func NewMockExchange(t *testing.T, logger *slog.Logger) *hyperliquid.Exchange {
 	ts := mockserver.NewTestServer(t, opts...)
 	ctx := context.Background()
 
-	privateKey, _ := gethCrypto.GenerateKey()
-	// privHex := fmt.Sprintf("%x", gethCrypto.FromECDSA(privateKey))
+	privateKey, err := gethCrypto.GenerateKey()
+	require.NoError(t, err)
+
 	pub := privateKey.Public()
-	pubECDSA, _ := pub.(*ecdsa.PublicKey)
+	pubECDSA, ok := pub.(*ecdsa.PublicKey)
+	require.True(t, ok, "expected ECDSA public key")
 	walletAddr := gethCrypto.PubkeyToAddress(*pubECDSA).Hex()
 
 	exchange := hyperliquid.NewExchange(
@@ -75,7 +83,7 @@ func NewMockExchange(t *testing.T, logger *slog.Logger) *hyperliquid.Exchange {
 		nil, // spotMeta
 	)
 
-	return exchange
+	return exchange, ts
 }
 
 func TestHyperLiquidEmitterIOCRetriesLogSuccess(t *testing.T) {
@@ -200,6 +208,67 @@ func TestHyperLiquidEmitterIOCRetriesWarnOnFailure(t *testing.T) {
 	}
 
 	require.Equal(t, 1, warnCount, "expected a single warning when retries exhaust")
+}
+
+func TestHyperLiquidEmitterMockExchangeCancelOrder(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	exchange, ts := newMockExchangeWithServer(t, nil)
+	store := newTestStore(t)
+
+	emitter := NewHyperLiquidEmitter(exchange, nil, store,
+		WithHyperLiquidEmitterConfig(HyperLiquidEmitterConfig{MaxIOCRetries: 1}),
+	)
+
+	oid := orderid.OrderId{BotID: 12, DealID: 34, BotEventID: 56}
+	cloid := oid.Hex()
+	order := hyperliquid.CreateOrderRequest{
+		Coin:          "ETH",
+		IsBuy:         true,
+		Price:         3000,
+		Size:          0.25,
+		ClientOrderID: &cloid,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
+		},
+	}
+
+	createWork := recomma.OrderWork{
+		OrderId:  oid,
+		Action:   recomma.Action{Type: recomma.ActionCreate, Create: &order},
+		BotEvent: recomma.BotEvent{RowID: 1},
+	}
+
+	require.NoError(t, emitter.Emit(ctx, createWork))
+
+	storedOrder, exists := ts.GetOrder(cloid)
+	require.True(t, exists)
+	require.Equal(t, "open", strings.ToLower(storedOrder.Status))
+
+	cancelReq := hyperliquid.CancelOrderRequestByCloid{
+		Coin:  order.Coin,
+		Cloid: cloid,
+	}
+	cancelWork := recomma.OrderWork{
+		OrderId:  oid,
+		Action:   recomma.Action{Type: recomma.ActionCancel, Cancel: &cancelReq},
+		BotEvent: recomma.BotEvent{RowID: 2},
+	}
+
+	require.NoError(t, emitter.Emit(ctx, cancelWork))
+
+	action, found, err := store.LoadHyperliquidSubmission(ctx, oid)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, recomma.ActionCancel, action.Type)
+	require.NotNil(t, action.Cancel)
+	require.Equal(t, cloid, action.Cancel.Cloid)
+
+	canceledOrder, exists := ts.GetOrder(cloid)
+	require.True(t, exists)
+	require.Equal(t, "canceled", strings.ToLower(canceledOrder.Status))
 }
 
 func TestApplyIOCOffsetIgnoresNonIOCOrders(t *testing.T) {

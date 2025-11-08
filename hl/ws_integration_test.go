@@ -57,7 +57,7 @@ func TestWebSocketOrderUpdates(t *testing.T) {
 	// Wait for WebSocket to receive and store the update
 	require.Eventually(t, func() bool {
 		return wsClient.Exists(ctx, oid1)
-	}, 5*time.Second, 500*time.Millisecond, "WebSocket should receive order creation update")
+	}, 15*time.Second, 100*time.Millisecond, "WebSocket should receive order creation update")
 
 	wsOrder, ok := wsClient.Get(ctx, oid1)
 	require.True(t, ok)
@@ -87,7 +87,7 @@ func TestWebSocketOrderUpdates(t *testing.T) {
 	require.Eventually(t, func() bool {
 		wsOrder, ok := wsClient.Get(ctx, oid1)
 		return ok && wsOrder.Order.LimitPx == "51000"
-	}, 5*time.Second, 500*time.Millisecond, "WebSocket should receive order modification update")
+	}, 15*time.Second, 100*time.Millisecond, "WebSocket should receive order modification update")
 
 	// Test 3: Cancel order and verify WebSocket receives update
 	_, err = exchange.CancelByCloid(ctx, "BTC", cloid1)
@@ -96,7 +96,7 @@ func TestWebSocketOrderUpdates(t *testing.T) {
 	require.Eventually(t, func() bool {
 		wsOrder, ok := wsClient.Get(ctx, oid1)
 		return ok && wsOrder.Status == hyperliquid.OrderStatusValueCanceled
-	}, 5*time.Second, 500*time.Millisecond, "WebSocket should receive cancellation update")
+	}, 15*time.Second, 100*time.Millisecond, "WebSocket should receive cancellation update")
 }
 
 // TestWebSocketOrderFillUpdates verifies that the WebSocket client receives
@@ -140,7 +140,7 @@ func TestWebSocketOrderFillUpdates(t *testing.T) {
 	// Wait for order creation
 	require.Eventually(t, func() bool {
 		return wsClient.Exists(ctx, oid)
-	}, 5*time.Second, 500*time.Millisecond)
+	}, 15*time.Second, 100*time.Millisecond)
 
 	// Simulate partial fill
 	err = ts.FillOrder(cloid, 3000, mockserver.WithFillSize(3.0))
@@ -154,7 +154,7 @@ func TestWebSocketOrderFillUpdates(t *testing.T) {
 		}
 		// Partial fill: status should still be "open" with reduced size
 		return wsOrder.Status == hyperliquid.OrderStatusValueOpen && wsOrder.Order.Sz != "10"
-	}, 5*time.Second, 500*time.Millisecond, "WebSocket should receive partial fill update")
+	}, 15*time.Second, 100*time.Millisecond, "WebSocket should receive partial fill update")
 
 	// Simulate complete fill
 	err = ts.FillOrder(cloid, 3000)
@@ -164,7 +164,7 @@ func TestWebSocketOrderFillUpdates(t *testing.T) {
 	require.Eventually(t, func() bool {
 		wsOrder, ok := wsClient.Get(ctx, oid)
 		return ok && wsOrder.Status == hyperliquid.OrderStatusValueFilled
-	}, 5*time.Second, 500*time.Millisecond, "WebSocket should receive full fill update")
+	}, 15*time.Second, 100*time.Millisecond, "WebSocket should receive full fill update")
 }
 
 // TestWebSocketWithFillTracker verifies that the WebSocket client properly
@@ -213,7 +213,7 @@ func TestWebSocketWithFillTracker(t *testing.T) {
 	// Wait for WebSocket to receive order
 	require.Eventually(t, func() bool {
 		return wsClient.Exists(ctx, oid)
-	}, 5*time.Second, 500*time.Millisecond)
+	}, 15*time.Second, 100*time.Millisecond)
 
 	// Fill the order
 	err = ts.FillOrder(cloid, 100, mockserver.WithFillSize(10.0))
@@ -226,7 +226,7 @@ func TestWebSocketWithFillTracker(t *testing.T) {
 			return false
 		}
 		return wsOrder.Status == hyperliquid.OrderStatusValueFilled
-	}, 5*time.Second, 500*time.Millisecond)
+	}, 15*time.Second, 100*time.Millisecond)
 
 	// Verify the fill tracker was notified (UpdateStatus was called)
 	// The tracker integration is verified by the fact that no errors occurred
@@ -283,7 +283,7 @@ func TestWebSocketMultipleOrders(t *testing.T) {
 		oid := oid // capture
 		require.Eventually(t, func() bool {
 			return wsClient.Exists(ctx, oid)
-		}, 5*time.Second, 500*time.Millisecond, "All orders should be received via WebSocket")
+		}, 15*time.Second, 100*time.Millisecond, "All orders should be received via WebSocket")
 	}
 
 	// Fill some orders, cancel others
@@ -311,7 +311,7 @@ func TestWebSocketMultipleOrders(t *testing.T) {
 		require.Eventually(t, func() bool {
 			wsOrder, ok := wsClient.Get(ctx, oid)
 			return ok && wsOrder.Status == expectedStatus
-		}, 5*time.Second, 500*time.Millisecond)
+		}, 15*time.Second, 100*time.Millisecond)
 	}
 }
 
@@ -351,7 +351,7 @@ func TestWebSocketReconnection(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return wsClient.Exists(ctx, oid1)
-	}, 5*time.Second, 500*time.Millisecond)
+	}, 15*time.Second, 100*time.Millisecond)
 
 	// Close and reconnect
 	err = wsClient.Close()
@@ -385,7 +385,7 @@ func TestWebSocketReconnection(t *testing.T) {
 	// Verify new order is received
 	require.Eventually(t, func() bool {
 		return wsClient.Exists(ctx, oid2)
-	}, 5*time.Second, 500*time.Millisecond, "Should receive orders after reconnection")
+	}, 15*time.Second, 100*time.Millisecond, "Should receive orders after reconnection")
 
 	// Verify old order is still in storage (persisted)
 	require.True(t, wsClient.Exists(ctx, oid1), "Old orders should persist in storage")

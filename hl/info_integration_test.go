@@ -17,12 +17,12 @@ func TestInfoQueryOrderByCloid(t *testing.T) {
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)
 
+	exchange, wallet := newMockExchange(t, ts.URL())
+
 	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
-		Wallet:  "0xtest",
+		Wallet:  wallet,
 	})
-
-	exchange := newMockExchange(t, ts.URL())
 
 	oid := orderid.OrderId{BotID: 1, DealID: 2, BotEventID: 3}
 	cloid := oid.Hex()
@@ -56,9 +56,11 @@ func TestInfoQueryNonExistentOrder(t *testing.T) {
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)
 
+	_, wallet := newMockExchange(t, ts.URL())
+
 	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
-		Wallet:  "0xtest",
+		Wallet:  wallet,
 	})
 
 	oid := orderid.OrderId{BotID: 999, DealID: 888, BotEventID: 777}
@@ -77,12 +79,12 @@ func TestInfoQueryCanceledOrder(t *testing.T) {
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)
 
+	exchange, wallet := newMockExchange(t, ts.URL())
+
 	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
-		Wallet:  "0xtest",
+		Wallet:  wallet,
 	})
-
-	exchange := newMockExchange(t, ts.URL())
 
 	oid := orderid.OrderId{BotID: 5, DealID: 6, BotEventID: 7}
 	cloid := oid.Hex()
@@ -117,12 +119,12 @@ func TestInfoQueryFilledOrder(t *testing.T) {
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)
 
+	exchange, wallet := newMockExchange(t, ts.URL())
+
 	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
-		Wallet:  "0xtest",
+		Wallet:  wallet,
 	})
-
-	exchange := newMockExchange(t, ts.URL())
 
 	oid := orderid.OrderId{BotID: 10, DealID: 20, BotEventID: 30}
 	cloid := oid.Hex()
@@ -156,12 +158,12 @@ func TestInfoQueryPartiallyFilledOrder(t *testing.T) {
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)
 
+	exchange, wallet := newMockExchange(t, ts.URL())
+
 	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
-		Wallet:  "0xtest",
+		Wallet:  wallet,
 	})
-
-	exchange := newMockExchange(t, ts.URL())
 
 	oid := orderid.OrderId{BotID: 15, DealID: 25, BotEventID: 35}
 	cloid := oid.Hex()
@@ -194,12 +196,12 @@ func TestInfoQueryMultipleOrders(t *testing.T) {
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)
 
+	exchange, wallet := newMockExchange(t, ts.URL())
+
 	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
-		Wallet:  "0xtest",
+		Wallet:  wallet,
 	})
-
-	exchange := newMockExchange(t, ts.URL())
 
 	// Create multiple orders
 	const orderCount = 5
@@ -240,12 +242,12 @@ func TestInfoQueryOrderConversionToWsOrder(t *testing.T) {
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)
 
+	exchange, wallet := newMockExchange(t, ts.URL())
+
 	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
-		Wallet:  "0xtest",
+		Wallet:  wallet,
 	})
-
-	exchange := newMockExchange(t, ts.URL())
 
 	oid := orderid.OrderId{BotID: 42, DealID: 84, BotEventID: 126}
 	cloid := oid.Hex()

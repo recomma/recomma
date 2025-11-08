@@ -24,9 +24,11 @@ func TestStatusRefresherWithMockServer(t *testing.T) {
 	ts := mockserver.NewTestServer(t)
 	store := newIntegrationTestStore(t)
 
+	exchange, wallet := newMockExchange(t, ts.URL())
+
 	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
-		Wallet:  "0xtest",
+		Wallet:  wallet,
 	})
 
 	oid1 := orderid.OrderId{BotID: 1, DealID: 2, BotEventID: 3}
@@ -56,8 +58,6 @@ func TestStatusRefresherWithMockServer(t *testing.T) {
 			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
 		},
 	}
-
-	exchange := newMockExchange(t, ts.URL())
 	_, err := exchange.Order(ctx, order1, nil)
 	require.NoError(t, err)
 	_, err = exchange.Order(ctx, order2, nil)
@@ -139,9 +139,11 @@ func TestStatusRefresherHandlesCanceledOrders(t *testing.T) {
 	ts := mockserver.NewTestServer(t)
 	store := newIntegrationTestStore(t)
 
+	exchange, wallet := newMockExchange(t, ts.URL())
+
 	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
-		Wallet:  "0xtest",
+		Wallet:  wallet,
 	})
 
 	oid := orderid.OrderId{BotID: 20, DealID: 30, BotEventID: 40}
@@ -156,8 +158,6 @@ func TestStatusRefresherHandlesCanceledOrders(t *testing.T) {
 			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
 		},
 	}
-
-	exchange := newMockExchange(t, ts.URL())
 	_, err := exchange.Order(ctx, order, nil)
 	require.NoError(t, err)
 
@@ -186,9 +186,11 @@ func TestStatusRefresherWithFillTracker(t *testing.T) {
 	ts := mockserver.NewTestServer(t)
 	store := newIntegrationTestStore(t)
 
+	exchange, wallet := newMockExchange(t, ts.URL())
+
 	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
-		Wallet:  "0xtest",
+		Wallet:  wallet,
 	})
 
 	tracker := &mockStatusTracker{updates: make(map[string]hyperliquid.WsOrder)}
@@ -205,8 +207,6 @@ func TestStatusRefresherWithFillTracker(t *testing.T) {
 			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
 		},
 	}
-
-	exchange := newMockExchange(t, ts.URL())
 	_, err := exchange.Order(ctx, order, nil)
 	require.NoError(t, err)
 
@@ -233,12 +233,12 @@ func TestStatusRefresherConcurrentRefresh(t *testing.T) {
 	ts := mockserver.NewTestServer(t)
 	store := newIntegrationTestStore(t)
 
+	exchange, wallet := newMockExchange(t, ts.URL())
+
 	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
-		Wallet:  "0xtest",
+		Wallet:  wallet,
 	})
-
-	exchange := newMockExchange(t, ts.URL())
 
 	// Create 10 orders
 	const orderCount = 10
@@ -287,9 +287,11 @@ func TestStatusRefresherTimeout(t *testing.T) {
 	ts := mockserver.NewTestServer(t)
 	store := newIntegrationTestStore(t)
 
+	exchange, wallet := newMockExchange(t, ts.URL())
+
 	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
-		Wallet:  "0xtest",
+		Wallet:  wallet,
 	})
 
 	oid := orderid.OrderId{BotID: 1, DealID: 2, BotEventID: 3}
@@ -304,8 +306,6 @@ func TestStatusRefresherTimeout(t *testing.T) {
 			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
 		},
 	}
-
-	exchange := newMockExchange(t, ts.URL())
 	_, err := exchange.Order(ctx, order, nil)
 	require.NoError(t, err)
 
@@ -391,7 +391,7 @@ func (s *stubOrderStatusClient) QueryOrderByCloid(_ context.Context, cloid strin
 	return &hyperliquid.OrderQueryResult{Status: hyperliquid.OrderQueryStatusError}, nil
 }
 
-func newMockExchange(t *testing.T, baseURL string) *hyperliquid.Exchange {
+func newMockExchange(t *testing.T, baseURL string) (*hyperliquid.Exchange, string) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -415,5 +415,5 @@ func newMockExchange(t *testing.T, baseURL string) *hyperliquid.Exchange {
 		nil,
 	)
 
-	return exchange
+	return exchange, walletAddr
 }

@@ -60,7 +60,7 @@ func TestHyperLiquidEmitterModifyOrder(t *testing.T) {
 
 	// Modify order
 	modifyReq := hyperliquid.ModifyOrderRequest{
-		Oid: originalOid,
+		Oid: &originalOid,
 		Order: hyperliquid.CreateOrderRequest{
 			Coin:          originalOrder.Coin,
 			IsBuy:         originalOrder.IsBuy,
@@ -137,7 +137,7 @@ func TestHyperLiquidEmitterModifyThenFill(t *testing.T) {
 
 	// Modify to increase size
 	modifyReq := hyperliquid.ModifyOrderRequest{
-		Oid: originalOid,
+		Oid: &originalOid,
 		Order: hyperliquid.CreateOrderRequest{
 			Coin:          order.Coin,
 			IsBuy:         order.IsBuy,
@@ -204,7 +204,7 @@ func TestHyperLiquidEmitterModifyThenCancel(t *testing.T) {
 
 	// Modify
 	modifyReq := hyperliquid.ModifyOrderRequest{
-		Oid: originalOid,
+		Oid: &originalOid,
 		Order: hyperliquid.CreateOrderRequest{
 			Coin:          order.Coin,
 			IsBuy:         order.IsBuy,
@@ -283,7 +283,7 @@ func TestHyperLiquidEmitterMultipleModifications(t *testing.T) {
 
 	// First modification
 	modifyReq1 := hyperliquid.ModifyOrderRequest{
-		Oid: currentOid,
+		Oid: &currentOid,
 		Order: hyperliquid.CreateOrderRequest{
 			Coin:          order.Coin,
 			IsBuy:         order.IsBuy,
@@ -311,7 +311,7 @@ func TestHyperLiquidEmitterMultipleModifications(t *testing.T) {
 
 	// Second modification
 	modifyReq2 := hyperliquid.ModifyOrderRequest{
-		Oid: currentOid,
+		Oid: &currentOid,
 		Order: hyperliquid.CreateOrderRequest{
 			Coin:          order.Coin,
 			IsBuy:         order.IsBuy,
@@ -383,7 +383,7 @@ func TestHyperLiquidEmitterModifyReduceOnlyOrder(t *testing.T) {
 
 	// Modify the reduce-only order
 	modifyReq := hyperliquid.ModifyOrderRequest{
-		Oid: originalOid,
+		Oid: &originalOid,
 		Order: hyperliquid.CreateOrderRequest{
 			Coin:          order.Coin,
 			IsBuy:         order.IsBuy,

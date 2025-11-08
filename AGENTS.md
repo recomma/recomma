@@ -97,7 +97,9 @@
 
 ## Commits
 Prefer smaller commits instead of one massive one. This allows to track the changes more easily.
-The author of the commit is yourself, not the user you do it for.
+Add a co-authored to the commit message, use your own verified email if present else agent@terwey.me
+
+   Co-authored-by: Your Name <agent@terwey.me>
 
 ### Commit Messages
 - All PR titles and commit messages must follow the Conventional Commits specification (https://www.conventionalcommits.org/).

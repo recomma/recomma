@@ -215,7 +215,7 @@ func TestStorageHyperliquidRoundTrip(t *testing.T) {
 	}
 
 	modify1 := hyperliquid.ModifyOrderRequest{
-		Oid: cloid,
+		Cloid: &hyperliquid.Cloid{Value: cloid},
 		Order: hyperliquid.CreateOrderRequest{
 			Coin:          req1.Coin,
 			IsBuy:         req1.IsBuy,
@@ -442,7 +442,7 @@ func TestStorageListHyperliquidOrderIds(t *testing.T) {
 
 	// Re-insert oid1 with modify to ensure we don't duplicate entries.
 	modify := hyperliquid.ModifyOrderRequest{
-		Oid:   oid1.Hex(),
+		Cloid: &hyperliquid.Cloid{Value: oid1.Hex()},
 		Order: req,
 	}
 	require.NoError(t, store.AppendHyperliquidModify(ctx, DefaultHyperliquidIdentifier(oid1), modify, 0))

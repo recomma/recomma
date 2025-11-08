@@ -1635,29 +1635,12 @@ func convertHyperliquidModify(req hyperliquid.ModifyOrderRequest) (HyperliquidMo
 		Order: convertHyperliquidCreateOrder(req.Order),
 	}
 
-	switch oid := req.Oid.(type) {
-	case nil:
-	case int64:
-		action.Oid = &oid
-	case int:
-		v := int64(oid)
-		action.Oid = &v
-	case float64:
-		v := int64(oid)
-		action.Oid = &v
-	case string:
-		val := oid
-		action.Cloid = &val
-	case *string:
-		if oid != nil {
-			val := *oid
-			action.Cloid = &val
-		}
-	case fmt.Stringer:
-		val := oid.String()
-		action.Cloid = &val
-	default:
-		// unknown identifier shape
+	if req.Cloid != nil {
+		action.Cloid = &req.Cloid.Value
+	}
+
+	if req.Oid != nil {
+		action.Oid = req.Oid
 	}
 
 	if action.Oid == nil && action.Cloid == nil && req.Order.ClientOrderID != nil {

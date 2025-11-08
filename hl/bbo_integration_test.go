@@ -223,7 +223,7 @@ func TestBBOTimeout(t *testing.T) {
 
 	// Don't subscribe to BBO for this coin
 	// Create a very short timeout context
-	timeoutCtx, timeoutCancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	timeoutCtx, timeoutCancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer timeoutCancel()
 
 	// This should timeout because we haven't subscribed to FAKE coin

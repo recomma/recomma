@@ -233,7 +233,7 @@ func TestOrderLifecycleModifyOrder(t *testing.T) {
 	modifySize := 12.0
 
 	_, err = exchange.ModifyOrder(ctx, hyperliquid.ModifyOrderRequest{
-		Oid: storedOrder.Order.Oid,
+		Oid: &storedOrder.Order.Oid,
 		Order: hyperliquid.CreateOrderRequest{
 			Coin:          order.Coin,
 			IsBuy:         order.IsBuy,
@@ -311,7 +311,7 @@ func TestOrderLifecycleMultipleOrders(t *testing.T) {
 			stored, exists := ts.GetOrder(cloid)
 			require.True(t, exists)
 			_, err = exchange.ModifyOrder(ctx, hyperliquid.ModifyOrderRequest{
-				Oid: stored.Order.Oid,
+				Oid: &stored.Order.Oid,
 				Order: hyperliquid.CreateOrderRequest{
 					Coin:          tc.coin,
 					IsBuy:         tc.isBuy,

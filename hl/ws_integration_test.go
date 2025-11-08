@@ -29,7 +29,7 @@ func TestWebSocketOrderUpdates(t *testing.T) {
 	wallet := "0xtest"
 
 	// Create WebSocket client
-	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
+	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
 
@@ -67,7 +67,7 @@ func TestWebSocketOrderUpdates(t *testing.T) {
 	require.True(t, exists)
 
 	_, err = exchange.ModifyOrder(ctx, hyperliquid.ModifyOrderRequest{
-		Oid: storedOrder.Order.Oid,
+		Oid: &storedOrder.Order.Oid,
 		Order: hyperliquid.CreateOrderRequest{
 			Coin:          "BTC",
 			IsBuy:         true,
@@ -110,7 +110,7 @@ func TestWebSocketOrderFillUpdates(t *testing.T) {
 	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
-	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
+	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
 
@@ -180,7 +180,7 @@ func TestWebSocketWithFillTracker(t *testing.T) {
 	tracker := filltracker.New(store, nil)
 
 	// Create WebSocket client with fill tracker
-	wsClient, err := ws.New(ctx, store, tracker, venueID, wallet, ts.URL())
+	wsClient, err := ws.New(ctx, store, tracker, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
 
@@ -240,7 +240,7 @@ func TestWebSocketMultipleOrders(t *testing.T) {
 	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
-	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
+	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
 
@@ -320,7 +320,7 @@ func TestWebSocketReconnection(t *testing.T) {
 	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
-	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
+	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 
 	exchange := newMockExchange(t, ts.URL())
@@ -351,7 +351,7 @@ func TestWebSocketReconnection(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create new WebSocket client (simulating reconnection)
-	wsClient, err = ws.New(ctx, store, nil, venueID, wallet, ts.URL())
+	wsClient, err = ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
 

@@ -33,11 +33,11 @@ func TestMultiWalletOrderIsolation(t *testing.T) {
 	venueID2 := recomma.VenueID("test-venue-2")
 
 	// Create WebSocket clients for both wallets
-	wsClient1, err := ws.New(ctx, store, nil, venueID1, wallet1, ts.URL())
+	wsClient1, err := ws.New(ctx, store, nil, venueID1, wallet1, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient1.Close()
 
-	wsClient2, err := ws.New(ctx, store, nil, venueID2, wallet2, ts.URL())
+	wsClient2, err := ws.New(ctx, store, nil, venueID2, wallet2, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient2.Close()
 
@@ -141,7 +141,7 @@ func TestMultiWalletConcurrentOrders(t *testing.T) {
 		wallet := fmt.Sprintf("0xwallet%d", i)
 		venueID := recomma.VenueID(fmt.Sprintf("test-venue-%d", i+1))
 
-		wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
+		wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 		require.NoError(t, err)
 		defer wsClient.Close()
 
@@ -250,7 +250,7 @@ func TestMultiWalletBBOSharing(t *testing.T) {
 
 	// Create WebSocket clients for all wallets
 	for i, w := range wallets {
-		wsClient, err := ws.New(ctx, store, nil, w.venueID, w.wallet, ts.URL())
+		wsClient, err := ws.New(ctx, store, nil, w.venueID, w.wallet, ts.WebSocketURL())
 		require.NoError(t, err)
 		defer wsClient.Close()
 		clients[i] = wsClient
@@ -306,7 +306,7 @@ func TestMultiWalletConcurrentBBOSubscriptions(t *testing.T) {
 			wallet := fmt.Sprintf("0xwallet%d", idx)
 			venueID := recomma.VenueID(fmt.Sprintf("test-venue-%d", idx+1))
 
-			wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
+			wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 			if err != nil {
 				for range coins {
 					results <- subscriptionResult{idx, "", nil, err}
@@ -372,7 +372,7 @@ func TestMultiWalletOrderAndBBOConcurrent(t *testing.T) {
 			wallet := fmt.Sprintf("0xwallet%d", idx)
 			venueID := recomma.VenueID(fmt.Sprintf("test-venue-%d", idx+1))
 
-			wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
+			wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 			require.NoError(t, err)
 			defer wsClient.Close()
 

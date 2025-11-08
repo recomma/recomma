@@ -482,8 +482,7 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 		require.Equal(t, recomma.ActionModify, work.Action.Type)
 		require.InDelta(t, 15, work.Action.Modify.Order.Size, 1e-6)
 		require.True(t, work.Action.Modify.Order.ReduceOnly)
-		oid, ok := work.Action.Modify.Oid.(string)
-		require.True(t, ok, "expected string OID")
+		oid := work.Action.Modify.Cloid.Value
 		require.Equal(t, tpOid.Hex(), oid)
 		require.Equal(t, tpIdent, work.Identifier)
 	})

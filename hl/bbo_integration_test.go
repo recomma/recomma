@@ -25,7 +25,7 @@ func TestBBOSubscription(t *testing.T) {
 	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
-	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
+	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
 
@@ -54,7 +54,7 @@ func TestBBOMultipleCoins(t *testing.T) {
 	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
-	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
+	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
 
@@ -89,7 +89,7 @@ func TestBBOSubscriptionChannel(t *testing.T) {
 	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
-	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
+	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
 
@@ -125,7 +125,7 @@ func TestBBOMultipleSubscribers(t *testing.T) {
 	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
-	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
+	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
 
@@ -185,7 +185,7 @@ func TestBBOCaseInsensitive(t *testing.T) {
 	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
-	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
+	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
 
@@ -217,7 +217,7 @@ func TestBBOTimeout(t *testing.T) {
 	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
-	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
+	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
 
@@ -244,7 +244,7 @@ func TestBBOSubscriptionCleanup(t *testing.T) {
 	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
-	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
+	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
 
@@ -287,7 +287,7 @@ func TestBBOForIOCOrder(t *testing.T) {
 	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
-	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
+	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
 
@@ -325,7 +325,7 @@ func TestBBOConcurrentCoins(t *testing.T) {
 	venueID := recomma.VenueID("test-venue-1")
 	wallet := "0xtest"
 
-	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.URL())
+	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
 

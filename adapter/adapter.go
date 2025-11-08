@@ -139,7 +139,7 @@ func ToCancelByCloidRequest(currency string, oid orderid.OrderId) hyperliquid.Ca
 func ToModifyOrderRequest(currency string, next recomma.BotEvent, oid orderid.OrderId) hyperliquid.ModifyOrderRequest {
 	req := ToCreateOrderRequest(currency, next, oid)
 	return hyperliquid.ModifyOrderRequest{
-		Oid:   oid.Hex(),
+		Cloid: &hyperliquid.Cloid{Value: oid.Hex()},
 		Order: req,
 	}
 }

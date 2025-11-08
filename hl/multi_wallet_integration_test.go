@@ -26,9 +26,11 @@ func TestMultiWalletOrderIsolation(t *testing.T) {
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
 
+	// Create exchanges for both wallets
+	exchange1, wallet1 := newMockExchange(t, ts.URL())
+	exchange2, wallet2 := newMockExchange(t, ts.URL())
+
 	// Create two separate wallets with different venue IDs
-	wallet1 := "0xwallet1"
-	wallet2 := "0xwallet2"
 	venueID1 := recomma.VenueID("test-venue-1")
 	venueID2 := recomma.VenueID("test-venue-2")
 
@@ -40,10 +42,6 @@ func TestMultiWalletOrderIsolation(t *testing.T) {
 	wsClient2, err := ws.New(ctx, store, nil, venueID2, wallet2, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient2.Close()
-
-	// Create exchanges for both wallets
-	exchange1 := newMockExchange(t, ts.URL())
-	exchange2 := newMockExchange(t, ts.URL())
 
 	// Create order for wallet 1
 	oid1 := orderid.OrderId{BotID: 1, DealID: 1, BotEventID: 1}
@@ -80,21 +78,21 @@ func TestMultiWalletOrderIsolation(t *testing.T) {
 	_, err = exchange2.Order(ctx, order2, nil)
 	require.NoError(t, err)
 
-	// Verify wallet1's client doesn't see wallet2's order
-	time.Sleep(500 * time.Millisecond) // Give time for any potential cross-contamination
+	// Wait for WebSocket updates to be received
+	time.Sleep(500 * time.Millisecond)
 
-	// Wallet 1 should only see its own order
+	// Wallet 1 should see its own order
 	exists1 := wsClient1.Exists(ctx, oid1)
 	exists2InWallet1 := wsClient1.Exists(ctx, oid2)
 
-	// Wallet 2 should only see its own order
+	// Wallet 2 should see its own order
 	exists2 := wsClient2.Exists(ctx, oid2)
 	exists1InWallet2 := wsClient2.Exists(ctx, oid1)
 
-	// Each wallet should only see its own orders
-	require.False(t, exists1, "Wallet 1 shouldn't see its orders via WebSocket (different wallet address)")
+	// Each wallet should only see its own orders (testing isolation)
+	require.True(t, exists1, "Wallet 1 should see its own order")
 	require.False(t, exists2InWallet1, "Wallet 1 shouldn't see wallet 2's orders")
-	require.False(t, exists2, "Wallet 2 shouldn't see its orders via WebSocket (different wallet address)")
+	require.True(t, exists2, "Wallet 2 should see its own order")
 	require.False(t, exists1InWallet2, "Wallet 2 shouldn't see wallet 1's orders")
 
 	// Verify orders are in correct venue in storage
@@ -107,9 +105,9 @@ func TestMultiWalletOrderIsolation(t *testing.T) {
 	_, ok2, err := store.LoadHyperliquidStatus(ctx, ident2)
 	require.NoError(t, err)
 
-	// Orders should not be found because WebSocket is subscribed to wrong wallet
-	require.False(t, ok1, "Order should be isolated by wallet")
-	require.False(t, ok2, "Order should be isolated by wallet")
+	// Orders should be found because WebSocket is subscribed to the correct wallet
+	require.True(t, ok1, "Order 1 should be stored under wallet 1's identifier")
+	require.True(t, ok2, "Order 2 should be stored under wallet 2's identifier")
 }
 
 // TestMultiWalletConcurrentOrders verifies that multiple wallets can create
@@ -138,14 +136,12 @@ func TestMultiWalletConcurrentOrders(t *testing.T) {
 
 	// Create wallets and WebSocket clients
 	for i := 0; i < walletCount; i++ {
-		wallet := fmt.Sprintf("0xwallet%d", i)
+		exchange, wallet := newMockExchange(t, ts.URL())
 		venueID := recomma.VenueID(fmt.Sprintf("test-venue-%d", i+1))
 
 		wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 		require.NoError(t, err)
 		defer wsClient.Close()
-
-		exchange := newMockExchange(t, ts.URL())
 
 		wallets[i] = walletData{
 			wallet:   wallet,
@@ -369,14 +365,12 @@ func TestMultiWalletOrderAndBBOConcurrent(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 
-			wallet := fmt.Sprintf("0xwallet%d", idx)
+			exchange, wallet := newMockExchange(t, ts.URL())
 			venueID := recomma.VenueID(fmt.Sprintf("test-venue-%d", idx+1))
 
 			wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 			require.NoError(t, err)
 			defer wsClient.Close()
-
-			exchange := newMockExchange(t, ts.URL())
 
 			// Subscribe to BBO
 			wsClient.EnsureBBO("BTC")

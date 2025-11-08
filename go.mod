@@ -3,16 +3,16 @@ module github.com/recomma/recomma
 go 1.25.0
 
 require (
-	github.com/ethereum/go-ethereum v1.16.5
+	github.com/ethereum/go-ethereum v1.16.7
 	github.com/go-webauthn/webauthn v0.14.0
 	github.com/google/go-cmp v0.7.0
 	github.com/joho/godotenv v1.5.1
 	github.com/oapi-codegen/nullable v1.1.0
 	github.com/oapi-codegen/runtime v1.1.2
 	github.com/recomma/3commas-sdk-go v0.1.0
-	github.com/recomma/hyperliquid-mock v0.0.3
+	github.com/recomma/hyperliquid-mock v0.1.1
 	github.com/rs/cors v1.11.1
-	github.com/sonirico/go-hyperliquid v0.16.1
+	github.com/sonirico/go-hyperliquid v0.21.0
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
 	github.com/vearutop/statigz v1.5.0
@@ -24,6 +24,7 @@ require (
 require (
 	cel.dev/expr v0.24.0 // indirect
 	filippo.io/edwards25519 v1.1.0 // indirect
+	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20251001021608-1fe7b43fc4d6 // indirect
 	github.com/andybalholm/brotli v1.1.1 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
@@ -129,8 +130,6 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
-
-replace github.com/sonirico/go-hyperliquid => github.com/terwey/go-hyperliquid v0.0.0-20251108093833-994c64afb4c4
 
 // replace github.com/terwey/3commas-sdk-go => ../3commas-sdk-go
 

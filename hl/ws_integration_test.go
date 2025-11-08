@@ -26,14 +26,13 @@ func TestWebSocketOrderUpdates(t *testing.T) {
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
 	venueID := recomma.VenueID("test-venue-1")
-	wallet := "0xtest"
+
+	exchange, wallet := newMockExchange(t, ts.URL())
 
 	// Create WebSocket client
 	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
-
-	exchange := newMockExchange(t, ts.URL())
 
 	// Test 1: Create order and verify WebSocket receives "open" status
 	oid1 := orderid.OrderId{BotID: 1, DealID: 1, BotEventID: 1}
@@ -108,13 +107,12 @@ func TestWebSocketOrderFillUpdates(t *testing.T) {
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
 	venueID := recomma.VenueID("test-venue-1")
-	wallet := "0xtest"
+
+	exchange, wallet := newMockExchange(t, ts.URL())
 
 	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
-
-	exchange := newMockExchange(t, ts.URL())
 
 	// Create order
 	oid := orderid.OrderId{BotID: 2, DealID: 2, BotEventID: 2}
@@ -174,7 +172,8 @@ func TestWebSocketWithFillTracker(t *testing.T) {
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
 	venueID := recomma.VenueID("test-venue-1")
-	wallet := "0xtest"
+
+	exchange, wallet := newMockExchange(t, ts.URL())
 
 	// Create fill tracker
 	tracker := filltracker.New(store, nil)
@@ -183,8 +182,6 @@ func TestWebSocketWithFillTracker(t *testing.T) {
 	wsClient, err := ws.New(ctx, store, tracker, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
-
-	exchange := newMockExchange(t, ts.URL())
 
 	// Create an order
 	oid := orderid.OrderId{BotID: 3, DealID: 3, BotEventID: 1}
@@ -238,13 +235,12 @@ func TestWebSocketMultipleOrders(t *testing.T) {
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
 	venueID := recomma.VenueID("test-venue-1")
-	wallet := "0xtest"
+
+	exchange, wallet := newMockExchange(t, ts.URL())
 
 	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
-
-	exchange := newMockExchange(t, ts.URL())
 
 	// Create 5 orders concurrently
 	orderCount := 5
@@ -318,12 +314,11 @@ func TestWebSocketReconnection(t *testing.T) {
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
 	venueID := recomma.VenueID("test-venue-1")
-	wallet := "0xtest"
+
+	exchange, wallet := newMockExchange(t, ts.URL())
 
 	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
-
-	exchange := newMockExchange(t, ts.URL())
 
 	// Create an order before disconnect
 	oid1 := orderid.OrderId{BotID: 5, DealID: 5, BotEventID: 1}

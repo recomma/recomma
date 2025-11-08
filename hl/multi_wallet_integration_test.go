@@ -26,9 +26,11 @@ func TestMultiWalletOrderIsolation(t *testing.T) {
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
 
+	// Create exchanges for both wallets
+	exchange1, wallet1 := newMockExchange(t, ts.URL())
+	exchange2, wallet2 := newMockExchange(t, ts.URL())
+
 	// Create two separate wallets with different venue IDs
-	wallet1 := "0xwallet1"
-	wallet2 := "0xwallet2"
 	venueID1 := recomma.VenueID("test-venue-1")
 	venueID2 := recomma.VenueID("test-venue-2")
 
@@ -40,10 +42,6 @@ func TestMultiWalletOrderIsolation(t *testing.T) {
 	wsClient2, err := ws.New(ctx, store, nil, venueID2, wallet2, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient2.Close()
-
-	// Create exchanges for both wallets
-	exchange1 := newMockExchange(t, ts.URL())
-	exchange2 := newMockExchange(t, ts.URL())
 
 	// Create order for wallet 1
 	oid1 := orderid.OrderId{BotID: 1, DealID: 1, BotEventID: 1}
@@ -138,14 +136,12 @@ func TestMultiWalletConcurrentOrders(t *testing.T) {
 
 	// Create wallets and WebSocket clients
 	for i := 0; i < walletCount; i++ {
-		wallet := fmt.Sprintf("0xwallet%d", i)
+		exchange, wallet := newMockExchange(t, ts.URL())
 		venueID := recomma.VenueID(fmt.Sprintf("test-venue-%d", i+1))
 
 		wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 		require.NoError(t, err)
 		defer wsClient.Close()
-
-		exchange := newMockExchange(t, ts.URL())
 
 		wallets[i] = walletData{
 			wallet:   wallet,
@@ -369,14 +365,12 @@ func TestMultiWalletOrderAndBBOConcurrent(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 
-			wallet := fmt.Sprintf("0xwallet%d", idx)
+			exchange, wallet := newMockExchange(t, ts.URL())
 			venueID := recomma.VenueID(fmt.Sprintf("test-venue-%d", idx+1))
 
 			wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 			require.NoError(t, err)
 			defer wsClient.Close()
-
-			exchange := newMockExchange(t, ts.URL())
 
 			// Subscribe to BBO
 			wsClient.EnsureBBO("BTC")

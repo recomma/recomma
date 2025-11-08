@@ -314,13 +314,13 @@ func TestMultiWalletConcurrentBBOSubscriptions(t *testing.T) {
 			// Subscribe to all coins concurrently
 			for _, coin := range coins {
 				coin := coin // capture
-				go func() {
+				wg.Go(func() {
 					wsClient.EnsureBBO(coin)
 					bboCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 					defer cancel()
 					bbo := wsClient.WaitForBestBidOffer(bboCtx, coin)
 					results <- subscriptionResult{idx, coin, bbo, nil}
-				}()
+				})
 			}
 		}(walletIdx)
 	}

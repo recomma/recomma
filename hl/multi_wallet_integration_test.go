@@ -78,21 +78,21 @@ func TestMultiWalletOrderIsolation(t *testing.T) {
 	_, err = exchange2.Order(ctx, order2, nil)
 	require.NoError(t, err)
 
-	// Verify wallet1's client doesn't see wallet2's order
-	time.Sleep(500 * time.Millisecond) // Give time for any potential cross-contamination
+	// Wait for WebSocket updates to be received
+	time.Sleep(500 * time.Millisecond)
 
-	// Wallet 1 should only see its own order
+	// Wallet 1 should see its own order
 	exists1 := wsClient1.Exists(ctx, oid1)
 	exists2InWallet1 := wsClient1.Exists(ctx, oid2)
 
-	// Wallet 2 should only see its own order
+	// Wallet 2 should see its own order
 	exists2 := wsClient2.Exists(ctx, oid2)
 	exists1InWallet2 := wsClient2.Exists(ctx, oid1)
 
-	// Each wallet should only see its own orders
-	require.False(t, exists1, "Wallet 1 shouldn't see its orders via WebSocket (different wallet address)")
+	// Each wallet should only see its own orders (testing isolation)
+	require.True(t, exists1, "Wallet 1 should see its own order")
 	require.False(t, exists2InWallet1, "Wallet 1 shouldn't see wallet 2's orders")
-	require.False(t, exists2, "Wallet 2 shouldn't see its orders via WebSocket (different wallet address)")
+	require.True(t, exists2, "Wallet 2 should see its own order")
 	require.False(t, exists1InWallet2, "Wallet 2 shouldn't see wallet 1's orders")
 
 	// Verify orders are in correct venue in storage
@@ -105,9 +105,9 @@ func TestMultiWalletOrderIsolation(t *testing.T) {
 	_, ok2, err := store.LoadHyperliquidStatus(ctx, ident2)
 	require.NoError(t, err)
 
-	// Orders should not be found because WebSocket is subscribed to wrong wallet
-	require.False(t, ok1, "Order should be isolated by wallet")
-	require.False(t, ok2, "Order should be isolated by wallet")
+	// Orders should be found because WebSocket is subscribed to the correct wallet
+	require.True(t, ok1, "Order 1 should be stored under wallet 1's identifier")
+	require.True(t, ok2, "Order 2 should be stored under wallet 2's identifier")
 }
 
 // TestMultiWalletConcurrentOrders verifies that multiple wallets can create

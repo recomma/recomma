@@ -10,7 +10,7 @@ require (
 	github.com/oapi-codegen/nullable v1.1.0
 	github.com/oapi-codegen/runtime v1.1.2
 	github.com/recomma/3commas-sdk-go v0.1.0
-	github.com/recomma/hyperliquid-mock v0.1.0
+	github.com/recomma/hyperliquid-mock v0.1.1
 	github.com/rs/cors v1.11.1
 	github.com/sonirico/go-hyperliquid v0.21.0
 	github.com/spf13/pflag v1.0.10

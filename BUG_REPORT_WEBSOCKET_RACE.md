@@ -1,5 +1,7 @@
 # Bug Report: WebSocket Order Updates Not Delivered with Concurrent Wallet Connections
 
+> **UPDATE**: This issue has been fixed in `hyperliquid-mock v0.1.1`. Upgrade to v0.1.1 or later to resolve the WebSocket race condition.
+
 ## Summary
 After upgrading from `hyperliquid-mock v0.0.3` to `v0.1.0` (which added wallet isolation), WebSocket clients intermittently fail to receive `orderUpdates` when multiple wallets are connected concurrently. This appears to be a race condition in the WebSocket update broadcasting mechanism.
 

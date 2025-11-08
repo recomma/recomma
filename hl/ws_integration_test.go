@@ -34,6 +34,9 @@ func TestWebSocketOrderUpdates(t *testing.T) {
 	require.NoError(t, err)
 	defer wsClient.Close()
 
+	// Give WebSocket subscription time to fully establish
+	time.Sleep(100 * time.Millisecond)
+
 	// Test 1: Create order and verify WebSocket receives "open" status
 	oid1 := orderid.OrderId{BotID: 1, DealID: 1, BotEventID: 1}
 	cloid1 := oid1.Hex()
@@ -114,6 +117,9 @@ func TestWebSocketOrderFillUpdates(t *testing.T) {
 	require.NoError(t, err)
 	defer wsClient.Close()
 
+	// Give WebSocket subscription time to fully establish
+	time.Sleep(100 * time.Millisecond)
+
 	// Create order
 	oid := orderid.OrderId{BotID: 2, DealID: 2, BotEventID: 2}
 	cloid := oid.Hex()
@@ -183,6 +189,9 @@ func TestWebSocketWithFillTracker(t *testing.T) {
 	require.NoError(t, err)
 	defer wsClient.Close()
 
+	// Give WebSocket subscription time to fully establish
+	time.Sleep(100 * time.Millisecond)
+
 	// Create an order
 	oid := orderid.OrderId{BotID: 3, DealID: 3, BotEventID: 1}
 	cloid := oid.Hex()
@@ -241,6 +250,9 @@ func TestWebSocketMultipleOrders(t *testing.T) {
 	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
+
+	// Give WebSocket subscription time to fully establish
+	time.Sleep(100 * time.Millisecond)
 
 	// Create 5 orders concurrently
 	orderCount := 5
@@ -349,6 +361,9 @@ func TestWebSocketReconnection(t *testing.T) {
 	wsClient, err = ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
+
+	// Give reconnected WebSocket time to fully establish subscription
+	time.Sleep(100 * time.Millisecond)
 
 	// Create another order after reconnect
 	oid2 := orderid.OrderId{BotID: 5, DealID: 5, BotEventID: 2}

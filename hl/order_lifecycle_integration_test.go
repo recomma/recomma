@@ -17,10 +17,10 @@ func TestOrderLifecycleCreateAndQuery(t *testing.T) {
 
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)
-	exchange := newMockExchange(t, ts.URL())
+	exchange, wallet := newMockExchange(t, ts.URL())
 	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
-		Wallet:  "0xtest",
+		Wallet:  wallet,
 	})
 
 	oid := orderid.OrderId{BotID: 1, DealID: 2, BotEventID: 3}
@@ -58,10 +58,10 @@ func TestOrderLifecycleCreateFillCancel(t *testing.T) {
 
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)
-	exchange := newMockExchange(t, ts.URL())
+	exchange, wallet := newMockExchange(t, ts.URL())
 	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
-		Wallet:  "0xtest",
+		Wallet:  wallet,
 	})
 
 	oid := orderid.OrderId{BotID: 5, DealID: 10, BotEventID: 15}
@@ -122,10 +122,10 @@ func TestOrderLifecyclePartialFill(t *testing.T) {
 
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)
-	exchange := newMockExchange(t, ts.URL())
+	exchange, wallet := newMockExchange(t, ts.URL())
 	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
-		Wallet:  "0xtest",
+		Wallet:  wallet,
 	})
 
 	oid := orderid.OrderId{BotID: 20, DealID: 30, BotEventID: 40}
@@ -162,10 +162,10 @@ func TestOrderLifecycleCancelOrder(t *testing.T) {
 
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)
-	exchange := newMockExchange(t, ts.URL())
+	exchange, wallet := newMockExchange(t, ts.URL())
 	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
-		Wallet:  "0xtest",
+		Wallet:  wallet,
 	})
 
 	oid := orderid.OrderId{BotID: 4, DealID: 5, BotEventID: 6}
@@ -203,10 +203,10 @@ func TestOrderLifecycleModifyOrder(t *testing.T) {
 
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)
-	exchange := newMockExchange(t, ts.URL())
+	exchange, wallet := newMockExchange(t, ts.URL())
 	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
-		Wallet:  "0xtest",
+		Wallet:  wallet,
 	})
 
 	oid := orderid.OrderId{BotID: 7, DealID: 8, BotEventID: 9}
@@ -266,10 +266,10 @@ func TestOrderLifecycleMultipleOrders(t *testing.T) {
 
 	ctx := context.Background()
 	ts := mockserver.NewTestServer(t)
-	exchange := newMockExchange(t, ts.URL())
+	exchange, wallet := newMockExchange(t, ts.URL())
 	info := hl.NewInfo(ctx, hl.ClientConfig{
 		BaseURL: ts.URL(),
-		Wallet:  "0xtest",
+		Wallet:  wallet,
 	})
 
 	orders := []struct {

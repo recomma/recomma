@@ -338,6 +338,10 @@ func TestWebSocketReconnection(t *testing.T) {
 	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 
+	// Wait for WebSocket subscription to be fully established
+	// We use a longer timeout here to handle CI environments where network/timing can be slower
+	time.Sleep(500 * time.Millisecond)
+
 	// Create an order before disconnect
 	oid1 := orderid.OrderId{BotID: 5, DealID: 5, BotEventID: 1}
 	cloid1 := oid1.Hex()

@@ -13,6 +13,8 @@ import type {
   ListVenuesResponse,
   ListVenueAssignmentsResponse,
   ListBotVenuesResponse,
+  VaultEncryptedPayload,
+  VaultSecretsBundle,
 } from '../types/api';
 
 /**
@@ -159,4 +161,48 @@ export async function fetchBotVenues(botId: number): Promise<BotVenueAssignmentR
 
   const data: ListBotVenuesResponse = await response.json();
   return data.items;
+}
+
+/**
+ * Fetches the encrypted vault payload
+ * GET /vault/payload
+ */
+export async function fetchVaultPayload(): Promise<VaultEncryptedPayload> {
+  const response = await fetch(buildOpsApiUrl('/vault/payload'), {
+    method: 'GET',
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || 'Failed to load vault payload');
+  }
+
+  return await response.json();
+}
+
+/**
+ * Updates the vault payload with new venue credentials
+ * PUT /vault/payload
+ */
+export async function updateVaultPayload(
+  encryptedPayload: VaultEncryptedPayload,
+  decryptedPayload: VaultSecretsBundle
+): Promise<void> {
+  const response = await fetch(buildOpsApiUrl('/vault/payload'), {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    credentials: 'include',
+    body: JSON.stringify({
+      encrypted_payload: encryptedPayload,
+      decrypted_payload: decryptedPayload,
+    }),
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || 'Failed to update vault payload');
+  }
 }

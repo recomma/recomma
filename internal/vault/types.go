@@ -2,6 +2,7 @@ package vault
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -94,35 +95,9 @@ type VenueSecret struct {
 }
 
 type wireData struct {
-	ThreeCommasAPIKey    string                 `json:"THREECOMMAS_API_KEY"`
-	ThreeCommasPrivate   string                 `json:"THREECOMMAS_PRIVATE_KEY"`
-	Venues               json.RawMessage        `json:"venues"`
-	LegacyWallet         string                 `json:"HYPERLIQUID_WALLET"`
-	LegacyPrivateKey     string                 `json:"HYPERLIQUID_PRIVATE_KEY"`
-	LegacyURL            string                 `json:"HYPERLIQUID_URL"`
-	LegacyVenueID        string                 `json:"HYPERLIQUID_VENUE_ID"`
-	LegacyVenueType      string                 `json:"HYPERLIQUID_VENUE_TYPE"`
-	LegacyVenueName      string                 `json:"HYPERLIQUID_VENUE_NAME"`
-	LegacyVenues         map[string]legacyVenue `json:"HYPERLIQUID_VENUES"`
-	LegacyVenuesFallback []legacyVenueWithID    `json:"hyperliquid_venues"`
-}
-
-type legacyVenue struct {
-	Wallet     string `json:"wallet"`
-	PrivateKey string `json:"private_key"`
-	APIURL     string `json:"api_url"`
-	Primary    bool   `json:"primary"`
-	Display    string `json:"display_name"`
-}
-
-type legacyVenueWithID struct {
-	ID         string `json:"id"`
-	Type       string `json:"type"`
-	Wallet     string `json:"wallet"`
-	PrivateKey string `json:"private_key"`
-	APIURL     string `json:"api_url"`
-	Primary    bool   `json:"primary"`
-	Display    string `json:"display_name"`
+	ThreeCommasAPIKey  string          `json:"THREECOMMAS_API_KEY"`
+	ThreeCommasPrivate string          `json:"THREECOMMAS_PRIVATE_KEY"`
+	Venues             json.RawMessage `json:"venues"`
 }
 
 type wireVenue struct {
@@ -136,14 +111,14 @@ type wireVenue struct {
 	Primary     bool                   `json:"is_primary"`
 }
 
-// UnmarshalJSON decodes both the new multi-venue format and legacy single venue payloads.
+// UnmarshalJSON decodes the multi-venue payload format.
 func (d *Data) UnmarshalJSON(raw []byte) error {
 	var payload wireData
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return err
 	}
 
-	venues, err := decodeVenues(payload)
+	venues, err := parseWireVenues(payload.Venues)
 	if err != nil {
 		return err
 	}
@@ -152,28 +127,6 @@ func (d *Data) UnmarshalJSON(raw []byte) error {
 	d.THREECOMMASPRIVATEKEY = payload.ThreeCommasPrivate
 	d.Venues = venues
 	return nil
-}
-
-func decodeVenues(payload wireData) ([]VenueSecret, error) {
-	venues := make([]VenueSecret, 0)
-	if len(payload.Venues) > 0 && string(payload.Venues) != "null" {
-		parsed, err := parseWireVenues(payload.Venues)
-		if err != nil {
-			return nil, err
-		}
-		venues = append(venues, parsed...)
-	}
-
-	if len(venues) > 0 {
-		return venues, nil
-	}
-
-	legacy := decodeLegacyVenues(payload)
-	if len(legacy) == 0 {
-		return venues, nil
-	}
-
-	return legacy, nil
 }
 
 func parseWireVenues(raw json.RawMessage) ([]VenueSecret, error) {
@@ -228,72 +181,6 @@ func convertWireVenue(venue wireVenue) VenueSecret {
 	}
 }
 
-func decodeLegacyVenues(payload wireData) []VenueSecret {
-	const (
-		defaultVenueID   = "hyperliquid:default"
-		defaultVenueType = "hyperliquid"
-	)
-
-	build := func(id, venueType, display, wallet, key, url string, primary bool) VenueSecret {
-		return VenueSecret{
-			ID:          strings.TrimSpace(id),
-			Type:        strings.TrimSpace(venueType),
-			DisplayName: strings.TrimSpace(display),
-			Wallet:      strings.TrimSpace(wallet),
-			PrivateKey:  strings.TrimSpace(key),
-			APIURL:      strings.TrimSpace(url),
-			Primary:     primary,
-		}
-	}
-
-	venues := make([]VenueSecret, 0)
-	for id, v := range payload.LegacyVenues {
-		venueID := id
-		if venueID == "" {
-			venueID = defaultVenueID
-		}
-		venues = append(venues, build(venueID, defaultVenueType, v.Display, v.Wallet, v.PrivateKey, v.APIURL, v.Primary))
-	}
-	if len(venues) > 0 {
-		sort.SliceStable(venues, func(i, j int) bool {
-			return venues[i].ID < venues[j].ID
-		})
-		return venues
-	}
-
-	if len(payload.LegacyVenuesFallback) > 0 {
-		for _, v := range payload.LegacyVenuesFallback {
-			venueID := v.ID
-			if venueID == "" {
-				venueID = defaultVenueID
-			}
-			venueType := v.Type
-			if venueType == "" {
-				venueType = defaultVenueType
-			}
-			venues = append(venues, build(venueID, venueType, v.Display, v.Wallet, v.PrivateKey, v.APIURL, v.Primary))
-		}
-		return venues
-	}
-
-	wallet := strings.TrimSpace(payload.LegacyWallet)
-	privateKey := strings.TrimSpace(payload.LegacyPrivateKey)
-	if wallet == "" && privateKey == "" {
-		return venues
-	}
-
-	venueID := strings.TrimSpace(payload.LegacyVenueID)
-	if venueID == "" {
-		venueID = defaultVenueID
-	}
-	venueType := strings.TrimSpace(payload.LegacyVenueType)
-	if venueType == "" {
-		venueType = defaultVenueType
-	}
-	display := strings.TrimSpace(payload.LegacyVenueName)
-	venues = append(venues, build(venueID, venueType, display, wallet, privateKey, payload.LegacyURL, true))
-	return venues
-}
 
 func copyFlags(src map[string]interface{}) map[string]interface{} {
 	if len(src) == 0 {
@@ -354,6 +241,87 @@ func (s Secrets) Clone() Secrets {
 		ReceivedAt: s.ReceivedAt,
 	}
 	return cloned
+}
+
+// Validate checks that the Data payload meets all requirements for vault storage.
+func (d Data) Validate() error {
+	if strings.TrimSpace(d.THREECOMMASAPIKEY) == "" {
+		return errors.New("invalid payload: missing required field 'secrets.THREECOMMAS_API_KEY'")
+	}
+
+	if strings.TrimSpace(d.THREECOMMASPRIVATEKEY) == "" {
+		return errors.New("invalid payload: missing required field 'secrets.THREECOMMAS_PRIVATE_KEY'")
+	}
+
+	if len(d.Venues) == 0 {
+		return errors.New("invalid payload: missing required field 'secrets.venues'")
+	}
+
+	// Track venue IDs for uniqueness check
+	seenIDs := make(map[string]bool)
+	primaryCount := 0
+
+	for _, venue := range d.Venues {
+		id := strings.TrimSpace(venue.ID)
+		if id == "" {
+			return errors.New("invalid payload: venue missing id")
+		}
+
+		if seenIDs[id] {
+			return fmt.Errorf("invalid payload: duplicate venue ID '%s'", id)
+		}
+		seenIDs[id] = true
+
+		if strings.TrimSpace(venue.Type) == "" {
+			return fmt.Errorf("invalid payload: venue '%s' missing type", id)
+		}
+
+		wallet := strings.TrimSpace(venue.Wallet)
+		if wallet == "" {
+			return fmt.Errorf("invalid payload: venue '%s' missing wallet", id)
+		}
+
+		// Validate Ethereum address format (40 hex chars, with or without 0x prefix)
+		cleanWallet := strings.TrimPrefix(wallet, "0x")
+		if len(cleanWallet) != 40 {
+			return fmt.Errorf("invalid payload: venue '%s' has invalid wallet address (expected 40 hex chars)", id)
+		}
+		for _, c := range cleanWallet {
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+				return fmt.Errorf("invalid payload: venue '%s' has invalid wallet address (must be hex)", id)
+			}
+		}
+
+		privateKey := strings.TrimSpace(venue.PrivateKey)
+		if privateKey == "" {
+			return fmt.Errorf("invalid payload: venue '%s' missing private_key", id)
+		}
+
+		// Validate private key format (64 hex chars, with or without 0x prefix)
+		cleanKey := strings.TrimPrefix(privateKey, "0x")
+		if len(cleanKey) != 64 {
+			return fmt.Errorf("invalid payload: venue '%s' has invalid private_key (expected 64 hex chars)", id)
+		}
+		for _, c := range cleanKey {
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+				return fmt.Errorf("invalid payload: venue '%s' has invalid private_key (must be hex)", id)
+			}
+		}
+
+		if venue.Primary {
+			primaryCount++
+		}
+	}
+
+	if primaryCount == 0 {
+		return errors.New("invalid payload: no primary venue found")
+	}
+
+	if primaryCount > 1 {
+		return errors.New("invalid payload: multiple primary venues (only one allowed)")
+	}
+
+	return nil
 }
 
 // ControllerStatus summarises the runtime state exposed by the controller.

@@ -3,8 +3,8 @@ import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Separator } from './ui/separator';
 import { Copy, Check, ArrowLeft, Star } from 'lucide-react';
-import { VenueRecord } from '../types/api';
-import { truncateAddress } from '../lib/venue-utils';
+import type { VenueRecord } from '../types/api';
+import { truncateWalletAddress } from '../lib/venue-utils';
 import { VenueAssignments } from './VenueAssignments';
 import { useState } from 'react';
 

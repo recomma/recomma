@@ -22,7 +22,7 @@ import {
 } from './ui/alert-dialog';
 import { Alert, AlertDescription } from './ui/alert';
 import { Plus, Trash2, RefreshCw, AlertCircle } from 'lucide-react';
-import { VenueRecord, VenueAssignmentWithBot, BotRecord, ListBotsResponse } from '../types/api';
+import type { VenueRecord, VenueAssignmentWithBot, BotRecord, ListBotsResponse } from '../types/api';
 import { BotAssignmentDialog } from './BotAssignmentDialog';
 import { fetchVenueAssignments, assignBotToVenue, unassignBotFromVenue } from '../lib/venue-api';
 import { buildOpsApiUrl } from '../config/opsApi';

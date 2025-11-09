@@ -12,7 +12,7 @@ import {
 } from './ui/table';
 import { Alert, AlertDescription } from './ui/alert';
 import { RefreshCw, Edit, AlertCircle, Bot as BotIcon } from 'lucide-react';
-import { BotWithVenue, VenueRecord, BotRecord, ListBotsResponse } from '../types/api';
+import type { BotWithVenue, VenueRecord, BotRecord, ListBotsResponse } from '../types/api';
 import { truncateWalletAddress } from '../lib/venue-utils';
 import { BotAssignmentDialog } from './BotAssignmentDialog';
 import { fetchBotVenues, assignBotToVenue } from '../lib/venue-api';

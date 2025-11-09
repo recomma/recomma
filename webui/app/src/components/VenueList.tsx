@@ -28,8 +28,8 @@ import {
 } from './ui/dropdown-menu';
 import { Alert, AlertDescription } from './ui/alert';
 import { Star, MoreVertical, Edit, Trash2, Copy, Check, AlertCircle } from 'lucide-react';
-import { VenueWithAssignments } from '../types/api';
-import { truncateAddress } from '../lib/venue-utils';
+import type { VenueWithAssignments } from '../types/api';
+import { truncateWalletAddress } from '../lib/venue-utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 
 interface VenueListProps {
@@ -138,7 +138,7 @@ export function VenueList({ venues, onEdit, onDelete, onViewDetail, loading }: V
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <span className="font-mono text-sm cursor-help">
-                            {truncateAddress(venue.wallet)}
+                            {truncateWalletAddress(venue.wallet)}
                           </span>
                         </TooltipTrigger>
                         <TooltipContent>

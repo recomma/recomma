@@ -4,7 +4,7 @@ import { Alert, AlertDescription } from './ui/alert';
 import { Plus, AlertCircle, CheckCircle } from 'lucide-react';
 import { VenueList } from './VenueList';
 import { VenueForm } from './VenueForm';
-import { VenueFormData, VenueWithAssignments, VaultVenueSecret } from '../types/api';
+import type { VenueFormData, VenueWithAssignments, VaultVenueSecret } from '../types/api';
 import { generateVenueId, normalizePrivateKey } from '../lib/venue-utils';
 import { fetchVenues, fetchVenueAssignments, upsertVenue, deleteVenue } from '../lib/venue-api';
 import { toast } from 'sonner';

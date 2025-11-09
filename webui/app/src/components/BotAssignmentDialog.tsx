@@ -5,8 +5,8 @@ import { Label } from './ui/label';
 import { RadioGroup, RadioGroupItem } from './ui/radio-group';
 import { Alert, AlertDescription } from './ui/alert';
 import { Info, Loader2 } from 'lucide-react';
-import { VenueRecord, BotRecord } from '../types/api';
-import { truncateAddress } from '../lib/venue-utils';
+import type { VenueRecord, BotRecord } from '../types/api';
+import { truncateWalletAddress } from '../lib/venue-utils';
 
 interface BotAssignmentDialogProps {
   open: boolean;
@@ -104,7 +104,7 @@ export function BotAssignmentDialog({
                   <Label htmlFor={venue.venue_id} className="flex-1 cursor-pointer">
                     <div className="font-medium">{venue.display_name}</div>
                     <div className="text-sm text-gray-600 font-mono">
-                      {truncateAddress(venue.wallet)}
+                      {truncateWalletAddress(venue.wallet)}
                     </div>
                   </Label>
                 </div>

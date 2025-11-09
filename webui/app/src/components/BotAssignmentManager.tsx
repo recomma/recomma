@@ -4,7 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Alert, AlertDescription } from './ui/alert';
 import { Info } from 'lucide-react';
 import { BotList } from './BotList';
-import { VenueRecord } from '../types/api';
+import type { VenueRecord } from '../types/api';
 
 interface BotAssignmentManagerProps {
   venues: VenueRecord[];

@@ -72,19 +72,19 @@ export async function decryptVaultPayload(
   const keyBytes = base64UrlToUint8Array(keyBase64);
   const key = await subtle.importKey(
     'raw',
-    keyBytes,
+    keyBytes as BufferSource,
     { name: 'AES-GCM' },
     false,
     ['decrypt'],
   );
 
   // Decrypt
-  const decryptParams: AesGcmParams = { name: 'AES-GCM', iv: nonce };
+  const decryptParams: AesGcmParams = { name: 'AES-GCM', iv: nonce as BufferSource };
   if (additionalData) {
-    decryptParams.additionalData = additionalData;
+    decryptParams.additionalData = additionalData as BufferSource;
   }
 
-  const decrypted = await subtle.decrypt(decryptParams, key, ciphertext);
+  const decrypted = await subtle.decrypt(decryptParams, key, ciphertext as BufferSource);
 
   // Parse decrypted JSON
   const decoder = new TextDecoder();
@@ -126,7 +126,7 @@ export async function encryptVaultPayload(
   const keyBytes = base64UrlToUint8Array(keyBase64);
   const key = await subtle.importKey(
     'raw',
-    keyBytes,
+    keyBytes as BufferSource,
     { name: 'AES-GCM' },
     false,
     ['encrypt'],

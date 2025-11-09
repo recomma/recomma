@@ -98,6 +98,11 @@ type wireData struct {
 	ThreeCommasAPIKey  string          `json:"THREECOMMAS_API_KEY"`
 	ThreeCommasPrivate string          `json:"THREECOMMAS_PRIVATE_KEY"`
 	Venues             json.RawMessage `json:"venues"`
+
+	// Legacy fields for backward compatibility with single-venue payloads
+	LegacyWallet     string `json:"HYPERLIQUID_WALLET"`
+	LegacyPrivateKey string `json:"HYPERLIQUID_PRIVATE_KEY"`
+	LegacyAPIURL     string `json:"HYPERLIQUID_API_URL"`
 }
 
 type wireVenue struct {
@@ -121,6 +126,11 @@ func (d *Data) UnmarshalJSON(raw []byte) error {
 	venues, err := parseWireVenues(payload.Venues)
 	if err != nil {
 		return err
+	}
+
+	// Backward compatibility: if no venues array but legacy fields exist, convert them
+	if len(venues) == 0 && hasLegacyVenue(payload) {
+		venues = []VenueSecret{convertLegacyVenue(payload)}
 	}
 
 	d.THREECOMMASAPIKEY = payload.ThreeCommasAPIKey
@@ -181,6 +191,34 @@ func convertWireVenue(venue wireVenue) VenueSecret {
 	}
 }
 
+// hasLegacyVenue checks if the payload contains legacy single-venue fields.
+func hasLegacyVenue(payload wireData) bool {
+	return strings.TrimSpace(payload.LegacyWallet) != "" &&
+		strings.TrimSpace(payload.LegacyPrivateKey) != ""
+}
+
+// convertLegacyVenue converts legacy HYPERLIQUID_* fields to a VenueSecret.
+func convertLegacyVenue(payload wireData) VenueSecret {
+	apiURL := strings.TrimSpace(payload.LegacyAPIURL)
+	if apiURL == "" {
+		apiURL = "https://api.hyperliquid.xyz"
+	}
+
+	flags := map[string]interface{}{
+		"api_url": apiURL,
+	}
+
+	return VenueSecret{
+		ID:          "hyperliquid-legacy",
+		Type:        "hyperliquid",
+		DisplayName: "Hyperliquid (Legacy)",
+		Wallet:      strings.TrimSpace(payload.LegacyWallet),
+		PrivateKey:  strings.TrimSpace(payload.LegacyPrivateKey),
+		APIURL:      apiURL,
+		Flags:       flags,
+		Primary:     true,
+	}
+}
 
 func copyFlags(src map[string]interface{}) map[string]interface{} {
 	if len(src) == 0 {

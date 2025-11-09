@@ -218,8 +218,9 @@ func (h *ApiHandler) UpdateVaultPayload(ctx context.Context, request UpdateVault
 
 	h.logger.InfoContext(ctx, "vault payload updated successfully", slog.Int64("user_id", st.User.ID))
 
+	msg := "Vault payload updated successfully"
 	return UpdateVaultPayload200JSONResponse{
-		Message: "Vault payload updated successfully",
+		Message: &msg,
 	}, nil
 }
 

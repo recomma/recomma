@@ -176,7 +176,14 @@ export interface paths {
          * @description Returns the stored ciphertext bundle for the authenticated user. Requires a valid session cookie obtained via WebAuthn and is typically called immediately before `/vault/unseal`.
          */
         get: operations["getVaultPayload"];
-        put?: never;
+        /**
+         * Update encrypted vault payload
+         * @description Replaces the encrypted vault payload with a new version. Requires an active
+         *     WebAuthn session and unsealed vault state. The server validates the decrypted
+         *     payload before persisting the encrypted version. After update, the vault remains
+         *     unsealed but the new configuration is not active until seal/re-unseal cycle.
+         */
+        put: operations["updateVaultPayload"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1918,6 +1925,66 @@ export interface operations {
             };
             /** @description Vault is not yet initialized; run `/vault/setup` first. */
             423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateVaultPayload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Encrypted payload to persist */
+                    encrypted_payload: components["schemas"]["VaultEncryptedPayload"];
+                    /** @description Decrypted payload for server-side validation */
+                    decrypted_payload: components["schemas"]["VaultSecretsBundle"];
+                };
+            };
+        };
+        responses: {
+            /** @description Payload updated successfully */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example Vault payload updated successfully */
+                        message?: string;
+                    };
+                };
+            };
+            /** @description Invalid payload or validation failed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid session */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Vault is sealed or session expired */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

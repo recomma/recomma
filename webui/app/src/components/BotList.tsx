@@ -12,10 +12,12 @@ import {
 } from './ui/table';
 import { Alert, AlertDescription } from './ui/alert';
 import { RefreshCw, Edit, AlertCircle, Bot as BotIcon } from 'lucide-react';
-import { BotWithVenue, VenueRecord, BotRecord } from '../types/api';
-import { truncateAddress } from '../lib/venue-utils';
+import type { BotWithVenue, VenueRecord, BotRecord, ListBotsResponse } from '../types/api';
+import { truncateWalletAddress } from '../lib/venue-utils';
 import { BotAssignmentDialog } from './BotAssignmentDialog';
-import { toast } from 'sonner@2.0.3';
+import { fetchBotVenues, assignBotToVenue } from '../lib/venue-api';
+import { buildOpsApiUrl } from '../config/opsApi';
+import { toast } from 'sonner';
 
 interface BotListProps {
   venues: VenueRecord[];
@@ -35,21 +37,28 @@ export function BotList({ venues }: BotListProps) {
     setLoading(true);
     try {
       // Load all bots
-      const botsResponse = await mockApiCall('/api/bots?limit=500', 'GET');
-      const botsData = await botsResponse.json();
+      const botsResponse = await fetch(buildOpsApiUrl('/api/bots?limit=500'), {
+        method: 'GET',
+        credentials: 'include',
+      });
+
+      if (!botsResponse.ok) {
+        throw new Error('Failed to load bots');
+      }
+
+      const botsData: ListBotsResponse = await botsResponse.json();
 
       // Load venue assignments for each bot
       const botsWithVenues = await Promise.all(
         botsData.items.map(async (bot: BotRecord) => {
           try {
-            const venuesResponse = await mockApiCall(`/api/bots/${bot.bot_id}/venues`, 'GET');
-            const venuesData = await venuesResponse.json();
+            const venuesData = await fetchBotVenues(bot.bot_id);
 
-            const primaryVenue = venuesData.items.find((v: any) => v.is_primary);
+            const primaryVenue = venuesData.find((v) => v.is_primary);
             return {
               ...bot,
               primaryVenue,
-              allVenues: venuesData.items,
+              allVenues: venuesData,
             };
           } catch {
             return {
@@ -72,15 +81,7 @@ export function BotList({ venues }: BotListProps) {
 
   const handleAssignBot = async (botId: number, venueId: string, isPrimary: boolean) => {
     try {
-      const response = await mockApiCall(
-        `/api/venues/${venueId}/assignments/${botId}`,
-        'PUT',
-        { is_primary: isPrimary }
-      );
-
-      if (!response.ok) {
-        throw new Error('Failed to assign bot');
-      }
+      await assignBotToVenue(venueId, botId, isPrimary);
 
       await loadBots();
       toast.success('Bot wallet updated');
@@ -177,7 +178,7 @@ export function BotList({ venues }: BotListProps) {
                     <TableCell>
                       {venueDisplay.wallet ? (
                         <span className="font-mono text-sm">
-                          {truncateAddress(venueDisplay.wallet)}
+                          {truncateWalletAddress(venueDisplay.wallet)}
                         </span>
                       ) : (
                         <span className="text-sm text-gray-400">Not assigned</span>
@@ -233,67 +234,4 @@ export function BotList({ venues }: BotListProps) {
       )}
     </>
   );
-}
-
-// Mock API call - replace with actual implementation
-async function mockApiCall(url: string, method: string, body?: any): Promise<Response> {
-  await new Promise((resolve) => setTimeout(resolve, 500));
-
-  if (url.includes('/api/bots') && method === 'GET' && url.includes('venues')) {
-    // Mock bot venues
-    return new Response(
-      JSON.stringify({
-        items: [
-          {
-            venue_id: 'hyperliquid:main-trading',
-            wallet: '0x1234567890abcdef1234567890abcdef12345678',
-            is_primary: true,
-          },
-        ],
-      }),
-      { status: 200 }
-    );
-  }
-
-  if (url.includes('/api/bots') && method === 'GET') {
-    return new Response(
-      JSON.stringify({
-        items: [
-          {
-            bot_id: 12345,
-            last_synced_at: '2025-01-15T12:00:00Z',
-            payload: {
-              id: 12345,
-              name: 'ETH Scalper Bot',
-              is_enabled: true,
-              account_name: 'My 3Commas Account',
-            },
-          },
-          {
-            bot_id: 67890,
-            last_synced_at: '2025-01-15T12:00:00Z',
-            payload: {
-              id: 67890,
-              name: 'BTC DCA Bot',
-              is_enabled: true,
-              account_name: 'My 3Commas Account',
-            },
-          },
-          {
-            bot_id: 11111,
-            last_synced_at: '2025-01-15T12:00:00Z',
-            payload: {
-              id: 11111,
-              name: 'SOL Swing Trader',
-              is_enabled: false,
-              account_name: 'My 3Commas Account',
-            },
-          },
-        ],
-      }),
-      { status: 200 }
-    );
-  }
-
-  return new Response(JSON.stringify({}), { status: 200 });
 }

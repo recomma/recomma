@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Alert, AlertDescription } from './ui/alert';
-import { Plus, AlertCircle, CheckCircle } from 'lucide-react';
+import { Plus, AlertCircle, CheckCircle, Info } from 'lucide-react';
 import { VenueList } from './VenueList';
 import { VenueForm } from './VenueForm';
-import { VenueFormData, VenueWithAssignments, VaultVenueSecret } from '../types/api';
+import type { VenueFormData, VenueWithAssignments, VaultVenueSecret, VaultSecretsBundle } from '../types/api';
 import { generateVenueId, normalizePrivateKey } from '../lib/venue-utils';
-import { toast } from 'sonner@2.0.3';
+import { fetchVenues, fetchVenueAssignments, fetchVaultPayload, updateVaultPayload } from '../lib/venue-api';
+import { decryptVaultPayload, encryptVaultPayload } from '../lib/vault-utils';
+import { toast } from 'sonner';
 
 interface VenueManagementProps {
   /** Context: 'setup' for wizard, 'settings' for post-setup */
@@ -15,6 +17,8 @@ interface VenueManagementProps {
   initialVenues?: VaultVenueSecret[];
   /** Callback when venues change (for setup wizard) */
   onVenuesChange?: (venues: VaultVenueSecret[]) => void;
+  /** Callback when venues are loaded (for settings) */
+  onVenuesLoaded?: (venues: VenueWithAssignments[]) => void;
   /** Callback when user wants to view venue details */
   onViewDetail?: (venue: VenueWithAssignments) => void;
   /** Whether the component is in a loading state */
@@ -25,6 +29,7 @@ export function VenueManagement({
   context,
   initialVenues = [],
   onVenuesChange,
+  onVenuesLoaded,
   onViewDetail,
   loading = false,
 }: VenueManagementProps) {
@@ -34,6 +39,7 @@ export function VenueManagement({
   const [apiError, setApiError] = useState<string | null>(null);
   const [apiLoading, setApiLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [vaultNeedsReseal, setVaultNeedsReseal] = useState(false);
 
   const isSetupContext = context === 'setup';
 
@@ -65,27 +71,16 @@ export function VenueManagement({
     setApiError(null);
 
     try {
-      // Mock API call - replace with actual API integration
-      const response = await mockApiCall('/api/venues', 'GET');
-      
-      if (!response.ok) {
-        throw new Error('Failed to load wallets');
-      }
+      const venues = await fetchVenues();
 
-      const data = await response.json();
-      
       // Load assignment counts for each venue
       const venuesWithCounts = await Promise.all(
-        data.items.map(async (venue: any) => {
+        venues.map(async (venue) => {
           try {
-            const assignmentsResponse = await mockApiCall(
-              `/api/venues/${venue.venue_id}/assignments`,
-              'GET'
-            );
-            const assignments = await assignmentsResponse.json();
+            const assignments = await fetchVenueAssignments(venue.venue_id);
             return {
               ...venue,
-              assignmentCount: assignments.items.length,
+              assignmentCount: assignments.length,
             };
           } catch {
             return { ...venue, assignmentCount: 0 };
@@ -94,10 +89,56 @@ export function VenueManagement({
       );
 
       setVenues(venuesWithCounts);
+      onVenuesLoaded?.(venuesWithCounts);
     } catch (error) {
       setApiError(error instanceof Error ? error.message : 'Failed to load wallets');
     } finally {
       setApiLoading(false);
+    }
+  };
+
+  // Helper to update vault by modifying venues array (settings context only)
+  const updateVaultWithModifiedVenues = async (
+    modifyVenues: (currentVenues: VaultVenueSecret[]) => VaultVenueSecret[]
+  ) => {
+    if (isSetupContext) return;
+
+    try {
+      // Fetch current encrypted payload
+      const encryptedPayload = await fetchVaultPayload();
+
+      // Decrypt to get current secrets
+      const decryptedBundle = await decryptVaultPayload(encryptedPayload);
+
+      // Apply the modification to venues
+      const updatedVenues = modifyVenues(decryptedBundle.secrets.venues);
+
+      // Update venues in the bundle
+      const updatedBundle: VaultSecretsBundle = {
+        ...decryptedBundle,
+        secrets: {
+          ...decryptedBundle.secrets,
+          venues: updatedVenues,
+        },
+      };
+
+      // Re-encrypt the bundle (reusing the same encryption key)
+      const username = decryptedBundle.not_secret.username;
+      const newEncryptedPayload = await encryptVaultPayload(
+        updatedBundle,
+        username,
+        encryptedPayload
+      );
+
+      // Send to server
+      await updateVaultPayload(newEncryptedPayload, updatedBundle);
+
+      // Mark that vault needs reseal
+      setVaultNeedsReseal(true);
+    } catch (error) {
+      throw new Error(
+        error instanceof Error ? error.message : 'Failed to update vault'
+      );
     }
   };
 
@@ -133,23 +174,23 @@ export function VenueManagement({
       setFormOpen(false);
       setSuccessMessage('Wallet added successfully');
     } else {
-      // Settings: call API
+      // Settings: update vault with new venue
       setApiLoading(true);
       try {
-        const response = await mockApiCall(`/api/venues/${venueId}`, 'PUT', {
-          type: 'hyperliquid',
-          display_name: formData.display_name,
-          wallet: formData.wallet,
-          flags: { api_url: formData.api_url },
+        await updateVaultWithModifiedVenues((currentVenues) => {
+          // If new venue is primary, demote all others
+          const updatedVenues = formData.is_primary
+            ? currentVenues.map((v) => ({ ...v, is_primary: false }))
+            : currentVenues;
+
+          // Add the new venue
+          return [...updatedVenues, newVenue];
         });
 
-        if (!response.ok) {
-          throw new Error('Failed to add wallet');
-        }
-
+        // Reload venues from API to reflect changes
         await loadVenuesFromAPI();
         setFormOpen(false);
-        toast.success('Wallet added successfully');
+        toast.success('Wallet added successfully. Seal and re-unseal vault to activate.');
       } catch (error) {
         setApiError(error instanceof Error ? error.message : 'Failed to add wallet');
       } finally {
@@ -167,7 +208,7 @@ export function VenueManagement({
 
     if (isSetupContext) {
       // Setup wizard: update local state
-      let updatedVenues = initialVenues.map((v) => {
+      const updatedVenues = initialVenues.map((v) => {
         if (v.id === editingVenue.venue_id) {
           return {
             ...v,
@@ -191,24 +232,34 @@ export function VenueManagement({
       setEditingVenue(undefined);
       setSuccessMessage('Wallet updated successfully');
     } else {
-      // Settings: call API
+      // Settings: update vault
       setApiLoading(true);
       try {
-        const response = await mockApiCall(`/api/venues/${editingVenue.venue_id}`, 'PUT', {
-          type: editingVenue.type,
-          display_name: formData.display_name,
-          wallet: editingVenue.wallet,
-          flags: { api_url: formData.api_url },
+        await updateVaultWithModifiedVenues((currentVenues) => {
+          return currentVenues.map((v) => {
+            if (v.id === editingVenue.venue_id) {
+              return {
+                ...v,
+                display_name: formData.display_name,
+                api_url: formData.api_url,
+                flags: { api_url: formData.api_url },
+                is_primary: formData.is_primary,
+                // Only update private key if it was changed
+                ...(formData.private_key && { private_key: normalizePrivateKey(formData.private_key) }),
+              };
+            }
+            // Demote other primaries if this is being set as primary
+            if (formData.is_primary && v.is_primary) {
+              return { ...v, is_primary: false };
+            }
+            return v;
+          });
         });
-
-        if (!response.ok) {
-          throw new Error('Failed to update wallet');
-        }
 
         await loadVenuesFromAPI();
         setFormOpen(false);
         setEditingVenue(undefined);
-        toast.success('Wallet updated successfully');
+        toast.success('Wallet updated successfully. Seal and re-unseal vault to activate.');
       } catch (error) {
         setApiError(error instanceof Error ? error.message : 'Failed to update wallet');
       } finally {
@@ -229,27 +280,32 @@ export function VenueManagement({
 
     if (isSetupContext) {
       // Setup wizard: update local state
-      let updatedVenues = initialVenues.filter((v) => v.id !== venue.venue_id);
+      const filteredVenues = initialVenues.filter((v) => v.id !== venue.venue_id);
 
       // If we deleted the primary, promote another one
-      if (venue.isPrimary && updatedVenues.length > 0) {
-        updatedVenues[0].is_primary = true;
-      }
+      const updatedVenues = venue.isPrimary && filteredVenues.length > 0
+        ? filteredVenues.map((v, idx) => idx === 0 ? { ...v, is_primary: true } : v)
+        : filteredVenues;
 
       onVenuesChange?.(updatedVenues);
       setSuccessMessage(`Wallet "${venue.display_name}" deleted successfully`);
     } else {
-      // Settings: call API
+      // Settings: update vault
       setApiLoading(true);
       try {
-        const response = await mockApiCall(`/api/venues/${venue.venue_id}`, 'DELETE');
+        await updateVaultWithModifiedVenues((currentVenues) => {
+          const filteredVenues = currentVenues.filter((v) => v.id !== venue.venue_id);
 
-        if (!response.ok) {
-          throw new Error('Failed to delete wallet');
-        }
+          // If we deleted the primary, promote another one
+          if (venue.isPrimary && filteredVenues.length > 0) {
+            filteredVenues[0].is_primary = true;
+          }
+
+          return filteredVenues;
+        });
 
         await loadVenuesFromAPI();
-        toast.success(`Wallet "${venue.display_name}" deleted successfully`);
+        toast.success(`Wallet "${venue.display_name}" deleted successfully. Seal and re-unseal vault to activate.`);
       } catch (error) {
         setApiError(error instanceof Error ? error.message : 'Failed to delete wallet');
       } finally {
@@ -303,6 +359,17 @@ export function VenueManagement({
           Add Wallet
         </Button>
       </div>
+
+      {/* Vault Reseal Required Banner */}
+      {!isSetupContext && vaultNeedsReseal && (
+        <Alert className="bg-blue-50 border-blue-200">
+          <Info className="h-4 w-4 text-blue-600" />
+          <AlertDescription className="text-blue-900">
+            <strong>Vault changes saved.</strong> Seal and re-unseal the vault to activate the new
+            wallet configuration.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Error Alert */}
       {apiError && (
@@ -368,19 +435,5 @@ export function VenueManagement({
         )}
       </div>
     </div>
-  );
-}
-
-// Mock API call function - replace with actual API integration
-async function mockApiCall(url: string, method: string, body?: any): Promise<Response> {
-  // Simulate network delay
-  await new Promise((resolve) => setTimeout(resolve, 500));
-
-  // Mock successful response
-  return new Response(
-    JSON.stringify({
-      items: [],
-    }),
-    { status: 200, headers: { 'Content-Type': 'application/json' } }
   );
 }

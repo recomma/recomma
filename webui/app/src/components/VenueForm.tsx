@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Checkbox } from './ui/checkbox';
 import { Alert, AlertDescription } from './ui/alert';
 import { AlertCircle, Eye, EyeOff, Info } from 'lucide-react';
-import { VenueFormData, VenueRecord } from '../types/api';
+import type { VenueFormData, VenueRecord } from '../types/api';
 import {
   validateDisplayName,
   validateWalletAddress,
@@ -98,14 +98,14 @@ export function VenueForm({
       editingVenue?.display_name
     );
     if (nameError) {
-      newErrors[nameError.field] = nameError.message;
+      newErrors.display_name = nameError;
     }
 
     // Validate wallet (cannot change when editing)
     if (!editingVenue) {
       const walletError = validateWalletAddress(formData.wallet);
       if (walletError) {
-        newErrors[walletError.field] = walletError.message;
+        newErrors.wallet = walletError;
       }
     }
 
@@ -113,16 +113,17 @@ export function VenueForm({
     if (!editingVenue || privateKeyChanged) {
       const keyError = validatePrivateKey(formData.private_key);
       if (keyError) {
-        newErrors[keyError.field] = keyError.message;
+        newErrors.private_key = keyError;
       }
     }
 
     // Validate API URL
     const urlToValidate =
       formData.api_url === API_ENDPOINTS.CUSTOM ? customUrl : formData.api_url;
-    const urlError = validateApiUrl(urlToValidate);
+    const isCustom = formData.api_url === API_ENDPOINTS.CUSTOM;
+    const urlError = validateApiUrl(urlToValidate, isCustom);
     if (urlError) {
-      newErrors[urlError.field] = urlError.message;
+      newErrors.api_url = urlError;
     }
 
     if (Object.keys(newErrors).length > 0) {
@@ -145,11 +146,9 @@ export function VenueForm({
     setErrors({ ...errors, wallet: '' });
 
     // Check for duplicates
-    const existingWallets = existingVenues
-      .filter((v) => v.venue_id !== editingVenue?.venue_id)
-      .map((v) => v.wallet);
+    const filteredVenues = existingVenues.filter((v) => v.venue_id !== editingVenue?.venue_id);
 
-    if (isDuplicateWallet(value, existingWallets)) {
+    if (isDuplicateWallet(value, filteredVenues, editingVenue?.venue_id)) {
       const duplicateVenue = existingVenues.find(
         (v) => normalizeWalletAddress(v.wallet).toLowerCase() === normalizeWalletAddress(value).toLowerCase()
       );

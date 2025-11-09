@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -221,7 +223,10 @@ func TestUpdateVaultPayload_Success(t *testing.T) {
 		},
 	}
 
-	resp, err := handler.UpdateVaultPayload(context.Background(), req)
+	httpReq := httptest.NewRequest(http.MethodPut, "/vault/payload", nil)
+	ctx := context.WithValue(context.Background(), httpRequestContextKey, httpReq)
+
+	resp, err := handler.UpdateVaultPayload(ctx, req)
 	require.NoError(t, err)
 
 	successResp, ok := resp.(UpdateVaultPayload200JSONResponse)
@@ -268,7 +273,10 @@ func TestUpdateVaultPayload_MissingSession(t *testing.T) {
 
 	req := UpdateVaultPayloadRequestObject{Body: &UpdateVaultPayloadJSONRequestBody{}}
 
-	resp, err := handler.UpdateVaultPayload(context.Background(), req)
+	httpReq := httptest.NewRequest(http.MethodPut, "/vault/payload", nil)
+	ctx := context.WithValue(context.Background(), httpRequestContextKey, httpReq)
+
+	resp, err := handler.UpdateVaultPayload(ctx, req)
 	require.NoError(t, err)
 
 	_, ok := resp.(UpdateVaultPayload401Response)
@@ -290,7 +298,10 @@ func TestUpdateVaultPayload_VaultSealed(t *testing.T) {
 
 	req := UpdateVaultPayloadRequestObject{Body: &UpdateVaultPayloadJSONRequestBody{}}
 
-	resp, err := handler.UpdateVaultPayload(context.Background(), req)
+	httpReq := httptest.NewRequest(http.MethodPut, "/vault/payload", nil)
+	ctx := context.WithValue(context.Background(), httpRequestContextKey, httpReq)
+
+	resp, err := handler.UpdateVaultPayload(ctx, req)
 	require.NoError(t, err)
 
 	_, ok := resp.(UpdateVaultPayload403Response)
@@ -353,7 +364,10 @@ func TestUpdateVaultPayload_NoPrimaryVenue(t *testing.T) {
 		},
 	}
 
-	resp, err := handler.UpdateVaultPayload(context.Background(), req)
+	httpReq := httptest.NewRequest(http.MethodPut, "/vault/payload", nil)
+	ctx := context.WithValue(context.Background(), httpRequestContextKey, httpReq)
+
+	resp, err := handler.UpdateVaultPayload(ctx, req)
 	require.NoError(t, err)
 
 	_, ok := resp.(UpdateVaultPayload400Response)
@@ -426,7 +440,10 @@ func TestUpdateVaultPayload_MultiplePrimaryVenues(t *testing.T) {
 		},
 	}
 
-	resp, err := handler.UpdateVaultPayload(context.Background(), req)
+	httpReq := httptest.NewRequest(http.MethodPut, "/vault/payload", nil)
+	ctx := context.WithValue(context.Background(), httpRequestContextKey, httpReq)
+
+	resp, err := handler.UpdateVaultPayload(ctx, req)
 	require.NoError(t, err)
 
 	_, ok := resp.(UpdateVaultPayload400Response)
@@ -499,7 +516,10 @@ func TestUpdateVaultPayload_DuplicateVenueIDs(t *testing.T) {
 		},
 	}
 
-	resp, err := handler.UpdateVaultPayload(context.Background(), req)
+	httpReq := httptest.NewRequest(http.MethodPut, "/vault/payload", nil)
+	ctx := context.WithValue(context.Background(), httpRequestContextKey, httpReq)
+
+	resp, err := handler.UpdateVaultPayload(ctx, req)
 	require.NoError(t, err)
 
 	_, ok := resp.(UpdateVaultPayload400Response)
@@ -565,7 +585,10 @@ func TestUpdateVaultPayload_InvalidWalletAddress(t *testing.T) {
 		},
 	}
 
-	resp, err := handler.UpdateVaultPayload(context.Background(), req)
+	httpReq := httptest.NewRequest(http.MethodPut, "/vault/payload", nil)
+	ctx := context.WithValue(context.Background(), httpRequestContextKey, httpReq)
+
+	resp, err := handler.UpdateVaultPayload(ctx, req)
 	require.NoError(t, err)
 
 	_, ok := resp.(UpdateVaultPayload400Response)
@@ -631,7 +654,10 @@ func TestUpdateVaultPayload_InvalidPrivateKey(t *testing.T) {
 		},
 	}
 
-	resp, err := handler.UpdateVaultPayload(context.Background(), req)
+	httpReq := httptest.NewRequest(http.MethodPut, "/vault/payload", nil)
+	ctx := context.WithValue(context.Background(), httpRequestContextKey, httpReq)
+
+	resp, err := handler.UpdateVaultPayload(ctx, req)
 	require.NoError(t, err)
 
 	_, ok := resp.(UpdateVaultPayload400Response)
@@ -698,7 +724,10 @@ func TestUpdateVaultPayload_DatabaseError(t *testing.T) {
 		},
 	}
 
-	resp, err := handler.UpdateVaultPayload(context.Background(), req)
+	httpReq := httptest.NewRequest(http.MethodPut, "/vault/payload", nil)
+	ctx := context.WithValue(context.Background(), httpRequestContextKey, httpReq)
+
+	resp, err := handler.UpdateVaultPayload(ctx, req)
 	require.NoError(t, err)
 
 	_, ok := resp.(UpdateVaultPayload500Response)

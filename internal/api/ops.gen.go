@@ -903,6 +903,13 @@ type StreamOrdersParams struct {
 	ObservedFrom *time.Time `form:"observed_from,omitempty" json:"observed_from,omitempty"`
 }
 
+// UpdateVaultPayloadJSONBody defines parameters for UpdateVaultPayload.
+type UpdateVaultPayloadJSONBody struct {
+	// DecryptedPayload JSON structure encrypted during setup and supplied in plaintext when unsealing the vault.
+	DecryptedPayload VaultSecretsBundle    `json:"decrypted_payload"`
+	EncryptedPayload VaultEncryptedPayload `json:"encrypted_payload"`
+}
+
 // CancelOrderByOrderIdJSONRequestBody defines body for CancelOrderByOrderId for application/json ContentType.
 type CancelOrderByOrderIdJSONRequestBody = CancelOrderByOrderIdRequest
 
@@ -917,6 +924,9 @@ type UpsertVenueJSONRequestBody = VenueUpsertRequest
 
 // UpsertVenueAssignmentJSONRequestBody defines body for UpsertVenueAssignment for application/json ContentType.
 type UpsertVenueAssignmentJSONRequestBody = VenueAssignmentUpsertRequest
+
+// UpdateVaultPayloadJSONRequestBody defines body for UpdateVaultPayload for application/json ContentType.
+type UpdateVaultPayloadJSONRequestBody UpdateVaultPayloadJSONBody
 
 // SetupVaultJSONRequestBody defines body for SetupVault for application/json ContentType.
 type SetupVaultJSONRequestBody = VaultSetupRequest
@@ -1326,6 +1336,9 @@ type ServerInterface interface {
 	// Retrieve encrypted vault payload
 	// (GET /vault/payload)
 	GetVaultPayload(w http.ResponseWriter, r *http.Request)
+	// Update encrypted vault payload
+	// (PUT /vault/payload)
+	UpdateVaultPayload(w http.ResponseWriter, r *http.Request)
 	// Reseal the vault and clear in-memory secrets
 	// (POST /vault/seal)
 	SealVault(w http.ResponseWriter, r *http.Request)
@@ -2193,6 +2206,26 @@ func (siw *ServerInterfaceWrapper) GetVaultPayload(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// UpdateVaultPayload operation middleware
+func (siw *ServerInterfaceWrapper) UpdateVaultPayload(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateVaultPayload(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SealVault operation middleware
 func (siw *ServerInterfaceWrapper) SealVault(w http.ResponseWriter, r *http.Request) {
 
@@ -2451,6 +2484,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/sse/hyperliquid/prices", wrapper.StreamHyperliquidPrices)
 	m.HandleFunc("GET "+options.BaseURL+"/sse/orders", wrapper.StreamOrders)
 	m.HandleFunc("GET "+options.BaseURL+"/vault/payload", wrapper.GetVaultPayload)
+	m.HandleFunc("PUT "+options.BaseURL+"/vault/payload", wrapper.UpdateVaultPayload)
 	m.HandleFunc("POST "+options.BaseURL+"/vault/seal", wrapper.SealVault)
 	m.HandleFunc("POST "+options.BaseURL+"/vault/setup", wrapper.SetupVault)
 	m.HandleFunc("GET "+options.BaseURL+"/vault/status", wrapper.GetVaultStatus)
@@ -3315,6 +3349,57 @@ func (response GetVaultPayload500Response) VisitGetVaultPayloadResponse(w http.R
 	return nil
 }
 
+type UpdateVaultPayloadRequestObject struct {
+	Body *UpdateVaultPayloadJSONRequestBody
+}
+
+type UpdateVaultPayloadResponseObject interface {
+	VisitUpdateVaultPayloadResponse(w http.ResponseWriter) error
+}
+
+type UpdateVaultPayload200JSONResponse struct {
+	Message *string `json:"message,omitempty"`
+}
+
+func (response UpdateVaultPayload200JSONResponse) VisitUpdateVaultPayloadResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type UpdateVaultPayload400Response struct {
+}
+
+func (response UpdateVaultPayload400Response) VisitUpdateVaultPayloadResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type UpdateVaultPayload401Response struct {
+}
+
+func (response UpdateVaultPayload401Response) VisitUpdateVaultPayloadResponse(w http.ResponseWriter) error {
+	w.WriteHeader(401)
+	return nil
+}
+
+type UpdateVaultPayload403Response struct {
+}
+
+func (response UpdateVaultPayload403Response) VisitUpdateVaultPayloadResponse(w http.ResponseWriter) error {
+	w.WriteHeader(403)
+	return nil
+}
+
+type UpdateVaultPayload500Response struct {
+}
+
+func (response UpdateVaultPayload500Response) VisitUpdateVaultPayloadResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
 type SealVaultRequestObject struct {
 }
 
@@ -3727,6 +3812,9 @@ type StrictServerInterface interface {
 	// Retrieve encrypted vault payload
 	// (GET /vault/payload)
 	GetVaultPayload(ctx context.Context, request GetVaultPayloadRequestObject) (GetVaultPayloadResponseObject, error)
+	// Update encrypted vault payload
+	// (PUT /vault/payload)
+	UpdateVaultPayload(ctx context.Context, request UpdateVaultPayloadRequestObject) (UpdateVaultPayloadResponseObject, error)
 	// Reseal the vault and clear in-memory secrets
 	// (POST /vault/seal)
 	SealVault(ctx context.Context, request SealVaultRequestObject) (SealVaultResponseObject, error)
@@ -4325,6 +4413,37 @@ func (sh *strictHandler) GetVaultPayload(w http.ResponseWriter, r *http.Request)
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetVaultPayloadResponseObject); ok {
 		if err := validResponse.VisitGetVaultPayloadResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateVaultPayload operation middleware
+func (sh *strictHandler) UpdateVaultPayload(w http.ResponseWriter, r *http.Request) {
+	var request UpdateVaultPayloadRequestObject
+
+	var body UpdateVaultPayloadJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateVaultPayload(ctx, request.(UpdateVaultPayloadRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateVaultPayload")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateVaultPayloadResponseObject); ok {
+		if err := validResponse.VisitUpdateVaultPayloadResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

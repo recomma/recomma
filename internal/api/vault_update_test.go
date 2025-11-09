@@ -94,7 +94,7 @@ func (s *vaultUpdateStubStore) ListVenues(context.Context) ([]VenueRecord, error
 
 func (s *vaultUpdateStubStore) UpsertVenue(ctx context.Context, venueID string, payload VenueUpsertRequest) (VenueRecord, error) {
 	s.venuesUpserted = append(s.venuesUpserted, venueID)
-	return VenueRecord{ID: venueID}, nil
+	return VenueRecord{VenueId: venueID}, nil
 }
 
 func (s *vaultUpdateStubStore) DeleteVenue(context.Context, string) error {
@@ -167,7 +167,7 @@ func TestUpdateVaultPayload_Success(t *testing.T) {
 		Nonce:      []byte("old-nonce"),
 	}
 
-	vaultCtrl := vault.NewController()
+	vaultCtrl := vault.NewController(vault.StateSealed)
 	vaultCtrl.SetUser(&user)
 	secrets := vault.Secrets{
 		Secrets: vault.Data{
@@ -250,7 +250,7 @@ func TestUpdateVaultPayload_MissingSession(t *testing.T) {
 	user := vault.User{ID: 1, Username: "testuser"}
 	store.user = &user
 
-	vaultCtrl := vault.NewController()
+	vaultCtrl := vault.NewController(vault.StateSealed)
 	vaultCtrl.SetUser(&user)
 	secrets := vault.Secrets{
 		Secrets: vault.Data{
@@ -284,7 +284,7 @@ func TestUpdateVaultPayload_VaultSealed(t *testing.T) {
 	user := vault.User{ID: 1, Username: "testuser"}
 	store.user = &user
 
-	vaultCtrl := vault.NewController()
+	vaultCtrl := vault.NewController(vault.StateSealed)
 	vaultCtrl.SetUser(&user)
 	require.NoError(t, vaultCtrl.Seal())
 
@@ -306,7 +306,7 @@ func TestUpdateVaultPayload_NoPrimaryVenue(t *testing.T) {
 	user := vault.User{ID: 1, Username: "testuser"}
 	store.user = &user
 
-	vaultCtrl := vault.NewController()
+	vaultCtrl := vault.NewController(vault.StateSealed)
 	vaultCtrl.SetUser(&user)
 	secrets := vault.Secrets{
 		Secrets: vault.Data{
@@ -372,7 +372,7 @@ func TestUpdateVaultPayload_MultiplePrimaryVenues(t *testing.T) {
 	user := vault.User{ID: 1, Username: "testuser"}
 	store.user = &user
 
-	vaultCtrl := vault.NewController()
+	vaultCtrl := vault.NewController(vault.StateSealed)
 	vaultCtrl.SetUser(&user)
 	secrets := vault.Secrets{
 		Secrets: vault.Data{
@@ -445,7 +445,7 @@ func TestUpdateVaultPayload_DuplicateVenueIDs(t *testing.T) {
 	user := vault.User{ID: 1, Username: "testuser"}
 	store.user = &user
 
-	vaultCtrl := vault.NewController()
+	vaultCtrl := vault.NewController(vault.StateSealed)
 	vaultCtrl.SetUser(&user)
 	secrets := vault.Secrets{
 		Secrets: vault.Data{
@@ -518,7 +518,7 @@ func TestUpdateVaultPayload_InvalidWalletAddress(t *testing.T) {
 	user := vault.User{ID: 1, Username: "testuser"}
 	store.user = &user
 
-	vaultCtrl := vault.NewController()
+	vaultCtrl := vault.NewController(vault.StateSealed)
 	vaultCtrl.SetUser(&user)
 	secrets := vault.Secrets{
 		Secrets: vault.Data{
@@ -584,7 +584,7 @@ func TestUpdateVaultPayload_InvalidPrivateKey(t *testing.T) {
 	user := vault.User{ID: 1, Username: "testuser"}
 	store.user = &user
 
-	vaultCtrl := vault.NewController()
+	vaultCtrl := vault.NewController(vault.StateSealed)
 	vaultCtrl.SetUser(&user)
 	secrets := vault.Secrets{
 		Secrets: vault.Data{
@@ -651,7 +651,7 @@ func TestUpdateVaultPayload_DatabaseError(t *testing.T) {
 	user := vault.User{ID: 1, Username: "testuser"}
 	store.user = &user
 
-	vaultCtrl := vault.NewController()
+	vaultCtrl := vault.NewController(vault.StateSealed)
 	vaultCtrl.SetUser(&user)
 	secrets := vault.Secrets{
 		Secrets: vault.Data{

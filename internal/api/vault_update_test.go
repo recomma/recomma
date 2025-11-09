@@ -3,8 +3,6 @@ package api
 import (
 	"context"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -18,13 +16,13 @@ import (
 )
 
 type vaultUpdateStubStore struct {
-	user              *vault.User
-	payload           *vault.Payload
-	upsertErr         error
-	upsertCallCount   int
-	lastPayloadInput  *vault.PayloadInput
-	venuesUpserted    []string
-	stream            *StreamController
+	user             *vault.User
+	payload          *vault.Payload
+	upsertErr        error
+	upsertCallCount  int
+	lastPayloadInput *vault.PayloadInput
+	venuesUpserted   []string
+	stream           *StreamController
 }
 
 func newVaultUpdateStubStore(stream *StreamController) *vaultUpdateStubStore {

@@ -35,6 +35,22 @@ func newVaultUpdateStubStore(stream *StreamController) *vaultUpdateStubStore {
 	}
 }
 
+func issueSessionCookie(t *testing.T, handler *ApiHandler, req *http.Request) {
+	t.Helper()
+
+	require.NotNil(t, handler.session)
+
+	expiry := time.Now().Add(30 * time.Minute)
+	token, err := handler.session.Issue(expiry)
+	require.NoError(t, err)
+
+	req.AddCookie(&http.Cookie{
+		Name:  vaultSessionCookieName,
+		Value: token,
+		Path:  "/",
+	})
+}
+
 // Implement Store interface methods
 func (s *vaultUpdateStubStore) ListBots(context.Context, ListBotsOptions) ([]BotItem, *string, error) {
 	return nil, nil, nil
@@ -224,6 +240,7 @@ func TestUpdateVaultPayload_Success(t *testing.T) {
 	}
 
 	httpReq := httptest.NewRequest(http.MethodPut, "/vault/payload", nil)
+	issueSessionCookie(t, handler, httpReq)
 	ctx := context.WithValue(context.Background(), httpRequestContextKey, httpReq)
 
 	resp, err := handler.UpdateVaultPayload(ctx, req)
@@ -299,6 +316,7 @@ func TestUpdateVaultPayload_VaultSealed(t *testing.T) {
 	req := UpdateVaultPayloadRequestObject{Body: &UpdateVaultPayloadJSONRequestBody{}}
 
 	httpReq := httptest.NewRequest(http.MethodPut, "/vault/payload", nil)
+	issueSessionCookie(t, handler, httpReq)
 	ctx := context.WithValue(context.Background(), httpRequestContextKey, httpReq)
 
 	resp, err := handler.UpdateVaultPayload(ctx, req)
@@ -357,6 +375,7 @@ func TestUpdateVaultPayload_NoPrimaryVenue(t *testing.T) {
 							Wallet:     "0x1234567890123456789012345678901234567890",
 							PrivateKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 							IsPrimary:  false, // No primary!
+							ApiUrl:     stringPtr("https://api.hyperliquid.xyz"),
 						},
 					},
 				},
@@ -365,6 +384,7 @@ func TestUpdateVaultPayload_NoPrimaryVenue(t *testing.T) {
 	}
 
 	httpReq := httptest.NewRequest(http.MethodPut, "/vault/payload", nil)
+	issueSessionCookie(t, handler, httpReq)
 	ctx := context.WithValue(context.Background(), httpRequestContextKey, httpReq)
 
 	resp, err := handler.UpdateVaultPayload(ctx, req)
@@ -426,6 +446,7 @@ func TestUpdateVaultPayload_MultiplePrimaryVenues(t *testing.T) {
 							Wallet:     "0x1234567890123456789012345678901234567890",
 							PrivateKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 							IsPrimary:  true,
+							ApiUrl:     stringPtr("https://api.hyperliquid.xyz"),
 						},
 						{
 							Id:         "hyperliquid:backup",
@@ -433,6 +454,7 @@ func TestUpdateVaultPayload_MultiplePrimaryVenues(t *testing.T) {
 							Wallet:     "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
 							PrivateKey: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
 							IsPrimary:  true, // Multiple primaries!
+							ApiUrl:     stringPtr("https://api.hyperliquid.xyz"),
 						},
 					},
 				},
@@ -441,6 +463,7 @@ func TestUpdateVaultPayload_MultiplePrimaryVenues(t *testing.T) {
 	}
 
 	httpReq := httptest.NewRequest(http.MethodPut, "/vault/payload", nil)
+	issueSessionCookie(t, handler, httpReq)
 	ctx := context.WithValue(context.Background(), httpRequestContextKey, httpReq)
 
 	resp, err := handler.UpdateVaultPayload(ctx, req)
@@ -502,6 +525,7 @@ func TestUpdateVaultPayload_DuplicateVenueIDs(t *testing.T) {
 							Wallet:     "0x1234567890123456789012345678901234567890",
 							PrivateKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 							IsPrimary:  true,
+							ApiUrl:     stringPtr("https://api.hyperliquid.xyz"),
 						},
 						{
 							Id:         "hyperliquid:main", // Duplicate ID!
@@ -517,6 +541,7 @@ func TestUpdateVaultPayload_DuplicateVenueIDs(t *testing.T) {
 	}
 
 	httpReq := httptest.NewRequest(http.MethodPut, "/vault/payload", nil)
+	issueSessionCookie(t, handler, httpReq)
 	ctx := context.WithValue(context.Background(), httpRequestContextKey, httpReq)
 
 	resp, err := handler.UpdateVaultPayload(ctx, req)
@@ -578,6 +603,7 @@ func TestUpdateVaultPayload_InvalidWalletAddress(t *testing.T) {
 							Wallet:     "0xinvalid", // Invalid wallet!
 							PrivateKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 							IsPrimary:  true,
+							ApiUrl:     stringPtr("https://api.hyperliquid.xyz"),
 						},
 					},
 				},
@@ -586,6 +612,7 @@ func TestUpdateVaultPayload_InvalidWalletAddress(t *testing.T) {
 	}
 
 	httpReq := httptest.NewRequest(http.MethodPut, "/vault/payload", nil)
+	issueSessionCookie(t, handler, httpReq)
 	ctx := context.WithValue(context.Background(), httpRequestContextKey, httpReq)
 
 	resp, err := handler.UpdateVaultPayload(ctx, req)
@@ -647,6 +674,7 @@ func TestUpdateVaultPayload_InvalidPrivateKey(t *testing.T) {
 							Wallet:     "0x1234567890123456789012345678901234567890",
 							PrivateKey: "tooshort", // Invalid private key!
 							IsPrimary:  true,
+							ApiUrl:     stringPtr("https://api.hyperliquid.xyz"),
 						},
 					},
 				},
@@ -655,6 +683,7 @@ func TestUpdateVaultPayload_InvalidPrivateKey(t *testing.T) {
 	}
 
 	httpReq := httptest.NewRequest(http.MethodPut, "/vault/payload", nil)
+	issueSessionCookie(t, handler, httpReq)
 	ctx := context.WithValue(context.Background(), httpRequestContextKey, httpReq)
 
 	resp, err := handler.UpdateVaultPayload(ctx, req)
@@ -717,6 +746,7 @@ func TestUpdateVaultPayload_DatabaseError(t *testing.T) {
 							Wallet:     "0x1234567890123456789012345678901234567890",
 							PrivateKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 							IsPrimary:  true,
+							ApiUrl:     stringPtr("https://api.hyperliquid.xyz"),
 						},
 					},
 				},
@@ -725,6 +755,7 @@ func TestUpdateVaultPayload_DatabaseError(t *testing.T) {
 	}
 
 	httpReq := httptest.NewRequest(http.MethodPut, "/vault/payload", nil)
+	issueSessionCookie(t, handler, httpReq)
 	ctx := context.WithValue(context.Background(), httpRequestContextKey, httpReq)
 
 	resp, err := handler.UpdateVaultPayload(ctx, req)

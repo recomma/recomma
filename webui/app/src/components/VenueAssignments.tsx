@@ -22,9 +22,11 @@ import {
 } from './ui/alert-dialog';
 import { Alert, AlertDescription } from './ui/alert';
 import { Plus, Trash2, RefreshCw, AlertCircle } from 'lucide-react';
-import { VenueRecord, VenueAssignmentWithBot, BotRecord } from '../types/api';
+import { VenueRecord, VenueAssignmentWithBot, BotRecord, ListBotsResponse } from '../types/api';
 import { BotAssignmentDialog } from './BotAssignmentDialog';
-import { toast } from 'sonner@2.0.3';
+import { fetchVenueAssignments, assignBotToVenue, unassignBotFromVenue } from '../lib/venue-api';
+import { buildOpsApiUrl } from '../config/opsApi';
+import { toast } from 'sonner';
 
 interface VenueAssignmentsProps {
   venue: VenueRecord;
@@ -49,18 +51,22 @@ export function VenueAssignments({ venue, onRefresh }: VenueAssignmentsProps) {
     setLoading(true);
     try {
       // Load assignments for this venue
-      const assignmentsResponse = await mockApiCall(
-        `/api/venues/${venue.venue_id}/assignments`,
-        'GET'
-      );
-      const assignmentsData = await assignmentsResponse.json();
+      const assignmentsData = await fetchVenueAssignments(venue.venue_id);
 
       // Load all bots to get names
-      const botsResponse = await mockApiCall('/api/bots?limit=500', 'GET');
-      const botsData = await botsResponse.json();
+      const botsResponse = await fetch(buildOpsApiUrl('/api/bots?limit=500'), {
+        method: 'GET',
+        credentials: 'include',
+      });
+
+      if (!botsResponse.ok) {
+        throw new Error('Failed to load bots');
+      }
+
+      const botsData: ListBotsResponse = await botsResponse.json();
 
       // Merge bot info with assignments
-      const enrichedAssignments = assignmentsData.items.map((assignment: any) => {
+      const enrichedAssignments = assignmentsData.map((assignment) => {
         const bot = botsData.items.find((b: BotRecord) => b.bot_id === assignment.bot_id);
         return {
           ...assignment,
@@ -81,15 +87,7 @@ export function VenueAssignments({ venue, onRefresh }: VenueAssignmentsProps) {
 
   const handleAssignBot = async (botId: number, venueId: string, isPrimary: boolean) => {
     try {
-      const response = await mockApiCall(
-        `/api/venues/${venueId}/assignments/${botId}`,
-        'PUT',
-        { is_primary: isPrimary }
-      );
-
-      if (!response.ok) {
-        throw new Error('Failed to assign bot');
-      }
+      await assignBotToVenue(venueId, botId, isPrimary);
 
       await loadAssignments();
       onRefresh?.();
@@ -104,14 +102,7 @@ export function VenueAssignments({ venue, onRefresh }: VenueAssignmentsProps) {
     if (!assignmentToRemove) return;
 
     try {
-      const response = await mockApiCall(
-        `/api/venues/${venue.venue_id}/assignments/${assignmentToRemove.bot_id}`,
-        'DELETE'
-      );
-
-      if (!response.ok) {
-        throw new Error('Failed to remove assignment');
-      }
+      await unassignBotFromVenue(venue.venue_id, assignmentToRemove.bot_id);
 
       await loadAssignments();
       onRefresh?.();
@@ -253,74 +244,4 @@ export function VenueAssignments({ venue, onRefresh }: VenueAssignmentsProps) {
       </AlertDialog>
     </>
   );
-}
-
-// Mock API call - replace with actual implementation
-async function mockApiCall(url: string, method: string, body?: any): Promise<Response> {
-  await new Promise((resolve) => setTimeout(resolve, 500));
-
-  // Mock data based on endpoint
-  if (url.includes('/assignments') && method === 'GET') {
-    return new Response(
-      JSON.stringify({
-        items: [
-          {
-            bot_id: 12345,
-            venue_id: 'hyperliquid:main-trading',
-            is_primary: true,
-            assigned_at: '2025-01-15T10:30:00Z',
-          },
-          {
-            bot_id: 67890,
-            venue_id: 'hyperliquid:main-trading',
-            is_primary: true,
-            assigned_at: '2025-01-15T11:00:00Z',
-          },
-        ],
-      }),
-      { status: 200 }
-    );
-  }
-
-  if (url.includes('/api/bots') && method === 'GET') {
-    return new Response(
-      JSON.stringify({
-        items: [
-          {
-            bot_id: 12345,
-            last_synced_at: '2025-01-15T12:00:00Z',
-            payload: {
-              id: 12345,
-              name: 'ETH Scalper Bot',
-              is_enabled: true,
-              account_name: 'My 3Commas Account',
-            },
-          },
-          {
-            bot_id: 67890,
-            last_synced_at: '2025-01-15T12:00:00Z',
-            payload: {
-              id: 67890,
-              name: 'BTC DCA Bot',
-              is_enabled: true,
-              account_name: 'My 3Commas Account',
-            },
-          },
-          {
-            bot_id: 11111,
-            last_synced_at: '2025-01-15T12:00:00Z',
-            payload: {
-              id: 11111,
-              name: 'SOL Swing Trader',
-              is_enabled: false,
-              account_name: 'My 3Commas Account',
-            },
-          },
-        ],
-      }),
-      { status: 200 }
-    );
-  }
-
-  return new Response(JSON.stringify({}), { status: 200 });
 }

@@ -6,7 +6,8 @@ import { VenueList } from './VenueList';
 import { VenueForm } from './VenueForm';
 import { VenueFormData, VenueWithAssignments, VaultVenueSecret } from '../types/api';
 import { generateVenueId, normalizePrivateKey } from '../lib/venue-utils';
-import { toast } from 'sonner@2.0.3';
+import { fetchVenues, fetchVenueAssignments, upsertVenue, deleteVenue } from '../lib/venue-api';
+import { toast } from 'sonner';
 
 interface VenueManagementProps {
   /** Context: 'setup' for wizard, 'settings' for post-setup */
@@ -65,27 +66,16 @@ export function VenueManagement({
     setApiError(null);
 
     try {
-      // Mock API call - replace with actual API integration
-      const response = await mockApiCall('/api/venues', 'GET');
-      
-      if (!response.ok) {
-        throw new Error('Failed to load wallets');
-      }
+      const venues = await fetchVenues();
 
-      const data = await response.json();
-      
       // Load assignment counts for each venue
       const venuesWithCounts = await Promise.all(
-        data.items.map(async (venue: any) => {
+        venues.map(async (venue) => {
           try {
-            const assignmentsResponse = await mockApiCall(
-              `/api/venues/${venue.venue_id}/assignments`,
-              'GET'
-            );
-            const assignments = await assignmentsResponse.json();
+            const assignments = await fetchVenueAssignments(venue.venue_id);
             return {
               ...venue,
-              assignmentCount: assignments.items.length,
+              assignmentCount: assignments.length,
             };
           } catch {
             return { ...venue, assignmentCount: 0 };
@@ -136,16 +126,12 @@ export function VenueManagement({
       // Settings: call API
       setApiLoading(true);
       try {
-        const response = await mockApiCall(`/api/venues/${venueId}`, 'PUT', {
+        await upsertVenue(venueId, {
           type: 'hyperliquid',
           display_name: formData.display_name,
           wallet: formData.wallet,
           flags: { api_url: formData.api_url },
         });
-
-        if (!response.ok) {
-          throw new Error('Failed to add wallet');
-        }
 
         await loadVenuesFromAPI();
         setFormOpen(false);
@@ -194,16 +180,12 @@ export function VenueManagement({
       // Settings: call API
       setApiLoading(true);
       try {
-        const response = await mockApiCall(`/api/venues/${editingVenue.venue_id}`, 'PUT', {
+        await upsertVenue(editingVenue.venue_id, {
           type: editingVenue.type,
           display_name: formData.display_name,
           wallet: editingVenue.wallet,
           flags: { api_url: formData.api_url },
         });
-
-        if (!response.ok) {
-          throw new Error('Failed to update wallet');
-        }
 
         await loadVenuesFromAPI();
         setFormOpen(false);
@@ -242,11 +224,7 @@ export function VenueManagement({
       // Settings: call API
       setApiLoading(true);
       try {
-        const response = await mockApiCall(`/api/venues/${venue.venue_id}`, 'DELETE');
-
-        if (!response.ok) {
-          throw new Error('Failed to delete wallet');
-        }
+        await deleteVenue(venue.venue_id);
 
         await loadVenuesFromAPI();
         toast.success(`Wallet "${venue.display_name}" deleted successfully`);
@@ -368,19 +346,5 @@ export function VenueManagement({
         )}
       </div>
     </div>
-  );
-}
-
-// Mock API call function - replace with actual API integration
-async function mockApiCall(url: string, method: string, body?: any): Promise<Response> {
-  // Simulate network delay
-  await new Promise((resolve) => setTimeout(resolve, 500));
-
-  // Mock successful response
-  return new Response(
-    JSON.stringify({
-      items: [],
-    }),
-    { status: 200, headers: { 'Content-Type': 'application/json' } }
   );
 }

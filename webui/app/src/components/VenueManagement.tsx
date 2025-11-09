@@ -73,17 +73,22 @@ export function VenueManagement({
     try {
       const venues = await fetchVenues();
 
-      // Load assignment counts for each venue
+      // Load assignment counts for each venue and extract isPrimary from flags
       const venuesWithCounts = await Promise.all(
         venues.map(async (venue) => {
           try {
             const assignments = await fetchVenueAssignments(venue.venue_id);
             return {
               ...venue,
+              isPrimary: (venue.flags as Record<string, unknown>)?.is_primary === true,
               assignmentCount: assignments.length,
             };
           } catch {
-            return { ...venue, assignmentCount: 0 };
+            return {
+              ...venue,
+              isPrimary: (venue.flags as Record<string, unknown>)?.is_primary === true,
+              assignmentCount: 0,
+            };
           }
         })
       );

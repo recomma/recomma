@@ -16,6 +16,8 @@ interface VenueManagementProps {
   initialVenues?: VaultVenueSecret[];
   /** Callback when venues change (for setup wizard) */
   onVenuesChange?: (venues: VaultVenueSecret[]) => void;
+  /** Callback when venues are loaded (for settings) */
+  onVenuesLoaded?: (venues: VenueWithAssignments[]) => void;
   /** Callback when user wants to view venue details */
   onViewDetail?: (venue: VenueWithAssignments) => void;
   /** Whether the component is in a loading state */
@@ -26,6 +28,7 @@ export function VenueManagement({
   context,
   initialVenues = [],
   onVenuesChange,
+  onVenuesLoaded,
   onViewDetail,
   loading = false,
 }: VenueManagementProps) {
@@ -84,6 +87,7 @@ export function VenueManagement({
       );
 
       setVenues(venuesWithCounts);
+      onVenuesLoaded?.(venuesWithCounts);
     } catch (error) {
       setApiError(error instanceof Error ? error.message : 'Failed to load wallets');
     } finally {

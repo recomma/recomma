@@ -5,14 +5,18 @@ import { Button } from './ui/button';
 import { ArrowLeft } from 'lucide-react';
 import { VenueManagement } from './VenueManagement';
 import { BotAssignmentManager } from './BotAssignmentManager';
-import type { VenueRecord } from '../types/api';
+import type { VenueRecord, VenueWithAssignments } from '../types/api';
 
 interface SettingsProps {
   onBack?: () => void;
 }
 
 export function Settings({ onBack }: SettingsProps) {
-  const [venues] = useState<VenueRecord[]>([]);
+  const [venues, setVenues] = useState<VenueRecord[]>([]);
+
+  const handleVenuesLoaded = (loadedVenues: VenueWithAssignments[]) => {
+    setVenues(loadedVenues);
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -55,6 +59,7 @@ export function Settings({ onBack }: SettingsProps) {
               <TabsContent value="venues" className="mt-6">
                 <VenueManagement
                   context="settings"
+                  onVenuesLoaded={handleVenuesLoaded}
                 />
               </TabsContent>
 

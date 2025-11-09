@@ -52,6 +52,10 @@
 - Keep layouts responsive—App shell uses `container` widths and flex parents; match these patterns.
 - SVG favicon and other assets live under `public/` and `favicon/`; regenerate favicons via `npm run favicon`.
 
+## Missing elements
+If you're missing a shadcn element, install it via their tooling. This updates all the neccesary files.
+- `npx shadcn@latest add checkbox`
+
 ## Working Agreements for Agents
 1. **Respect the runtime contract**: only fetch through `buildOpsApiUrl` and preserve credentials (`credentials: 'include'`).
 2. **Guard asynchronous work**: mirror `isMountedRef` patterns when adding hooks to avoid state updates after unmount.

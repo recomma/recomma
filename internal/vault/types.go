@@ -253,8 +253,9 @@ func (d Data) Validate() error {
 		return errors.New("invalid payload: missing required field 'secrets.THREECOMMAS_PRIVATE_KEY'")
 	}
 
+	// Venues are optional - if present, validate them
 	if len(d.Venues) == 0 {
-		return errors.New("invalid payload: missing required field 'secrets.venues'")
+		return nil
 	}
 
 	// Track venue IDs for uniqueness check

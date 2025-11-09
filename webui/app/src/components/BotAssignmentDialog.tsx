@@ -25,7 +25,6 @@ export function BotAssignmentDialog({
   venues,
   currentVenueId,
   onAssign,
-  loading = false,
 }: BotAssignmentDialogProps) {
   const [selectedVenueId, setSelectedVenueId] = useState<string>('');
   const [isPrimary, setIsPrimary] = useState(true);

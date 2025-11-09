@@ -153,7 +153,7 @@ export function VenueManagement({
 
     if (isSetupContext) {
       // Setup wizard: update local state
-      let updatedVenues = initialVenues.map((v) => {
+      const updatedVenues = initialVenues.map((v) => {
         if (v.id === editingVenue.venue_id) {
           return {
             ...v,
@@ -211,12 +211,12 @@ export function VenueManagement({
 
     if (isSetupContext) {
       // Setup wizard: update local state
-      let updatedVenues = initialVenues.filter((v) => v.id !== venue.venue_id);
+      const filteredVenues = initialVenues.filter((v) => v.id !== venue.venue_id);
 
       // If we deleted the primary, promote another one
-      if (venue.isPrimary && updatedVenues.length > 0) {
-        updatedVenues[0].is_primary = true;
-      }
+      const updatedVenues = venue.isPrimary && filteredVenues.length > 0
+        ? filteredVenues.map((v, idx) => idx === 0 ? { ...v, is_primary: true } : v)
+        : filteredVenues;
 
       onVenuesChange?.(updatedVenues);
       setSuccessMessage(`Wallet "${venue.display_name}" deleted successfully`);

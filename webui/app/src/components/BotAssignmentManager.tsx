@@ -1,6 +1,4 @@
-import { useState } from 'react';
 import { Card } from './ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Alert, AlertDescription } from './ui/alert';
 import { Info } from 'lucide-react';
 import { BotList } from './BotList';

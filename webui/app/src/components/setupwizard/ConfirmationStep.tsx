@@ -106,7 +106,7 @@ export function ConfirmationStep({ data, onBack, onConfirm, isSubmitting, error 
           </Badge>
         </div>
 
-        {data.venues.map((venue, index) => (
+        {data.venues.map((venue) => (
           <div key={venue.id} className="bg-slate-50 rounded-lg p-4 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">

@@ -12,11 +12,7 @@ interface SettingsProps {
 }
 
 export function Settings({ onBack }: SettingsProps) {
-  const [venues, setVenues] = useState<VenueRecord[]>([]);
-
-  const handleVenuesLoaded = (loadedVenues: VenueRecord[]) => {
-    setVenues(loadedVenues);
-  };
+  const [venues] = useState<VenueRecord[]>([]);
 
   return (
     <div className="min-h-screen bg-gray-50">

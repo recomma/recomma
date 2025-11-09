@@ -109,7 +109,7 @@ export function VenueAssignments({ venue, onRefresh }: VenueAssignmentsProps) {
       toast.success('Assignment removed');
       setRemoveDialogOpen(false);
       setAssignmentToRemove(null);
-    } catch (error) {
+    } catch {
       toast.error('Failed to remove assignment');
     }
   };

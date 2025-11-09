@@ -262,6 +262,52 @@ paths:
           description: Internal server error
       security:
         - SessionCookie: []
+
+    put:
+      operationId: updateVaultPayload
+      summary: Update encrypted vault payload
+      description: |
+        Replaces the encrypted vault payload with a new version. Requires an active
+        WebAuthn session and unsealed vault state. The server validates the decrypted
+        payload before persisting the encrypted version. After update, the vault remains
+        unsealed but the new configuration is not active until seal/re-unseal cycle.
+      security:
+        - SessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - encrypted_payload
+                - decrypted_payload
+              properties:
+                encrypted_payload:
+                  $ref: '#/components/schemas/VaultEncryptedPayload'
+                  description: Encrypted payload to persist
+                decrypted_payload:
+                  $ref: '#/components/schemas/VaultSecretsBundle'
+                  description: Decrypted payload for server-side validation
+      responses:
+        '200':
+          description: Payload updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Vault payload updated successfully"
+        '400':
+          description: Invalid payload or validation failed
+        '401':
+          description: Missing or invalid session
+        '403':
+          description: Vault is sealed or session expired
+        '500':
+          description: Internal server error
   /api/bots:
     get:
       operationId: listBots

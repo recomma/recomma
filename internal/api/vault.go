@@ -139,6 +139,91 @@ func (h *ApiHandler) GetVaultPayload(ctx context.Context, request GetVaultPayloa
 	return GetVaultPayload200JSONResponse(encrypted), nil
 }
 
+func (h *ApiHandler) UpdateVaultPayload(ctx context.Context, request UpdateVaultPayloadRequestObject) (UpdateVaultPayloadResponseObject, error) {
+	if request.Body == nil {
+		return UpdateVaultPayload400Response{}, nil
+	}
+
+	// Require valid session
+	if ok, expired := h.requireSession(ctx); !ok {
+		if expired {
+			h.logger.InfoContext(ctx, "UpdateVaultPayload unauthorized", slog.String("reason", "session expired"))
+			return UpdateVaultPayload401Response{}, nil
+		}
+		h.logger.InfoContext(ctx, "UpdateVaultPayload unauthorized", slog.String("reason", "missing or invalid session"))
+		return UpdateVaultPayload401Response{}, nil
+	}
+
+	// Check vault state
+	st, err := h.controllerStatus(ctx)
+	if err != nil {
+		return UpdateVaultPayload500Response{}, nil
+	}
+
+	// Vault must be unsealed
+	if st.State != vault.StateUnsealed {
+		h.logger.InfoContext(ctx, "UpdateVaultPayload forbidden", slog.String("reason", "vault is sealed"))
+		return UpdateVaultPayload403Response{}, nil
+	}
+
+	if st.User == nil {
+		h.logger.ErrorContext(ctx, "UpdateVaultPayload: no user in vault state")
+		return UpdateVaultPayload500Response{}, nil
+	}
+
+	// Validate the encrypted payload structure
+	if err := validateEncryptedPayload(request.Body.EncryptedPayload); err != nil {
+		h.logger.InfoContext(ctx, "UpdateVaultPayload invalid encrypted payload structure", slog.String("error", err.Error()))
+		return UpdateVaultPayload400Response{}, nil
+	}
+
+	// Build and validate the decrypted secrets bundle
+	secrets, err := buildSecretsBundle(request.Body.DecryptedPayload, h.now())
+	if err != nil {
+		h.logger.InfoContext(ctx, "UpdateVaultPayload invalid secrets bundle", slog.String("error", err.Error()))
+		return UpdateVaultPayload400Response{}, nil
+	}
+
+	// Perform additional validation on the decrypted data
+	if validateErr := secrets.Secrets.Validate(); validateErr != nil {
+		h.logger.InfoContext(ctx, "UpdateVaultPayload validation failed", slog.String("error", validateErr.Error()))
+		return UpdateVaultPayload400Response{}, nil
+	}
+
+	// Get storage interface
+	store, ok := h.store.(vaultStorage)
+	if !ok {
+		h.logger.ErrorContext(ctx, "vault update without backing store")
+		return UpdateVaultPayload500Response{}, nil
+	}
+
+	// Build payload input for storage (using encrypted version)
+	save, err := buildPayloadInput(request.Body.EncryptedPayload, st.User.ID, h.now())
+	if err != nil {
+		h.logger.ErrorContext(ctx, "build payload input", slog.String("error", err.Error()))
+		return UpdateVaultPayload500Response{}, nil
+	}
+
+	// Persist the updated payload (atomic transaction)
+	if err := store.UpsertVaultPayload(ctx, save); err != nil {
+		h.logger.ErrorContext(ctx, "update vault payload", slog.String("error", err.Error()))
+		return UpdateVaultPayload500Response{}, nil
+	}
+
+	// Sync venue metadata to storage
+	if syncErr := h.syncVenueMetadata(ctx, secrets.Secrets.Venues); syncErr != nil {
+		h.logger.WarnContext(ctx, "sync venue metadata after update", slog.String("error", syncErr.Error()))
+		// Don't fail the update if venue sync fails
+	}
+
+	h.logger.InfoContext(ctx, "vault payload updated successfully", slog.Int64("user_id", st.User.ID))
+
+	msg := "Vault payload updated successfully"
+	return UpdateVaultPayload200JSONResponse{
+		Message: &msg,
+	}, nil
+}
+
 func (h *ApiHandler) GetVaultStatus(ctx context.Context, request GetVaultStatusRequestObject) (GetVaultStatusResponseObject, error) {
 	status, err := h.controllerStatus(ctx)
 	if err != nil {

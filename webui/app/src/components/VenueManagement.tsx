@@ -122,9 +122,13 @@ export function VenueManagement({
         },
       };
 
-      // Re-encrypt the bundle
+      // Re-encrypt the bundle (reusing the same encryption key)
       const username = decryptedBundle.not_secret.username;
-      const newEncryptedPayload = await encryptVaultPayload(updatedBundle, username);
+      const newEncryptedPayload = await encryptVaultPayload(
+        updatedBundle,
+        username,
+        encryptedPayload
+      );
 
       // Send to server
       await updateVaultPayload(newEncryptedPayload, updatedBundle);

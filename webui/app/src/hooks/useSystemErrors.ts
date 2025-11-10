@@ -1,14 +1,16 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { buildOpsApiUrl } from '../config/opsApi';
 
 /**
  * Hook to listen for system events from the server and display them as toasts
  * @param enabled - Whether to connect to the system event stream
+ * @param toasterReady - Whether the Toaster component is mounted and ready
  */
-export function useSystemErrors(enabled: boolean = true) {
+export function useSystemErrors(enabled: boolean = true, toasterReady: boolean = false) {
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || !toasterReady) {
+      console.log('[SystemErrors] Not connecting:', { enabled, toasterReady });
       return;
     }
 
@@ -111,5 +113,5 @@ export function useSystemErrors(enabled: boolean = true) {
         }
       };
     }
-  }, [enabled]);
+  }, [enabled, toasterReady]);
 }

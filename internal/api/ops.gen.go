@@ -526,6 +526,46 @@ type ScaledOrderAuditLogEntry struct {
 // ScaledOrderAuditLogEntryType defines model for ScaledOrderAuditLogEntry.Type.
 type ScaledOrderAuditLogEntryType string
 
+// SystemStatus defines model for SystemStatus.
+type SystemStatus struct {
+	Engine struct {
+		// ActiveDeals Number of active deals being tracked
+		ActiveDeals int `json:"active_deals"`
+
+		// LastSync Timestamp of last deal sync with 3commas
+		LastSync *time.Time `json:"last_sync"`
+
+		// Running Whether the order engine is running
+		Running bool `json:"running"`
+	} `json:"engine"`
+	HyperliquidVenues *[]struct {
+		// Connected Whether venue websocket/client is connected
+		Connected bool `json:"connected"`
+
+		// LastError Most recent error for this venue
+		LastError *string `json:"last_error"`
+
+		// VenueId Venue identifier
+		VenueId string `json:"venue_id"`
+
+		// Wallet Wallet address for this venue
+		Wallet string `json:"wallet"`
+	} `json:"hyperliquid_venues,omitempty"`
+	ThreecommasApi *struct {
+		// Available Whether 3commas API is currently reachable
+		Available *bool `json:"available,omitempty"`
+
+		// LastError Most recent error from 3commas API, if any
+		LastError *string `json:"last_error"`
+
+		// LastSuccessfulCall Timestamp of last successful 3commas API call
+		LastSuccessfulCall *time.Time `json:"last_successful_call"`
+	} `json:"threecommas_api"`
+
+	// Timestamp When this status snapshot was captured
+	Timestamp time.Time `json:"timestamp"`
+}
+
 // ThreeCommasBotEvent defines model for ThreeCommasBotEvent.
 type ThreeCommasBotEvent struct {
 	// Action High-level classification provided by the bot event parser (for example `Placing` or `Execute`).
@@ -1333,6 +1373,12 @@ type ServerInterface interface {
 	// Stream live changes to acted-on orders
 	// (GET /sse/orders)
 	StreamOrders(w http.ResponseWriter, r *http.Request, params StreamOrdersParams)
+	// Server-sent events for system notifications
+	// (GET /stream/system)
+	StreamSystemEvents(w http.ResponseWriter, r *http.Request)
+	// Get current system health and status
+	// (GET /system/status)
+	GetSystemStatus(w http.ResponseWriter, r *http.Request)
 	// Retrieve encrypted vault payload
 	// (GET /vault/payload)
 	GetVaultPayload(w http.ResponseWriter, r *http.Request)
@@ -2186,6 +2232,46 @@ func (siw *ServerInterfaceWrapper) StreamOrders(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// StreamSystemEvents operation middleware
+func (siw *ServerInterfaceWrapper) StreamSystemEvents(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StreamSystemEvents(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSystemStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetSystemStatus(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSystemStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetVaultPayload operation middleware
 func (siw *ServerInterfaceWrapper) GetVaultPayload(w http.ResponseWriter, r *http.Request) {
 
@@ -2483,6 +2569,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("PUT "+options.BaseURL+"/api/venues/{venue_id}/assignments/{bot_id}", wrapper.UpsertVenueAssignment)
 	m.HandleFunc("GET "+options.BaseURL+"/sse/hyperliquid/prices", wrapper.StreamHyperliquidPrices)
 	m.HandleFunc("GET "+options.BaseURL+"/sse/orders", wrapper.StreamOrders)
+	m.HandleFunc("GET "+options.BaseURL+"/stream/system", wrapper.StreamSystemEvents)
+	m.HandleFunc("GET "+options.BaseURL+"/system/status", wrapper.GetSystemStatus)
 	m.HandleFunc("GET "+options.BaseURL+"/vault/payload", wrapper.GetVaultPayload)
 	m.HandleFunc("PUT "+options.BaseURL+"/vault/payload", wrapper.UpdateVaultPayload)
 	m.HandleFunc("POST "+options.BaseURL+"/vault/seal", wrapper.SealVault)
@@ -3301,6 +3389,56 @@ func (response StreamOrders500Response) VisitStreamOrdersResponse(w http.Respons
 	return nil
 }
 
+type StreamSystemEventsRequestObject struct {
+}
+
+type StreamSystemEventsResponseObject interface {
+	VisitStreamSystemEventsResponse(w http.ResponseWriter) error
+}
+
+type StreamSystemEvents200TexteventStreamResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response StreamSystemEvents200TexteventStreamResponse) VisitStreamSystemEventsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "text/event-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetSystemStatusRequestObject struct {
+}
+
+type GetSystemStatusResponseObject interface {
+	VisitGetSystemStatusResponse(w http.ResponseWriter) error
+}
+
+type GetSystemStatus200JSONResponse SystemStatus
+
+func (response GetSystemStatus200JSONResponse) VisitGetSystemStatusResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSystemStatus500Response struct {
+}
+
+func (response GetSystemStatus500Response) VisitGetSystemStatusResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
 type GetVaultPayloadRequestObject struct {
 }
 
@@ -3809,6 +3947,12 @@ type StrictServerInterface interface {
 	// Stream live changes to acted-on orders
 	// (GET /sse/orders)
 	StreamOrders(ctx context.Context, request StreamOrdersRequestObject) (StreamOrdersResponseObject, error)
+	// Server-sent events for system notifications
+	// (GET /stream/system)
+	StreamSystemEvents(ctx context.Context, request StreamSystemEventsRequestObject) (StreamSystemEventsResponseObject, error)
+	// Get current system health and status
+	// (GET /system/status)
+	GetSystemStatus(ctx context.Context, request GetSystemStatusRequestObject) (GetSystemStatusResponseObject, error)
 	// Retrieve encrypted vault payload
 	// (GET /vault/payload)
 	GetVaultPayload(ctx context.Context, request GetVaultPayloadRequestObject) (GetVaultPayloadResponseObject, error)
@@ -4389,6 +4533,54 @@ func (sh *strictHandler) StreamOrders(w http.ResponseWriter, r *http.Request, pa
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(StreamOrdersResponseObject); ok {
 		if err := validResponse.VisitStreamOrdersResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StreamSystemEvents operation middleware
+func (sh *strictHandler) StreamSystemEvents(w http.ResponseWriter, r *http.Request) {
+	var request StreamSystemEventsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StreamSystemEvents(ctx, request.(StreamSystemEventsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StreamSystemEvents")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StreamSystemEventsResponseObject); ok {
+		if err := validResponse.VisitStreamSystemEventsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetSystemStatus operation middleware
+func (sh *strictHandler) GetSystemStatus(w http.ResponseWriter, r *http.Request) {
+	var request GetSystemStatusRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetSystemStatus(ctx, request.(GetSystemStatusRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetSystemStatus")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetSystemStatusResponseObject); ok {
+		if err := validResponse.VisitGetSystemStatusResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

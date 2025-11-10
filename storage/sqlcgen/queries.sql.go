@@ -769,17 +769,17 @@ WHERE type = ?1
   AND wallet = ?2
 `
 
+type GetVenueByTypeAndWalletParams struct {
+	Type   string `json:"type"`
+	Wallet string `json:"wallet"`
+}
+
 type GetVenueByTypeAndWalletRow struct {
 	ID          string `json:"id"`
 	Type        string `json:"type"`
 	DisplayName string `json:"display_name"`
 	Wallet      string `json:"wallet"`
 	Flags       []byte `json:"flags"`
-}
-
-type GetVenueByTypeAndWalletParams struct {
-	Type   string `json:"type"`
-	Wallet string `json:"wallet"`
 }
 
 func (q *Queries) GetVenueByTypeAndWallet(ctx context.Context, arg GetVenueByTypeAndWalletParams) (GetVenueByTypeAndWalletRow, error) {

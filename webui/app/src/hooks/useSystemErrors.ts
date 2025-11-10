@@ -69,10 +69,16 @@ export function useSystemErrors(enabled: boolean = true) {
               details: data.details,
             });
 
-            toast.error('System Error', {
-              description: errorMessage,
-              duration: 10000, // Show for 10 seconds
-            });
+            console.log('[SystemError] Calling toast.error()...');
+            try {
+              const result = toast.error('System Error', {
+                description: errorMessage,
+                duration: 10000, // Show for 10 seconds
+              });
+              console.log('[SystemError] toast.error() returned:', result);
+            } catch (toastErr) {
+              console.error('[SystemError] toast.error() threw:', toastErr);
+            }
           } catch (err) {
             console.error('[SystemError] Failed to parse event:', err, 'raw data:', event.data);
           }
@@ -91,10 +97,16 @@ export function useSystemErrors(enabled: boolean = true) {
               details: data.details,
             });
 
-            toast.warning('System Warning', {
-              description: message,
-              duration: 5000,
-            });
+            console.log('[SystemWarning] Calling toast.warning()...');
+            try {
+              const result = toast.warning('System Warning', {
+                description: message,
+                duration: 5000,
+              });
+              console.log('[SystemWarning] toast.warning() returned:', result);
+            } catch (toastErr) {
+              console.error('[SystemWarning] toast.warning() threw:', toastErr);
+            }
           } catch (err) {
             console.error('[SystemWarning] Failed to parse event:', err);
           }

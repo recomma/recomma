@@ -205,6 +205,8 @@ func main() {
 	rootMux.Handle("/api", apiHandlerWithCORS)
 	rootMux.Handle("/sse/", apiHandlerWithCORS)
 	rootMux.Handle("/sse", apiHandlerWithCORS)
+	rootMux.Handle("/stream/", apiHandlerWithCORS)
+	rootMux.Handle("/stream", apiHandlerWithCORS)
 	rootMux.Handle("/webauthn/", apiHandlerWithCORS)
 	rootMux.Handle("/vault/", apiHandlerWithCORS)
 	rootMux.Handle("/vault", apiHandlerWithCORS)

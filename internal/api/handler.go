@@ -1105,21 +1105,16 @@ func (h *ApiHandler) GetSystemStatus(ctx context.Context, req GetSystemStatusReq
 
 // StreamSystemEvents satisfies StrictServerInterface.
 func (h *ApiHandler) StreamSystemEvents(ctx context.Context, req StreamSystemEventsRequestObject) (StreamSystemEventsResponseObject, error) {
-	h.logger.InfoContext(ctx, "StreamSystemEvents called")
-
 	if h.systemStream == nil {
 		h.logger.ErrorContext(ctx, "systemStream is nil")
 		return StreamSystemEvents500Response{}, nil
 	}
 
-	h.logger.InfoContext(ctx, "Subscribing to system stream")
 	eventCh, err := h.systemStream.Subscribe(ctx)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "Failed to subscribe to system stream", slog.String("error", err.Error()))
 		return StreamSystemEvents500Response{}, nil
 	}
-
-	h.logger.InfoContext(ctx, "Subscription successful, starting SSE stream")
 
 	// Use custom SSE response that flushes after each write
 	return streamSystemEventsSSEResponse{
@@ -1156,22 +1151,16 @@ func (r streamSystemEventsSSEResponse) VisitStreamSystemEventsResponse(w http.Re
 		return err
 	}
 	flusher.Flush()
-	r.handler.logger.InfoContext(r.ctx, "SSE handshake completed, headers flushed")
 
 	// Stream events
 	for {
 		select {
 		case <-r.ctx.Done():
-			r.handler.logger.InfoContext(r.ctx, "SSE context cancelled")
 			return nil
 		case evt, ok := <-r.eventCh:
 			if !ok {
-				r.handler.logger.InfoContext(r.ctx, "Event channel closed")
 				return nil
 			}
-			r.handler.logger.InfoContext(r.ctx, "Writing system event to SSE",
-				slog.String("level", string(evt.Level)),
-				slog.String("source", evt.Source))
 
 			if err := r.handler.writeSystemSSEFrame(w, evt); err != nil {
 				r.handler.logger.WarnContext(r.ctx, "write system event frame",

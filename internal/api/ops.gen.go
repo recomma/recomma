@@ -3415,6 +3415,14 @@ func (response StreamSystemEvents200TexteventStreamResponse) VisitStreamSystemEv
 	return err
 }
 
+type StreamSystemEvents500Response struct {
+}
+
+func (response StreamSystemEvents500Response) VisitStreamSystemEventsResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
 type GetSystemStatusRequestObject struct {
 }
 

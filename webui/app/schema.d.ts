@@ -2145,6 +2145,13 @@ export interface operations {
                     "text/event-stream": string;
                 };
             };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     listBots: {

@@ -328,13 +328,11 @@ paths:
 
   /stream/system:
     get:
-      security: []
       operationId: streamSystemEvents
       summary: Server-sent events for system notifications
       description: |
         Real-time stream of system events (errors, warnings, info, logs).
         Events are filtered by server-side log level configuration.
-        This endpoint is unauthenticated so errors can be displayed even before vault unseal.
       responses:
         '200':
           description: SSE stream of system events

@@ -1124,6 +1124,14 @@ func (h *ApiHandler) StreamSystemEvents(ctx context.Context, req StreamSystemEve
 	go func() {
 		defer pw.Close()
 
+		// CRITICAL: Write SSE comment immediately to flush headers and complete handshake
+		// This triggers the browser's onopen event and transitions EventSource to readyState 1 (OPEN)
+		if _, err := pw.Write([]byte(": connected\n\n")); err != nil {
+			h.logger.WarnContext(ctx, "failed to write initial SSE comment", slog.String("error", err.Error()))
+			return
+		}
+		h.logger.InfoContext(ctx, "SSE handshake completed, headers flushed")
+
 		for {
 			select {
 			case <-ctx.Done():

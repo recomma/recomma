@@ -17,33 +17,39 @@ export function useSystemErrors(enabled: boolean = true) {
     console.log('[SystemErrors] Initializing toast system...');
     toast.info('System monitoring active', { duration: 2000 });
 
+    // EventSource reference in effect scope so cleanup can access it
+    let eventSource: EventSource | null = null;
+
     // Wait for Sonner's toast container to exist in the DOM
     const waitForToaster = () => {
       return new Promise<void>((resolve) => {
-        const checkInterval = setInterval(() => {
+        let checkInterval: NodeJS.Timeout | null = null;
+        let timeoutHandle: NodeJS.Timeout | null = null;
+
+        checkInterval = setInterval(() => {
           const toasterElement = document.querySelector('[data-sonner-toaster]');
           if (toasterElement) {
             console.log('[SystemErrors] Toast system ready');
-            clearInterval(checkInterval);
+            if (checkInterval) clearInterval(checkInterval);
+            if (timeoutHandle) clearTimeout(timeoutHandle);
             resolve();
           }
         }, 50);
 
         // Timeout after 5 seconds
-        setTimeout(() => {
-          clearInterval(checkInterval);
+        timeoutHandle = setTimeout(() => {
+          if (checkInterval) clearInterval(checkInterval);
           console.warn('[SystemErrors] Toast system not detected, connecting anyway');
           resolve();
         }, 5000);
       });
     };
 
-    const connectToSSE = async () => {
+    const initializeSSE = async () => {
       // Wait for toaster to be ready
       await waitForToaster();
 
       const url = buildOpsApiUrl('/stream/system');
-      let eventSource: EventSource | null = null;
 
       try {
         console.log('[SystemErrors] Connecting to system event stream:', url);
@@ -116,36 +122,20 @@ export function useSystemErrors(enabled: boolean = true) {
         eventSource.addEventListener('system_error', handleError as EventListener);
         eventSource.addEventListener('system_warn', handleWarning as EventListener);
         eventSource.addEventListener('system_info', handleInfo as EventListener);
-
-        return () => {
-          console.log('[SystemErrors] Disconnecting from system event stream');
-
-          if (eventSource) {
-            eventSource.removeEventListener('system_error', handleError as EventListener);
-            eventSource.removeEventListener('system_warn', handleWarning as EventListener);
-            eventSource.removeEventListener('system_info', handleInfo as EventListener);
-            eventSource.close();
-          }
-        };
       } catch (err) {
         console.error('Failed to connect to system event stream:', err);
-        return () => {
-          if (eventSource) {
-            eventSource.close();
-          }
-        };
       }
     };
 
-    // Start the connection process
-    let cleanup: (() => void) | undefined;
-    connectToSSE().then((cleanupFn) => {
-      cleanup = cleanupFn;
-    });
+    // Start initialization (don't await - let it run in background)
+    initializeSSE();
 
+    // Cleanup function has access to eventSource in closure
     return () => {
-      if (cleanup) {
-        cleanup();
+      console.log('[SystemErrors] Cleaning up system event stream');
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
       }
     };
   }, [enabled]);

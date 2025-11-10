@@ -340,6 +340,8 @@ paths:
             text/event-stream:
               schema:
                 type: string
+        '500':
+          description: Internal server error
 
   /api/bots:
     get:

@@ -24,6 +24,13 @@ export function useSystemErrors(enabled: boolean = true) {
           const data = JSON.parse(event.data);
           const errorMessage = data.message || 'An unknown system error occurred';
 
+          console.error('[SystemError]', {
+            source: data.source,
+            message: errorMessage,
+            timestamp: data.timestamp,
+            details: data.details,
+          });
+
           toast.error('System Error', {
             description: errorMessage,
             duration: 10000, // Show for 10 seconds
@@ -37,6 +44,13 @@ export function useSystemErrors(enabled: boolean = true) {
         try {
           const data = JSON.parse(event.data);
           const message = data.message || 'System warning';
+
+          console.warn('[SystemWarning]', {
+            source: data.source,
+            message: message,
+            timestamp: data.timestamp,
+            details: data.details,
+          });
 
           toast.warning('System Warning', {
             description: message,

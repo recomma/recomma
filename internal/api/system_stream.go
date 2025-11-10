@@ -9,7 +9,9 @@ import (
 )
 
 const (
-	defaultSystemStreamBuffer = 100
+	defaultSystemStreamBuffer  = 100
+	defaultSystemEventHistory  = 50           // Keep last 50 events
+	defaultSystemEventMaxAge   = 5 * time.Minute // Keep events for 5 minutes
 )
 
 // SystemEventLevel represents the severity of a system event
@@ -46,15 +48,23 @@ type SystemStreamController struct {
 	logger      *slog.Logger
 	bufferSize  int
 	minLevel    SystemEventLevel // Only publish events >= this level
+
+	// Message history for late joiners
+	eventHistory    []SystemEvent
+	maxHistorySize  int
+	maxHistoryAge   time.Duration
 }
 
 // NewSystemStreamController constructs a controller with the specified minimum log level
 func NewSystemStreamController(minLevel SystemEventLevel) *SystemStreamController {
 	return &SystemStreamController{
-		subscribers: make(map[int64]*systemSubscriber),
-		bufferSize:  defaultSystemStreamBuffer,
-		minLevel:    minLevel,
-		logger:      slog.Default().WithGroup("system_stream"),
+		subscribers:     make(map[int64]*systemSubscriber),
+		bufferSize:      defaultSystemStreamBuffer,
+		minLevel:        minLevel,
+		logger:          slog.Default().WithGroup("system_stream"),
+		eventHistory:    make([]SystemEvent, 0, defaultSystemEventHistory),
+		maxHistorySize:  defaultSystemEventHistory,
+		maxHistoryAge:   defaultSystemEventMaxAge,
 	}
 }
 
@@ -69,10 +79,41 @@ func (c *SystemStreamController) Subscribe(ctx context.Context) (<-chan SystemEv
 
 	c.mu.Lock()
 	c.subscribers[sub.id] = sub
+
+	// Send event history to new subscriber immediately
+	history := c.getRecentHistory()
 	c.mu.Unlock()
+
+	// Send history events in a goroutine to avoid blocking
+	go func() {
+		for _, evt := range history {
+			select {
+			case ch <- evt:
+			case <-ctx.Done():
+				return
+			default:
+				// Skip if buffer full (shouldn't happen with fresh subscriber)
+			}
+		}
+	}()
 
 	go c.awaitCancellation(sub)
 	return ch, nil
+}
+
+// getRecentHistory returns events from history that are still within maxHistoryAge
+// Must be called with lock held
+func (c *SystemStreamController) getRecentHistory() []SystemEvent {
+	now := time.Now()
+	cutoff := now.Add(-c.maxHistoryAge)
+
+	result := make([]SystemEvent, 0, len(c.eventHistory))
+	for _, evt := range c.eventHistory {
+		if evt.Timestamp.After(cutoff) {
+			result = append(result, evt)
+		}
+	}
+	return result
 }
 
 func (c *SystemStreamController) awaitCancellation(sub *systemSubscriber) {
@@ -97,10 +138,17 @@ func (c *SystemStreamController) Publish(evt SystemEvent) {
 
 	atomic.AddInt64(&c.sequence, 1)
 
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
+	c.mu.Lock()
+	// Add to history
+	c.addToHistory(evt)
+	subscribers := make([]*systemSubscriber, 0, len(c.subscribers))
 	for _, sub := range c.subscribers {
+		subscribers = append(subscribers, sub)
+	}
+	c.mu.Unlock()
+
+	// Fan out to subscribers without holding lock
+	for _, sub := range subscribers {
 		select {
 		case sub.ch <- evt:
 		default:
@@ -110,6 +158,28 @@ func (c *SystemStreamController) Publish(evt SystemEvent) {
 					slog.String("level", string(evt.Level)),
 					slog.String("source", evt.Source))
 			}
+		}
+	}
+}
+
+// addToHistory adds event to history buffer, pruning old events
+// Must be called with lock held
+func (c *SystemStreamController) addToHistory(evt SystemEvent) {
+	c.eventHistory = append(c.eventHistory, evt)
+
+	// Prune by size
+	if len(c.eventHistory) > c.maxHistorySize {
+		c.eventHistory = c.eventHistory[len(c.eventHistory)-c.maxHistorySize:]
+	}
+
+	// Prune by age
+	cutoff := time.Now().Add(-c.maxHistoryAge)
+	for i, e := range c.eventHistory {
+		if e.Timestamp.After(cutoff) {
+			if i > 0 {
+				c.eventHistory = c.eventHistory[i:]
+			}
+			break
 		}
 	}
 }

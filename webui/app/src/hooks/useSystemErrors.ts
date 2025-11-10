@@ -4,9 +4,14 @@ import { buildOpsApiUrl } from '../config/opsApi';
 
 /**
  * Hook to listen for system events from the server and display them as toasts
+ * @param enabled - Whether to connect to the system event stream
  */
-export function useSystemErrors() {
+export function useSystemErrors(enabled: boolean = true) {
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
     const url = buildOpsApiUrl('/stream/system');
     let eventSource: EventSource | null = null;
 
@@ -86,5 +91,5 @@ export function useSystemErrors() {
         }
       };
     }
-  }, []);
+  }, [enabled]);
 }

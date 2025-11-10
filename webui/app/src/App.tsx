@@ -22,6 +22,7 @@ const Settings = lazy(async () => {
 import type { OrderFilterState, VaultStatus } from './types/api';
 import { buildOpsApiUrl } from './config/opsApi';
 import { Settings as SettingsIcon } from 'lucide-react';
+import { useSystemErrors } from './hooks/useSystemErrors';
 
 export type FilterState = OrderFilterState;
 
@@ -33,6 +34,9 @@ export default function App() {
   const [isLoadingVaultStatus, setIsLoadingVaultStatus] = useState(true);
   const [vaultStatusError, setVaultStatusError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+
+  // Listen for system errors when vault is unsealed
+  useSystemErrors();
 
   const fetchVaultStatus = useCallback(async () => {
     setIsLoadingVaultStatus(true);

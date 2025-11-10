@@ -524,7 +524,15 @@ func main() {
 	// Initial produce, then periodic re-enqueue by central resync
 	produceOnce := func(ctx context.Context) {
 		if err := e.ProduceActiveDeals(ctx, q); err != nil {
-			slog.Debug("ProduceActiveDeals returned error", slog.String("error", err.Error()))
+			slog.Error("ProduceActiveDeals returned error", slog.String("error", err.Error()))
+
+			// Publish error to UI via stream
+			errMsg := err.Error()
+			streamController.Publish(api.StreamEvent{
+				Type:         api.SystemError,
+				ObservedAt:   time.Now().UTC(),
+				ErrorMessage: &errMsg,
+			})
 		}
 	}
 	produceOnce(appCtx)

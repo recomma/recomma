@@ -3,6 +3,7 @@ const ORDER_EVENT_TYPES = [
   'three_commas_event',
   'hyperliquid_submission',
   'hyperliquid_status',
+  'system_error',
 ] as const;
 
 export type OrderEventType = (typeof ORDER_EVENT_TYPES)[number];

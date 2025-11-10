@@ -59,14 +59,16 @@ type StreamSource interface {
 
 // ApiHandler implements api.StrictServerInterface.
 type ApiHandler struct {
-	store    Store
-	stream   StreamSource
-	logger   *slog.Logger
-	now      func() time.Time
-	webauthn *WebAuthnService
-	vault    *vault.Controller
-	session  *vaultSessionManager
-	debug    bool
+	store        Store
+	stream       StreamSource
+	systemStream *SystemStreamController
+	systemStatus *SystemStatusTracker
+	logger       *slog.Logger
+	now          func() time.Time
+	webauthn     *WebAuthnService
+	vault        *vault.Controller
+	session      *vaultSessionManager
+	debug        bool
 
 	orderScalerMaxMultiplier float64
 	orders                   recomma.Emitter
@@ -171,6 +173,18 @@ func WithVaultController(controller *vault.Controller) HandlerOption {
 func WithLogger(logger *slog.Logger) HandlerOption {
 	return func(h *ApiHandler) {
 		h.logger = logger
+	}
+}
+
+func WithSystemStream(stream *SystemStreamController) HandlerOption {
+	return func(h *ApiHandler) {
+		h.systemStream = stream
+	}
+}
+
+func WithSystemStatus(status *SystemStatusTracker) HandlerOption {
+	return func(h *ApiHandler) {
+		h.systemStatus = status
 	}
 }
 
@@ -1078,6 +1092,69 @@ func (h *ApiHandler) StreamOrders(ctx context.Context, req StreamOrdersRequestOb
 	}, nil
 }
 
+// GetSystemStatus satisfies StrictServerInterface.
+func (h *ApiHandler) GetSystemStatus(ctx context.Context, req GetSystemStatusRequestObject) (GetSystemStatusResponseObject, error) {
+	if h.systemStatus == nil {
+		return GetSystemStatus500Response{}, nil
+	}
+
+	snapshot := h.systemStatus.Snapshot()
+	return GetSystemStatus200JSONResponse(snapshot), nil
+}
+
+// StreamSystemEvents satisfies StrictServerInterface.
+func (h *ApiHandler) StreamSystemEvents(ctx context.Context, req StreamSystemEventsRequestObject) (StreamSystemEventsResponseObject, error) {
+	if h.systemStream == nil {
+		return StreamSystemEvents500Response{}, nil
+	}
+
+	eventCh, err := h.systemStream.Subscribe(ctx)
+	if err != nil {
+		return StreamSystemEvents500Response{}, nil
+	}
+
+	pr, pw := io.Pipe()
+
+	go func() {
+		defer pw.Close()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case evt, ok := <-eventCh:
+				if !ok {
+					return
+				}
+				if err := h.writeSystemSSEFrame(pw, evt); err != nil {
+					h.logger.WarnContext(ctx, "write system event frame",
+						slog.String("error", err.Error()))
+					return
+				}
+			}
+		}
+	}()
+
+	return StreamSystemEvents200TexteventStreamResponse{Body: pr}, nil
+}
+
+func (h *ApiHandler) writeSystemSSEFrame(w io.Writer, evt SystemEvent) error {
+	data, err := json.Marshal(evt)
+	if err != nil {
+		return fmt.Errorf("marshal system event: %w", err)
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString("event: system_")
+	buf.WriteString(string(evt.Level))
+	buf.WriteString("\ndata: ")
+	buf.Write(data)
+	buf.WriteString("\n\n")
+
+	_, err = w.Write(buf.Bytes())
+	return err
+}
+
 // StreamHyperliquidPrices satisfies StrictServerInterface.
 func (h *ApiHandler) StreamHyperliquidPrices(ctx context.Context, req StreamHyperliquidPricesRequestObject) (StreamHyperliquidPricesResponseObject, error) {
 	if h.prices == nil {
@@ -1184,39 +1261,16 @@ func (h *ApiHandler) StreamHyperliquidPrices(ctx context.Context, req StreamHype
 
 // writeSSEFrame marshals the event payload and writes an SSE-formatted frame.
 func (h *ApiHandler) writeSSEFrame(ctx context.Context, w io.Writer, evt StreamEvent) error {
-	var data []byte
-	var err error
+	ident := makeOrderIdentifiers(evt.OrderID, evt.BotEvent, evt.ObservedAt, evt.Identifier)
 
-	// Handle system_error events specially - they don't have order IDs
-	if evt.Type == SystemError {
-		errorPayload := struct {
-			ErrorMessage string    `json:"error_message"`
-			ObservedAt   time.Time `json:"observed_at"`
-			Sequence     *int64    `json:"sequence,omitempty"`
-		}{
-			ErrorMessage: "",
-			ObservedAt:   evt.ObservedAt,
-			Sequence:     evt.Sequence,
-		}
-		if evt.ErrorMessage != nil {
-			errorPayload.ErrorMessage = *evt.ErrorMessage
-		}
-		data, err = json.Marshal(errorPayload)
-		if err != nil {
-			return fmt.Errorf("marshal system error frame: %w", err)
-		}
-	} else {
-		ident := makeOrderIdentifiers(evt.OrderID, evt.BotEvent, evt.ObservedAt, evt.Identifier)
+	entry, ok := h.makeOrderLogEntry(ctx, evt.OrderID, evt.ObservedAt, evt.Type, evt.BotEvent, evt.Submission, evt.Status, evt.ScalerConfig, evt.ScaledOrderAudit, evt.Actor, evt.Identifier, &ident, evt.Sequence)
+	if !ok {
+		return nil
+	}
 
-		entry, ok := h.makeOrderLogEntry(ctx, evt.OrderID, evt.ObservedAt, evt.Type, evt.BotEvent, evt.Submission, evt.Status, evt.ScalerConfig, evt.ScaledOrderAudit, evt.Actor, evt.Identifier, &ident, evt.Sequence)
-		if !ok {
-			return nil
-		}
-
-		data, err = entry.MarshalJSON()
-		if err != nil {
-			return fmt.Errorf("marshal stream frame: %w", err)
-		}
+	data, err := entry.MarshalJSON()
+	if err != nil {
+		return fmt.Errorf("marshal stream frame: %w", err)
 	}
 
 	var buf bytes.Buffer
@@ -1454,7 +1508,6 @@ const (
 	HyperliquidStatus      OrderLogEntryType = "hyperliquid_status"
 	OrderScalerConfigEntry OrderLogEntryType = "order_scaler_config"
 	ScaledOrderAuditEntry  OrderLogEntryType = "scaled_order_audit"
-	SystemError            OrderLogEntryType = "system_error"
 )
 
 type OrderLogItem struct {
@@ -1490,7 +1543,6 @@ type StreamEvent struct {
 	ScalerConfig     *EffectiveOrderScaler
 	ScaledOrderAudit *ScaledOrderAudit
 	Actor            *string
-	ErrorMessage     *string // For system_error events
 }
 
 func makeOrderIdentifiers(oid orderid.OrderId, event *tc.BotEvent, fallback time.Time, ident *recomma.OrderIdentifier) OrderIdentifiers {

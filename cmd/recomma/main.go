@@ -83,6 +83,24 @@ func main() {
 
 	streamController := api.NewStreamController(api.WithStreamLogger(logger))
 
+	// Parse system stream log level
+	systemLevel := api.SystemEventInfo // default
+	switch strings.ToLower(cfg.SystemStreamMinLevel) {
+	case "debug":
+		systemLevel = api.SystemEventDebug
+	case "info":
+		systemLevel = api.SystemEventInfo
+	case "warn", "warning":
+		systemLevel = api.SystemEventWarn
+	case "error":
+		systemLevel = api.SystemEventError
+	default:
+		slog.Warn("unknown system stream level, defaulting to info", slog.String("level", cfg.SystemStreamMinLevel))
+	}
+
+	systemStream := api.NewSystemStreamController(systemLevel)
+	systemStatus := api.NewSystemStatusTracker()
+
 	store, err := storage.New(cfg.StoragePath, storage.WithStreamPublisher(streamController))
 	if err != nil {
 		fatal("storage init failed", err)
@@ -152,6 +170,8 @@ func main() {
 		api.WithVaultController(vaultController),
 		api.WithOrderScalerMaxMultiplier(cfg.OrderScalerMaxMultiplier),
 		api.WithDebugMode(debugEnabled),
+		api.WithSystemStream(systemStream),
+		api.WithSystemStatus(systemStatus),
 	)
 
 	strictServer := api.NewStrictHandler(apiHandler, []api.StrictMiddlewareFunc{
@@ -526,13 +546,18 @@ func main() {
 		if err := e.ProduceActiveDeals(ctx, q); err != nil {
 			slog.Error("ProduceActiveDeals returned error", slog.String("error", err.Error()))
 
-			// Publish error to UI via stream
-			errMsg := err.Error()
-			streamController.Publish(api.StreamEvent{
-				Type:         api.SystemError,
-				ObservedAt:   time.Now().UTC(),
-				ErrorMessage: &errMsg,
+			// Publish error to UI via system stream
+			systemStream.Publish(api.SystemEvent{
+				Level:     api.SystemEventError,
+				Timestamp: time.Now().UTC(),
+				Source:    "3commas",
+				Message:   err.Error(),
 			})
+
+			// Track error for polling endpoint
+			systemStatus.SetThreeCommasError(err.Error())
+		} else {
+			systemStatus.ClearThreeCommasError()
 		}
 	}
 	produceOnce(appCtx)

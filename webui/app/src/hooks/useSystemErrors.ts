@@ -31,10 +31,16 @@ export function useSystemErrors(enabled: boolean = true) {
             details: data.details,
           });
 
-          toast.error('System Error', {
-            description: errorMessage,
-            duration: 10000, // Show for 10 seconds
-          });
+          console.log('[SystemError] Calling toast.error...');
+          try {
+            const toastResult = toast.error('System Error', {
+              description: errorMessage,
+              duration: 10000, // Show for 10 seconds
+            });
+            console.log('[SystemError] toast.error returned:', toastResult);
+          } catch (toastErr) {
+            console.error('[SystemError] toast.error threw error:', toastErr);
+          }
         } catch (err) {
           console.error('Failed to parse system error event:', err);
         }

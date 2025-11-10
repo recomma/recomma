@@ -11,6 +11,7 @@ export function useSystemErrors() {
     let eventSource: EventSource | null = null;
 
     try {
+      console.log('[SystemErrors] Connecting to system event stream:', url);
       eventSource = new EventSource(url, { withCredentials: true });
 
       const handleError = (event: MessageEvent<string>) => {
@@ -54,11 +55,22 @@ export function useSystemErrors() {
         }
       };
 
+      // Connection lifecycle handlers
+      eventSource.onopen = () => {
+        console.log('[SystemErrors] SSE connection opened');
+      };
+
+      eventSource.onerror = (error) => {
+        console.error('[SystemErrors] SSE connection error:', error);
+      };
+
       eventSource.addEventListener('system_error', handleError as EventListener);
       eventSource.addEventListener('system_warn', handleWarning as EventListener);
       eventSource.addEventListener('system_info', handleInfo as EventListener);
 
       return () => {
+        console.log('[SystemErrors] Disconnecting from system event stream');
+
         if (eventSource) {
           eventSource.removeEventListener('system_error', handleError as EventListener);
           eventSource.removeEventListener('system_warn', handleWarning as EventListener);

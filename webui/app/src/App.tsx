@@ -35,9 +35,6 @@ export default function App() {
   const [vaultStatusError, setVaultStatusError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
 
-  // Listen for system errors when vault is unsealed
-  useSystemErrors();
-
   const fetchVaultStatus = useCallback(async () => {
     setIsLoadingVaultStatus(true);
     setVaultStatusError(null);
@@ -113,6 +110,10 @@ export default function App() {
       </Suspense>
     );
   }
+
+  // Only connect to system event stream after vault is unsealed
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useSystemErrors();
 
   const handleBotSelect = (botId: number | undefined) => {
     setSelectedBotId(botId);

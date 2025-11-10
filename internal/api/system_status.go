@@ -122,42 +122,63 @@ func (s *SystemStatusTracker) Snapshot() SystemStatus {
 
 	now := time.Now().UTC()
 
-	var threeCommasAPI *SystemStatusThreecommasApi
+	status := SystemStatus{
+		Timestamp: now,
+	}
+
+	// 3commas API status
 	if s.threeCommasLastError != nil || s.threeCommasLastSuccessCall != nil {
-		threeCommasAPI = &SystemStatusThreecommasApi{
-			Available:          s.threeCommasAvailable,
+		status.ThreecommasApi = &struct {
+			Available          *bool      `json:"available,omitempty"`
+			LastError          *string    `json:"last_error"`
+			LastSuccessfulCall *time.Time `json:"last_successful_call"`
+		}{
+			Available:          &s.threeCommasAvailable,
 			LastError:          s.threeCommasLastError,
 			LastSuccessfulCall: s.threeCommasLastSuccessCall,
 		}
 	}
 
-	var venues *[]SystemStatusHyperliquidVenuesItem
+	// Venue statuses
 	if len(s.venueStatuses) > 0 {
-		venueList := make([]SystemStatusHyperliquidVenuesItem, 0, len(s.venueStatuses))
+		venueList := make([]struct {
+			Connected bool    `json:"connected"`
+			LastError *string `json:"last_error"`
+			VenueId   string  `json:"venue_id"`
+			Wallet    string  `json:"wallet"`
+		}, 0, len(s.venueStatuses))
+
 		for _, v := range s.venueStatuses {
-			venueList = append(venueList, SystemStatusHyperliquidVenuesItem{
+			venueList = append(venueList, struct {
+				Connected bool    `json:"connected"`
+				LastError *string `json:"last_error"`
+				VenueId   string  `json:"venue_id"`
+				Wallet    string  `json:"wallet"`
+			}{
 				VenueId:   v.VenueID,
 				Wallet:    v.Wallet,
 				Connected: v.Connected,
 				LastError: v.LastError,
 			})
 		}
-		venues = &venueList
+		status.HyperliquidVenues = &venueList
 	}
 
+	// Engine status
 	activeDeals := 0
 	if s.activeDealsFunc != nil {
 		activeDeals = s.activeDealsFunc()
 	}
 
-	return SystemStatus{
-		Timestamp:        now,
-		ThreecommasApi:   threeCommasAPI,
-		HyperliquidVenues: venues,
-		Engine: SystemStatusEngine{
-			Running:     s.engineRunning,
-			ActiveDeals: activeDeals,
-			LastSync:    s.engineLastSync,
-		},
+	status.Engine = struct {
+		ActiveDeals int        `json:"active_deals"`
+		LastSync    *time.Time `json:"last_sync"`
+		Running     bool       `json:"running"`
+	}{
+		Running:     s.engineRunning,
+		ActiveDeals: activeDeals,
+		LastSync:    s.engineLastSync,
 	}
+
+	return status
 }

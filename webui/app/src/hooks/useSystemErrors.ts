@@ -52,15 +52,17 @@ export function useSystemErrors(enabled: boolean = true) {
       const url = buildOpsApiUrl('/stream/system');
 
       try {
-        console.log('[SystemErrors] Connecting to system event stream:', url);
+        console.log('[SystemErrors] Creating EventSource for:', url);
         eventSource = new EventSource(url, { withCredentials: true });
+        console.log('[SystemErrors] EventSource created, readyState:', eventSource.readyState);
 
         const handleError = (event: MessageEvent<string>) => {
+          console.log('[SystemErrors] Received system_error event, raw:', event);
           try {
             const data = JSON.parse(event.data);
             const errorMessage = data.message || 'An unknown system error occurred';
 
-            console.error('[SystemError]', {
+            console.error('[SystemError] Parsed:', {
               source: data.source,
               message: errorMessage,
               timestamp: data.timestamp,
@@ -72,16 +74,17 @@ export function useSystemErrors(enabled: boolean = true) {
               duration: 10000, // Show for 10 seconds
             });
           } catch (err) {
-            console.error('Failed to parse system error event:', err);
+            console.error('[SystemError] Failed to parse event:', err, 'raw data:', event.data);
           }
         };
 
         const handleWarning = (event: MessageEvent<string>) => {
+          console.log('[SystemErrors] Received system_warn event, raw:', event);
           try {
             const data = JSON.parse(event.data);
             const message = data.message || 'System warning';
 
-            console.warn('[SystemWarning]', {
+            console.warn('[SystemWarning] Parsed:', {
               source: data.source,
               message: message,
               timestamp: data.timestamp,
@@ -93,11 +96,12 @@ export function useSystemErrors(enabled: boolean = true) {
               duration: 5000,
             });
           } catch (err) {
-            console.error('Failed to parse system warning event:', err);
+            console.error('[SystemWarning] Failed to parse event:', err);
           }
         };
 
         const handleInfo = (event: MessageEvent<string>) => {
+          console.log('[SystemErrors] Received system_info event, raw:', event);
           try {
             const data = JSON.parse(event.data);
             const message = data.message || 'System info';
@@ -106,24 +110,46 @@ export function useSystemErrors(enabled: boolean = true) {
               duration: 3000,
             });
           } catch (err) {
-            console.error('Failed to parse system info event:', err);
+            console.error('[SystemInfo] Failed to parse event:', err);
           }
         };
 
+        // Generic message handler to see ALL messages
+        eventSource.onmessage = (event) => {
+          console.log('[SystemErrors] Received generic message:', {
+            data: event.data,
+            type: event.type,
+            lastEventId: event.lastEventId,
+          });
+        };
+
         // Connection lifecycle handlers
-        eventSource.onopen = () => {
-          console.log('[SystemErrors] SSE connection opened');
+        eventSource.onopen = (event) => {
+          console.log('[SystemErrors] SSE connection opened:', {
+            readyState: eventSource?.readyState,
+            url: eventSource?.url,
+            event: event
+          });
         };
 
         eventSource.onerror = (error) => {
-          console.error('[SystemErrors] SSE connection error:', error);
+          console.error('[SystemErrors] SSE connection error:', {
+            readyState: eventSource?.readyState,
+            url: eventSource?.url,
+            error: error,
+          });
         };
 
+        console.log('[SystemErrors] Adding event listeners...');
         eventSource.addEventListener('system_error', handleError as EventListener);
+        console.log('[SystemErrors] Added system_error listener');
         eventSource.addEventListener('system_warn', handleWarning as EventListener);
+        console.log('[SystemErrors] Added system_warn listener');
         eventSource.addEventListener('system_info', handleInfo as EventListener);
+        console.log('[SystemErrors] Added system_info listener');
+        console.log('[SystemErrors] All listeners registered');
       } catch (err) {
-        console.error('Failed to connect to system event stream:', err);
+        console.error('[SystemErrors] Failed to create/configure EventSource:', err);
       }
     };
 
@@ -134,6 +160,7 @@ export function useSystemErrors(enabled: boolean = true) {
     return () => {
       console.log('[SystemErrors] Cleaning up system event stream');
       if (eventSource) {
+        console.log('[SystemErrors] Closing EventSource, readyState:', eventSource.readyState);
         eventSource.close();
         eventSource = null;
       }

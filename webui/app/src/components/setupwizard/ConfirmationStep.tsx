@@ -2,8 +2,9 @@ import { Button } from '../ui/button';
 import { Alert, AlertDescription } from '../ui/alert';
 import { Badge } from '../ui/badge';
 import { Separator } from '../ui/separator';
-import { Shield, Key, CheckCircle2, Eye, EyeOff } from 'lucide-react';
+import { Shield, Key, CheckCircle2, Eye, EyeOff, Wallet } from 'lucide-react';
 import { useState } from 'react';
+import type { VaultVenueSecret } from '../../types/api';
 
 interface ConfirmationStepProps {
   data: {
@@ -13,11 +14,7 @@ interface ConfirmationStepProps {
       apiKey: string;
       privateKeyFile: string;
     };
-    hyperliquid: {
-      apiUrl: string;
-      wallet: string;
-      privateKey: string;
-    };
+    venues: VaultVenueSecret[];
   };
   onBack: () => void;
   onConfirm: () => void;
@@ -97,41 +94,60 @@ export function ConfirmationStep({ data, onBack, onConfirm, isSubmitting, error 
 
       <Separator />
 
-      {/* Hyperliquid */}
+      {/* Hyperliquid Wallets */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h4 className="text-slate-900">Hyperliquid Configuration</h4>
+          <div className="flex items-center gap-2">
+            <Wallet className="w-4 h-4 text-slate-600" />
+            <h4 className="text-slate-900">Hyperliquid Wallets</h4>
+          </div>
+          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+            {data.venues.length} {data.venues.length === 1 ? 'wallet' : 'wallets'}
+          </Badge>
         </div>
-        <div className="bg-slate-50 rounded-lg p-4 space-y-3">
-          <div>
-            <div className="text-slate-600 text-sm mb-1">API URL</div>
-            <div className="text-sm text-slate-900 bg-white rounded px-3 py-2 border border-slate-200">
-              {data.hyperliquid.apiUrl}
-              {data.hyperliquid.apiUrl.includes('testnet') && (
-                <Badge variant="outline" className="ml-2 bg-amber-50 text-amber-700 border-amber-200">
-                  Testnet
-                </Badge>
-              )}
-              {data.hyperliquid.apiUrl === 'https://api.hyperliquid.xyz' && (
-                <Badge variant="outline" className="ml-2 bg-blue-50 text-blue-700 border-blue-200">
-                  Mainnet
-                </Badge>
-              )}
+
+        {data.venues.map((venue) => (
+          <div key={venue.id} className="bg-slate-50 rounded-lg p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-900 font-medium">{venue.display_name}</span>
+                {venue.is_primary && (
+                  <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                    Primary
+                  </Badge>
+                )}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-600 text-sm mb-1">API URL</div>
+              <div className="text-sm text-slate-900 bg-white rounded px-3 py-2 border border-slate-200">
+                {venue.api_url || 'https://api.hyperliquid.xyz'}
+                {venue.api_url?.includes('testnet') && (
+                  <Badge variant="outline" className="ml-2 bg-amber-50 text-amber-700 border-amber-200">
+                    Testnet
+                  </Badge>
+                )}
+                {venue.api_url === 'https://api.hyperliquid.xyz' && (
+                  <Badge variant="outline" className="ml-2 bg-blue-50 text-blue-700 border-blue-200">
+                    Mainnet
+                  </Badge>
+                )}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-600 text-sm mb-1">Wallet Address</div>
+              <div className="font-mono text-sm text-slate-900 bg-white rounded px-3 py-2 border border-slate-200">
+                {showSensitive ? venue.wallet : maskSecret(venue.wallet, 6)}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-600 text-sm mb-1">Private Key</div>
+              <div className="font-mono text-sm text-slate-900 bg-white rounded px-3 py-2 border border-slate-200">
+                {showSensitive ? venue.private_key : maskSecret(venue.private_key, 6)}
+              </div>
             </div>
           </div>
-          <div>
-            <div className="text-slate-600 text-sm mb-1">Wallet Address</div>
-            <div className="font-mono text-sm text-slate-900 bg-white rounded px-3 py-2 border border-slate-200">
-              {showSensitive ? data.hyperliquid.wallet : maskSecret(data.hyperliquid.wallet, 6)}
-            </div>
-          </div>
-          <div>
-            <div className="text-slate-600 text-sm mb-1">Private Key</div>
-            <div className="font-mono text-sm text-slate-900 bg-white rounded px-3 py-2 border border-slate-200">
-              {showSensitive ? data.hyperliquid.privateKey : maskSecret(data.hyperliquid.privateKey, 6)}
-            </div>
-          </div>
-        </div>
+        ))}
       </div>
 
       {/* Toggle Sensitive Data Visibility */}

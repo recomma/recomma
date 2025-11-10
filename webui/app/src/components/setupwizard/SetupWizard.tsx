@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui
 import { Button } from '../ui/button';
 import { PasskeySetup } from './PasskeySetup';
 import { ThreeCommasSetup } from './ThreeCommasSetup';
-import { HyperliquidSetup } from './HyperliquidSetup';
+import { VenueManagement } from '../VenueManagement';
 import { ConfirmationStep } from './ConfirmationStep';
 import { StepIndicator } from './StepIndicator';
 import { CheckCircle2 } from 'lucide-react';
@@ -11,6 +11,7 @@ import type {
   VaultEncryptedPayload,
   VaultSecretsBundleExtended,
   VaultSetupRequest,
+  VaultVenueSecret,
 } from '../../types/api';
 import { getOpsApiBaseUrl } from '../../config/opsApi';
 
@@ -21,11 +22,7 @@ interface SetupData {
     apiKey: string;
     privateKeyFile: string;
   };
-  hyperliquid: {
-    apiUrl: string;
-    wallet: string;
-    privateKey: string;
-  };
+  venues: VaultVenueSecret[];
 }
 
 interface SetupWizardProps {
@@ -43,11 +40,7 @@ export function SetupWizard({ onSetupComplete }: SetupWizardProps) {
       apiKey: '',
       privateKeyFile: '',
     },
-    hyperliquid: {
-      apiUrl: 'https://api.hyperliquid.xyz',
-      wallet: '',
-      privateKey: '',
-    },
+    venues: [],
   });
 
   const apiBaseUrl = useMemo(() => {
@@ -75,16 +68,12 @@ export function SetupWizard({ onSetupComplete }: SetupWizardProps) {
       notSecret.timezone = timezone;
     }
 
-    const hyperliquidApiUrl = data.hyperliquid.apiUrl.trim();
-
     return {
       not_secret: notSecret,
       secrets: {
         THREECOMMAS_API_KEY: data.threeCommas.apiKey.trim(),
         THREECOMMAS_PRIVATE_KEY: data.threeCommas.privateKeyFile.trim(),
-        HYPERLIQUID_WALLET: data.hyperliquid.wallet.trim(),
-        HYPERLIQUID_PRIVATE_KEY: data.hyperliquid.privateKey.trim(),
-        HYPERLIQUID_URL: hyperliquidApiUrl,
+        venues: data.venues,
       },
     };
   };
@@ -155,11 +144,18 @@ export function SetupWizard({ onSetupComplete }: SetupWizardProps) {
     setCurrentStep(3);
   };
 
-  const handleHyperliquidComplete = (data: { apiUrl: string; wallet: string; privateKey: string }) => {
+  const handleVenuesChange = (venues: VaultVenueSecret[]) => {
     setSetupData((prev) => ({
       ...prev,
-      hyperliquid: data,
+      venues,
     }));
+  };
+
+  const handleVenuesComplete = () => {
+    // Check if at least one venue is configured
+    if (setupData.venues.length === 0) {
+      return; // Button should be disabled in VenueManagement
+    }
 
     // Go to confirmation step
     setCurrentStep(4);
@@ -252,11 +248,25 @@ export function SetupWizard({ onSetupComplete }: SetupWizardProps) {
             )}
 
             {currentStep === 3 && (
-              <HyperliquidSetup
-                initialData={setupData.hyperliquid}
-                onComplete={handleHyperliquidComplete}
-                onBack={() => setCurrentStep(2)}
-              />
+              <div className="space-y-6">
+                <VenueManagement
+                  context="setup"
+                  initialVenues={setupData.venues}
+                  onVenuesChange={handleVenuesChange}
+                />
+                <div className="flex gap-3">
+                  <Button variant="outline" onClick={() => setCurrentStep(2)} className="flex-1">
+                    Back
+                  </Button>
+                  <Button
+                    onClick={handleVenuesComplete}
+                    className="flex-1"
+                    disabled={setupData.venues.length === 0}
+                  >
+                    Continue
+                  </Button>
+                </div>
+              </div>
             )}
 
             {currentStep === 4 && (

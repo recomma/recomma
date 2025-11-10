@@ -6,6 +6,7 @@ const OrdersTable = lazy(async () => {
 });
 import { StatsCards } from './components/StatsCards';
 import { Toaster } from './components/ui/sonner';
+import { Button } from './components/ui/button';
 const SetupWizard = lazy(async () => {
   const mod = await import('./components/setupwizard/SetupWizard');
   return { default: mod.SetupWizard };
@@ -14,8 +15,14 @@ const Login = lazy(async () => {
   const mod = await import('./components/Login');
   return { default: mod.Login };
 });
+const Settings = lazy(async () => {
+  const mod = await import('./components/Settings');
+  return { default: mod.Settings };
+});
 import type { OrderFilterState, VaultStatus } from './types/api';
 import { buildOpsApiUrl } from './config/opsApi';
+import { Settings as SettingsIcon } from 'lucide-react';
+import { useSystemErrors } from './hooks/useSystemErrors';
 
 export type FilterState = OrderFilterState;
 
@@ -26,6 +33,11 @@ export default function App() {
   const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
   const [isLoadingVaultStatus, setIsLoadingVaultStatus] = useState(true);
   const [vaultStatusError, setVaultStatusError] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+
+  // Only connect to system stream when vault is unsealed
+  const isUnsealed = vaultStatus?.state === 'unsealed';
+  useSystemErrors(isUnsealed);
 
   const fetchVaultStatus = useCallback(async () => {
     setIsLoadingVaultStatus(true);
@@ -119,17 +131,33 @@ export default function App() {
     }));
   };
 
+  // Show Settings page if requested
+  if (showSettings) {
+    return (
+      <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-gray-50">Loading settings…</div>}>
+        <Settings onBack={() => setShowSettings(false)} />
+        <Toaster />
+      </Suspense>
+    );
+  }
+
   return (
     <div className="h-full bg-gray-50 flex flex-col">
       <div className="border-b bg-white shadow-sm flex-shrink-0">
         <div className="container mx-auto px-4 py-3">
-          <div className="flex items-center gap-3">
-            <img
-              src="/favicon.svg"
-              alt="Recomma logo"
-              className="h-8 w-8"
-            />
-            <h1 className="text-gray-900">Recomma - 3Commas to Hyperliquid trade replay</h1>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <img
+                src="/favicon.svg"
+                alt="Recomma logo"
+                className="h-8 w-8"
+              />
+              <h1 className="text-gray-900">Recomma - 3Commas to Hyperliquid trade replay</h1>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => setShowSettings(true)}>
+              <SettingsIcon className="h-4 w-4 mr-2" />
+              Settings
+            </Button>
           </div>
         </div>
       </div>

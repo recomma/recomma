@@ -8,6 +8,7 @@ import (
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/hl"
 	"github.com/recomma/recomma/orderid"
+	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
 	"github.com/stretchr/testify/require"
@@ -41,6 +42,7 @@ func TestServiceScaleAppliesMultiplierAndRounding(t *testing.T) {
 	require.NoError(t, err)
 
 	oid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
+	ident := recomma.NewOrderIdentifier("hyperliquid:default", "default", oid)
 	event := tc.BotEvent{
 		CreatedAt: time.Now(),
 		Coin:      "BTC",
@@ -54,7 +56,7 @@ func TestServiceScaleAppliesMultiplierAndRounding(t *testing.T) {
 		Size:  4.0,
 	}
 
-	req := BuildRequest(oid, event, order)
+	req := BuildRequest(ident, event, order)
 	result, err := scaler.Scale(ctx, req, &order)
 	require.NoError(t, err)
 	require.InDelta(t, 2.0, result.Size, 1e-6)
@@ -86,10 +88,11 @@ func TestServiceScaleRejectsBelowMinimum(t *testing.T) {
 	require.NoError(t, err)
 
 	oid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 5}
+	ident := recomma.NewOrderIdentifier("hyperliquid:default", "default", oid)
 	order := hyperliquid.CreateOrderRequest{Coin: "ETH", IsBuy: true, Price: 20.0, Size: 1.0}
 	event := tc.BotEvent{CreatedAt: time.Now(), Coin: "ETH", Price: 20.0, Size: 1.0}
 
-	req := BuildRequest(oid, event, order)
+	req := BuildRequest(ident, event, order)
 	result, err := scaler.Scale(ctx, req, &order)
 	require.ErrorIs(t, err, ErrBelowMinimum)
 
@@ -149,11 +152,12 @@ func TestServiceScalePreservesTakeProfitStackRatios(t *testing.T) {
 	var results []Result
 	for _, evt := range legEvents {
 		oid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: evt.FingerprintAsID()}
+		ident := recomma.NewOrderIdentifier("hyperliquid:default", "default", oid)
 		_, err := store.RecordThreeCommasBotEvent(ctx, oid, evt)
 		require.NoError(t, err)
 
 		order := hyperliquid.CreateOrderRequest{Coin: evt.Coin, IsBuy: false, Price: evt.Price, Size: evt.Size}
-		req := BuildRequest(oid, evt, order)
+		req := BuildRequest(ident, evt, order)
 		result, err := scaler.Scale(ctx, req, &order)
 		require.NoError(t, err)
 		results = append(results, result)

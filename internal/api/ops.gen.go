@@ -155,6 +155,13 @@ type BotRecord struct {
 	Payload      externalRef0.Bot `json:"payload"`
 }
 
+// BotVenueAssignmentRecord defines model for BotVenueAssignmentRecord.
+type BotVenueAssignmentRecord struct {
+	IsPrimary bool   `json:"is_primary"`
+	VenueId   string `json:"venue_id"`
+	Wallet    string `json:"wallet"`
+}
+
 // CancelOrderByOrderIdRequest defines model for CancelOrderByOrderIdRequest.
 type CancelOrderByOrderIdRequest struct {
 	// DryRun When true, validate the cancel preconditions without dispatching the Hyperliquid request.
@@ -276,6 +283,7 @@ type HyperliquidNoopActionKind string
 
 // HyperliquidOrderState defines model for HyperliquidOrderState.
 type HyperliquidOrderState struct {
+	Identifier       *OrderIdentifiers   `json:"identifier,omitempty"`
 	LatestStatus     *HyperliquidWsOrder `json:"latest_status,omitempty"`
 	LatestSubmission *HyperliquidAction  `json:"latest_submission,omitempty"`
 }
@@ -366,6 +374,12 @@ type OrderIdentifiers struct {
 
 	// Hex Case-insensitive hash deriving from the 3Commas OrderId payload.
 	Hex string `json:"hex"`
+
+	// VenueId Upstream venue identifier associated with the submission.
+	VenueId string `json:"venue_id"`
+
+	// Wallet Wallet address tied to the venue submission.
+	Wallet string `json:"wallet"`
 }
 
 // OrderLogEntry defines model for OrderLogEntry.
@@ -512,6 +526,46 @@ type ScaledOrderAuditLogEntry struct {
 // ScaledOrderAuditLogEntryType defines model for ScaledOrderAuditLogEntry.Type.
 type ScaledOrderAuditLogEntryType string
 
+// SystemStatus defines model for SystemStatus.
+type SystemStatus struct {
+	Engine struct {
+		// ActiveDeals Number of active deals being tracked
+		ActiveDeals int `json:"active_deals"`
+
+		// LastSync Timestamp of last deal sync with 3commas
+		LastSync *time.Time `json:"last_sync"`
+
+		// Running Whether the order engine is running
+		Running bool `json:"running"`
+	} `json:"engine"`
+	HyperliquidVenues *[]struct {
+		// Connected Whether venue websocket/client is connected
+		Connected bool `json:"connected"`
+
+		// LastError Most recent error for this venue
+		LastError *string `json:"last_error"`
+
+		// VenueId Venue identifier
+		VenueId string `json:"venue_id"`
+
+		// Wallet Wallet address for this venue
+		Wallet string `json:"wallet"`
+	} `json:"hyperliquid_venues,omitempty"`
+	ThreecommasApi *struct {
+		// Available Whether 3commas API is currently reachable
+		Available *bool `json:"available,omitempty"`
+
+		// LastError Most recent error from 3commas API, if any
+		LastError *string `json:"last_error"`
+
+		// LastSuccessfulCall Timestamp of last successful 3commas API call
+		LastSuccessfulCall *time.Time `json:"last_successful_call"`
+	} `json:"threecommas_api"`
+
+	// Timestamp When this status snapshot was captured
+	Timestamp time.Time `json:"timestamp"`
+}
+
 // ThreeCommasBotEvent defines model for ThreeCommasBotEvent.
 type ThreeCommasBotEvent struct {
 	// Action High-level classification provided by the bot event parser (for example `Placing` or `Execute`).
@@ -593,20 +647,14 @@ type VaultSecretsBundle struct {
 		Username string `json:"username"`
 	} `json:"not_secret"`
 	Secrets struct {
-		// HYPERLIQUIDPRIVATEKEY Hyperliquid private key corresponding to the wallet.
-		HYPERLIQUIDPRIVATEKEY string `json:"HYPERLIQUID_PRIVATE_KEY"`
-
-		// HYPERLIQUIDURL Hyperliquid URL, mainnet https://api.hyperliquid.xyz testnet https://api.hyperliquid-testnet.xyz or custom
-		HYPERLIQUIDURL string `json:"HYPERLIQUID_URL"`
-
-		// HYPERLIQUIDWALLET Hyperliquid wallet address.
-		HYPERLIQUIDWALLET string `json:"HYPERLIQUID_WALLET"`
-
 		// THREECOMMASAPIKEY Public API key for the 3Commas integration.
 		THREECOMMASAPIKEY string `json:"THREECOMMAS_API_KEY"`
 
 		// THREECOMMASPRIVATEKEY Private API key for the 3Commas integration.
 		THREECOMMASPRIVATEKEY string `json:"THREECOMMAS_PRIVATE_KEY"`
+
+		// Venues Collection of venue credentials encrypted within the vault.
+		Venues []VaultVenueSecret `json:"venues"`
 	} `json:"secrets"`
 }
 
@@ -652,6 +700,67 @@ type VaultUser struct {
 	// CreatedAt Timestamp the user record was created, when available.
 	CreatedAt *time.Time `json:"created_at"`
 	Username  string     `json:"username"`
+}
+
+// VaultVenueSecret defines model for VaultVenueSecret.
+type VaultVenueSecret struct {
+	// ApiUrl Optional API base URL for the venue.
+	ApiUrl *string `json:"api_url"`
+
+	// DisplayName Human readable venue label.
+	DisplayName *string `json:"display_name,omitempty"`
+
+	// Flags Connector specific options encoded alongside the venue metadata.
+	Flags *map[string]interface{} `json:"flags"`
+
+	// Id Unique identifier for the venue.
+	Id string `json:"id"`
+
+	// IsPrimary Indicates whether this venue should be treated as primary.
+	IsPrimary bool `json:"is_primary"`
+
+	// PrivateKey Secret key associated with the configured wallet.
+	PrivateKey string `json:"private_key"`
+
+	// Type Connector type backing the venue (for example `hyperliquid`).
+	Type string `json:"type"`
+
+	// Wallet Wallet address used for submissions to this venue.
+	Wallet string `json:"wallet"`
+}
+
+// VenueAssignmentRecord defines model for VenueAssignmentRecord.
+type VenueAssignmentRecord struct {
+	AssignedAt time.Time `json:"assigned_at"`
+	BotId      int64     `json:"bot_id"`
+	IsPrimary  bool      `json:"is_primary"`
+	VenueId    string    `json:"venue_id"`
+}
+
+// VenueAssignmentUpsertRequest defines model for VenueAssignmentUpsertRequest.
+type VenueAssignmentUpsertRequest struct {
+	IsPrimary bool `json:"is_primary"`
+}
+
+// VenueRecord defines model for VenueRecord.
+type VenueRecord struct {
+	DisplayName string `json:"display_name"`
+
+	// Flags Connector specific options encoded as JSON.
+	Flags   *map[string]interface{} `json:"flags,omitempty"`
+	Type    string                  `json:"type"`
+	VenueId string                  `json:"venue_id"`
+	Wallet  string                  `json:"wallet"`
+}
+
+// VenueUpsertRequest defines model for VenueUpsertRequest.
+type VenueUpsertRequest struct {
+	DisplayName string `json:"display_name"`
+
+	// Flags Connector specific options encoded as JSON.
+	Flags  *map[string]interface{} `json:"flags"`
+	Type   string                  `json:"type"`
+	Wallet string                  `json:"wallet"`
 }
 
 // WebAuthnLoginBeginRequest defines model for WebAuthnLoginBeginRequest.
@@ -804,6 +913,12 @@ type ListOrderScalersParams struct {
 	PageToken *string `form:"page_token,omitempty" json:"page_token,omitempty"`
 }
 
+// CancelOrderByOrderIdParams defines parameters for CancelOrderByOrderId.
+type CancelOrderByOrderIdParams struct {
+	// VenueId Optional venue selector. When provided the cancel is limited to submissions recorded for this venue.
+	VenueId *string `form:"venue_id,omitempty" json:"venue_id,omitempty"`
+}
+
 // StreamHyperliquidPricesParams defines parameters for StreamHyperliquidPrices.
 type StreamHyperliquidPricesParams struct {
 	// Coin One or more Hyperliquid coin tickers to subscribe to. Repeat the parameter to request multiple coins.
@@ -828,6 +943,13 @@ type StreamOrdersParams struct {
 	ObservedFrom *time.Time `form:"observed_from,omitempty" json:"observed_from,omitempty"`
 }
 
+// UpdateVaultPayloadJSONBody defines parameters for UpdateVaultPayload.
+type UpdateVaultPayloadJSONBody struct {
+	// DecryptedPayload JSON structure encrypted during setup and supplied in plaintext when unsealing the vault.
+	DecryptedPayload VaultSecretsBundle    `json:"decrypted_payload"`
+	EncryptedPayload VaultEncryptedPayload `json:"encrypted_payload"`
+}
+
 // CancelOrderByOrderIdJSONRequestBody defines body for CancelOrderByOrderId for application/json ContentType.
 type CancelOrderByOrderIdJSONRequestBody = CancelOrderByOrderIdRequest
 
@@ -836,6 +958,15 @@ type UpsertBotOrderScalerConfigJSONRequestBody = OrderScalerUpdateRequest
 
 // UpdateOrderScalerConfigJSONRequestBody defines body for UpdateOrderScalerConfig for application/json ContentType.
 type UpdateOrderScalerConfigJSONRequestBody = OrderScalerUpdateRequest
+
+// UpsertVenueJSONRequestBody defines body for UpsertVenue for application/json ContentType.
+type UpsertVenueJSONRequestBody = VenueUpsertRequest
+
+// UpsertVenueAssignmentJSONRequestBody defines body for UpsertVenueAssignment for application/json ContentType.
+type UpsertVenueAssignmentJSONRequestBody = VenueAssignmentUpsertRequest
+
+// UpdateVaultPayloadJSONRequestBody defines body for UpdateVaultPayload for application/json ContentType.
+type UpdateVaultPayloadJSONRequestBody UpdateVaultPayloadJSONBody
 
 // SetupVaultJSONRequestBody defines body for SetupVault for application/json ContentType.
 type SetupVaultJSONRequestBody = VaultSetupRequest
@@ -1188,6 +1319,9 @@ type ServerInterface interface {
 	// List cached 3Commas bots
 	// (GET /api/bots)
 	ListBots(w http.ResponseWriter, r *http.Request, params ListBotsParams)
+	// List venue assignments for a bot
+	// (GET /api/bots/{bot_id}/venues)
+	ListBotVenues(w http.ResponseWriter, r *http.Request, botId int64)
 	// List cached 3Commas deals
 	// (GET /api/deals)
 	ListDeals(w http.ResponseWriter, r *http.Request, params ListDealsParams)
@@ -1199,7 +1333,7 @@ type ServerInterface interface {
 	ListOrderScalers(w http.ResponseWriter, r *http.Request, params ListOrderScalersParams)
 	// Cancel Hyperliquid order by OrderId
 	// (POST /api/orders/{order_id}/cancel)
-	CancelOrderByOrderId(w http.ResponseWriter, r *http.Request, orderId string)
+	CancelOrderByOrderId(w http.ResponseWriter, r *http.Request, orderId string, params CancelOrderByOrderIdParams)
 	// Delete a bot-specific order scaler override
 	// (DELETE /api/v1/bots/{botId}/order-scaler)
 	DeleteBotOrderScalerConfig(w http.ResponseWriter, r *http.Request, botId int64)
@@ -1215,15 +1349,42 @@ type ServerInterface interface {
 	// Update the global order scaler multiplier
 	// (PUT /api/v1/order-scaler)
 	UpdateOrderScalerConfig(w http.ResponseWriter, r *http.Request)
+	// List configured venues
+	// (GET /api/venues)
+	ListVenues(w http.ResponseWriter, r *http.Request)
+	// Remove a venue definition
+	// (DELETE /api/venues/{venue_id})
+	DeleteVenue(w http.ResponseWriter, r *http.Request, venueId string)
+	// Create or update a venue definition
+	// (PUT /api/venues/{venue_id})
+	UpsertVenue(w http.ResponseWriter, r *http.Request, venueId string)
+	// List bot assignments for a venue
+	// (GET /api/venues/{venue_id}/assignments)
+	ListVenueAssignments(w http.ResponseWriter, r *http.Request, venueId string)
+	// Remove a bot assignment from a venue
+	// (DELETE /api/venues/{venue_id}/assignments/{bot_id})
+	DeleteVenueAssignment(w http.ResponseWriter, r *http.Request, venueId string, botId int64)
+	// Assign a bot to a venue
+	// (PUT /api/venues/{venue_id}/assignments/{bot_id})
+	UpsertVenueAssignment(w http.ResponseWriter, r *http.Request, venueId string, botId int64)
 	// Stream Hyperliquid best bid/offer quotes
 	// (GET /sse/hyperliquid/prices)
 	StreamHyperliquidPrices(w http.ResponseWriter, r *http.Request, params StreamHyperliquidPricesParams)
 	// Stream live changes to acted-on orders
 	// (GET /sse/orders)
 	StreamOrders(w http.ResponseWriter, r *http.Request, params StreamOrdersParams)
+	// Server-sent events for system notifications
+	// (GET /stream/system)
+	StreamSystemEvents(w http.ResponseWriter, r *http.Request)
+	// Get current system health and status
+	// (GET /system/status)
+	GetSystemStatus(w http.ResponseWriter, r *http.Request)
 	// Retrieve encrypted vault payload
 	// (GET /vault/payload)
 	GetVaultPayload(w http.ResponseWriter, r *http.Request)
+	// Update encrypted vault payload
+	// (PUT /vault/payload)
+	UpdateVaultPayload(w http.ResponseWriter, r *http.Request)
 	// Reseal the vault and clear in-memory secrets
 	// (POST /vault/seal)
 	SealVault(w http.ResponseWriter, r *http.Request)
@@ -1315,6 +1476,37 @@ func (siw *ServerInterfaceWrapper) ListBots(w http.ResponseWriter, r *http.Reque
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListBots(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListBotVenues operation middleware
+func (siw *ServerInterfaceWrapper) ListBotVenues(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "bot_id" -------------
+	var botId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "bot_id", r.PathValue("bot_id"), &botId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bot_id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListBotVenues(w, r, botId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1587,8 +1779,19 @@ func (siw *ServerInterfaceWrapper) CancelOrderByOrderId(w http.ResponseWriter, r
 
 	r = r.WithContext(ctx)
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CancelOrderByOrderIdParams
+
+	// ------------- Optional query parameter "venue_id" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "venue_id", r.URL.Query(), &params.VenueId)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "venue_id", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CancelOrderByOrderId(w, r, orderId)
+		siw.Handler.CancelOrderByOrderId(w, r, orderId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1731,6 +1934,199 @@ func (siw *ServerInterfaceWrapper) UpdateOrderScalerConfig(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
+// ListVenues operation middleware
+func (siw *ServerInterfaceWrapper) ListVenues(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListVenues(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteVenue operation middleware
+func (siw *ServerInterfaceWrapper) DeleteVenue(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "venue_id" -------------
+	var venueId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "venue_id", r.PathValue("venue_id"), &venueId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "venue_id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteVenue(w, r, venueId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpsertVenue operation middleware
+func (siw *ServerInterfaceWrapper) UpsertVenue(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "venue_id" -------------
+	var venueId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "venue_id", r.PathValue("venue_id"), &venueId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "venue_id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpsertVenue(w, r, venueId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListVenueAssignments operation middleware
+func (siw *ServerInterfaceWrapper) ListVenueAssignments(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "venue_id" -------------
+	var venueId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "venue_id", r.PathValue("venue_id"), &venueId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "venue_id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListVenueAssignments(w, r, venueId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteVenueAssignment operation middleware
+func (siw *ServerInterfaceWrapper) DeleteVenueAssignment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "venue_id" -------------
+	var venueId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "venue_id", r.PathValue("venue_id"), &venueId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "venue_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "bot_id" -------------
+	var botId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "bot_id", r.PathValue("bot_id"), &botId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bot_id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteVenueAssignment(w, r, venueId, botId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpsertVenueAssignment operation middleware
+func (siw *ServerInterfaceWrapper) UpsertVenueAssignment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "venue_id" -------------
+	var venueId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "venue_id", r.PathValue("venue_id"), &venueId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "venue_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "bot_id" -------------
+	var botId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "bot_id", r.PathValue("bot_id"), &botId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bot_id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpsertVenueAssignment(w, r, venueId, botId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // StreamHyperliquidPrices operation middleware
 func (siw *ServerInterfaceWrapper) StreamHyperliquidPrices(w http.ResponseWriter, r *http.Request) {
 
@@ -1836,6 +2232,46 @@ func (siw *ServerInterfaceWrapper) StreamOrders(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// StreamSystemEvents operation middleware
+func (siw *ServerInterfaceWrapper) StreamSystemEvents(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StreamSystemEvents(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSystemStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetSystemStatus(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSystemStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetVaultPayload operation middleware
 func (siw *ServerInterfaceWrapper) GetVaultPayload(w http.ResponseWriter, r *http.Request) {
 
@@ -1847,6 +2283,26 @@ func (siw *ServerInterfaceWrapper) GetVaultPayload(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetVaultPayload(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateVaultPayload operation middleware
+func (siw *ServerInterfaceWrapper) UpdateVaultPayload(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateVaultPayload(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2095,6 +2551,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	}
 
 	m.HandleFunc("GET "+options.BaseURL+"/api/bots", wrapper.ListBots)
+	m.HandleFunc("GET "+options.BaseURL+"/api/bots/{bot_id}/venues", wrapper.ListBotVenues)
 	m.HandleFunc("GET "+options.BaseURL+"/api/deals", wrapper.ListDeals)
 	m.HandleFunc("GET "+options.BaseURL+"/api/orders", wrapper.ListOrders)
 	m.HandleFunc("GET "+options.BaseURL+"/api/orders/scalers", wrapper.ListOrderScalers)
@@ -2104,9 +2561,18 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("PUT "+options.BaseURL+"/api/v1/bots/{botId}/order-scaler", wrapper.UpsertBotOrderScalerConfig)
 	m.HandleFunc("GET "+options.BaseURL+"/api/v1/order-scaler", wrapper.GetOrderScalerConfig)
 	m.HandleFunc("PUT "+options.BaseURL+"/api/v1/order-scaler", wrapper.UpdateOrderScalerConfig)
+	m.HandleFunc("GET "+options.BaseURL+"/api/venues", wrapper.ListVenues)
+	m.HandleFunc("DELETE "+options.BaseURL+"/api/venues/{venue_id}", wrapper.DeleteVenue)
+	m.HandleFunc("PUT "+options.BaseURL+"/api/venues/{venue_id}", wrapper.UpsertVenue)
+	m.HandleFunc("GET "+options.BaseURL+"/api/venues/{venue_id}/assignments", wrapper.ListVenueAssignments)
+	m.HandleFunc("DELETE "+options.BaseURL+"/api/venues/{venue_id}/assignments/{bot_id}", wrapper.DeleteVenueAssignment)
+	m.HandleFunc("PUT "+options.BaseURL+"/api/venues/{venue_id}/assignments/{bot_id}", wrapper.UpsertVenueAssignment)
 	m.HandleFunc("GET "+options.BaseURL+"/sse/hyperliquid/prices", wrapper.StreamHyperliquidPrices)
 	m.HandleFunc("GET "+options.BaseURL+"/sse/orders", wrapper.StreamOrders)
+	m.HandleFunc("GET "+options.BaseURL+"/stream/system", wrapper.StreamSystemEvents)
+	m.HandleFunc("GET "+options.BaseURL+"/system/status", wrapper.GetSystemStatus)
 	m.HandleFunc("GET "+options.BaseURL+"/vault/payload", wrapper.GetVaultPayload)
+	m.HandleFunc("PUT "+options.BaseURL+"/vault/payload", wrapper.UpdateVaultPayload)
 	m.HandleFunc("POST "+options.BaseURL+"/vault/seal", wrapper.SealVault)
 	m.HandleFunc("POST "+options.BaseURL+"/vault/setup", wrapper.SetupVault)
 	m.HandleFunc("GET "+options.BaseURL+"/vault/status", wrapper.GetVaultStatus)
@@ -2151,6 +2617,49 @@ type ListBots500Response struct {
 }
 
 func (response ListBots500Response) VisitListBotsResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type ListBotVenuesRequestObject struct {
+	BotId int64 `json:"bot_id"`
+}
+
+type ListBotVenuesResponseObject interface {
+	VisitListBotVenuesResponse(w http.ResponseWriter) error
+}
+
+type ListBotVenues200JSONResponse struct {
+	Items []BotVenueAssignmentRecord `json:"items"`
+}
+
+func (response ListBotVenues200JSONResponse) VisitListBotVenuesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListBotVenues400Response struct {
+}
+
+func (response ListBotVenues400Response) VisitListBotVenuesResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type ListBotVenues401Response struct {
+}
+
+func (response ListBotVenues401Response) VisitListBotVenuesResponse(w http.ResponseWriter) error {
+	w.WriteHeader(401)
+	return nil
+}
+
+type ListBotVenues500Response struct {
+}
+
+func (response ListBotVenues500Response) VisitListBotVenuesResponse(w http.ResponseWriter) error {
 	w.WriteHeader(500)
 	return nil
 }
@@ -2265,6 +2774,7 @@ func (response ListOrderScalers500Response) VisitListOrderScalersResponse(w http
 
 type CancelOrderByOrderIdRequestObject struct {
 	OrderId string `json:"order_id"`
+	Params  CancelOrderByOrderIdParams
 	Body    *CancelOrderByOrderIdJSONRequestBody
 }
 
@@ -2510,6 +3020,289 @@ func (response UpdateOrderScalerConfig500Response) VisitUpdateOrderScalerConfigR
 	return nil
 }
 
+type ListVenuesRequestObject struct {
+}
+
+type ListVenuesResponseObject interface {
+	VisitListVenuesResponse(w http.ResponseWriter) error
+}
+
+type ListVenues200JSONResponse struct {
+	Items []VenueRecord `json:"items"`
+}
+
+func (response ListVenues200JSONResponse) VisitListVenuesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListVenues401Response struct {
+}
+
+func (response ListVenues401Response) VisitListVenuesResponse(w http.ResponseWriter) error {
+	w.WriteHeader(401)
+	return nil
+}
+
+type ListVenues500Response struct {
+}
+
+func (response ListVenues500Response) VisitListVenuesResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type DeleteVenueRequestObject struct {
+	VenueId string `json:"venue_id"`
+}
+
+type DeleteVenueResponseObject interface {
+	VisitDeleteVenueResponse(w http.ResponseWriter) error
+}
+
+type DeleteVenue204Response struct {
+}
+
+func (response DeleteVenue204Response) VisitDeleteVenueResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteVenue400Response struct {
+}
+
+func (response DeleteVenue400Response) VisitDeleteVenueResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type DeleteVenue401Response struct {
+}
+
+func (response DeleteVenue401Response) VisitDeleteVenueResponse(w http.ResponseWriter) error {
+	w.WriteHeader(401)
+	return nil
+}
+
+type DeleteVenue404Response struct {
+}
+
+func (response DeleteVenue404Response) VisitDeleteVenueResponse(w http.ResponseWriter) error {
+	w.WriteHeader(404)
+	return nil
+}
+
+type DeleteVenue409Response struct {
+}
+
+func (response DeleteVenue409Response) VisitDeleteVenueResponse(w http.ResponseWriter) error {
+	w.WriteHeader(409)
+	return nil
+}
+
+type DeleteVenue500Response struct {
+}
+
+func (response DeleteVenue500Response) VisitDeleteVenueResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type UpsertVenueRequestObject struct {
+	VenueId string `json:"venue_id"`
+	Body    *UpsertVenueJSONRequestBody
+}
+
+type UpsertVenueResponseObject interface {
+	VisitUpsertVenueResponse(w http.ResponseWriter) error
+}
+
+type UpsertVenue200JSONResponse VenueRecord
+
+func (response UpsertVenue200JSONResponse) VisitUpsertVenueResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type UpsertVenue400Response struct {
+}
+
+func (response UpsertVenue400Response) VisitUpsertVenueResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type UpsertVenue401Response struct {
+}
+
+func (response UpsertVenue401Response) VisitUpsertVenueResponse(w http.ResponseWriter) error {
+	w.WriteHeader(401)
+	return nil
+}
+
+type UpsertVenue500Response struct {
+}
+
+func (response UpsertVenue500Response) VisitUpsertVenueResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type ListVenueAssignmentsRequestObject struct {
+	VenueId string `json:"venue_id"`
+}
+
+type ListVenueAssignmentsResponseObject interface {
+	VisitListVenueAssignmentsResponse(w http.ResponseWriter) error
+}
+
+type ListVenueAssignments200JSONResponse struct {
+	Items []VenueAssignmentRecord `json:"items"`
+}
+
+func (response ListVenueAssignments200JSONResponse) VisitListVenueAssignmentsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListVenueAssignments400Response struct {
+}
+
+func (response ListVenueAssignments400Response) VisitListVenueAssignmentsResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type ListVenueAssignments401Response struct {
+}
+
+func (response ListVenueAssignments401Response) VisitListVenueAssignmentsResponse(w http.ResponseWriter) error {
+	w.WriteHeader(401)
+	return nil
+}
+
+type ListVenueAssignments404Response struct {
+}
+
+func (response ListVenueAssignments404Response) VisitListVenueAssignmentsResponse(w http.ResponseWriter) error {
+	w.WriteHeader(404)
+	return nil
+}
+
+type ListVenueAssignments500Response struct {
+}
+
+func (response ListVenueAssignments500Response) VisitListVenueAssignmentsResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type DeleteVenueAssignmentRequestObject struct {
+	VenueId string `json:"venue_id"`
+	BotId   int64  `json:"bot_id"`
+}
+
+type DeleteVenueAssignmentResponseObject interface {
+	VisitDeleteVenueAssignmentResponse(w http.ResponseWriter) error
+}
+
+type DeleteVenueAssignment204Response struct {
+}
+
+func (response DeleteVenueAssignment204Response) VisitDeleteVenueAssignmentResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteVenueAssignment400Response struct {
+}
+
+func (response DeleteVenueAssignment400Response) VisitDeleteVenueAssignmentResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type DeleteVenueAssignment401Response struct {
+}
+
+func (response DeleteVenueAssignment401Response) VisitDeleteVenueAssignmentResponse(w http.ResponseWriter) error {
+	w.WriteHeader(401)
+	return nil
+}
+
+type DeleteVenueAssignment404Response struct {
+}
+
+func (response DeleteVenueAssignment404Response) VisitDeleteVenueAssignmentResponse(w http.ResponseWriter) error {
+	w.WriteHeader(404)
+	return nil
+}
+
+type DeleteVenueAssignment500Response struct {
+}
+
+func (response DeleteVenueAssignment500Response) VisitDeleteVenueAssignmentResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type UpsertVenueAssignmentRequestObject struct {
+	VenueId string `json:"venue_id"`
+	BotId   int64  `json:"bot_id"`
+	Body    *UpsertVenueAssignmentJSONRequestBody
+}
+
+type UpsertVenueAssignmentResponseObject interface {
+	VisitUpsertVenueAssignmentResponse(w http.ResponseWriter) error
+}
+
+type UpsertVenueAssignment200JSONResponse VenueAssignmentRecord
+
+func (response UpsertVenueAssignment200JSONResponse) VisitUpsertVenueAssignmentResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type UpsertVenueAssignment400Response struct {
+}
+
+func (response UpsertVenueAssignment400Response) VisitUpsertVenueAssignmentResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type UpsertVenueAssignment401Response struct {
+}
+
+func (response UpsertVenueAssignment401Response) VisitUpsertVenueAssignmentResponse(w http.ResponseWriter) error {
+	w.WriteHeader(401)
+	return nil
+}
+
+type UpsertVenueAssignment404Response struct {
+}
+
+func (response UpsertVenueAssignment404Response) VisitUpsertVenueAssignmentResponse(w http.ResponseWriter) error {
+	w.WriteHeader(404)
+	return nil
+}
+
+type UpsertVenueAssignment500Response struct {
+}
+
+func (response UpsertVenueAssignment500Response) VisitUpsertVenueAssignmentResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
 type StreamHyperliquidPricesRequestObject struct {
 	Params StreamHyperliquidPricesParams
 }
@@ -2596,6 +3389,64 @@ func (response StreamOrders500Response) VisitStreamOrdersResponse(w http.Respons
 	return nil
 }
 
+type StreamSystemEventsRequestObject struct {
+}
+
+type StreamSystemEventsResponseObject interface {
+	VisitStreamSystemEventsResponse(w http.ResponseWriter) error
+}
+
+type StreamSystemEvents200TexteventStreamResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response StreamSystemEvents200TexteventStreamResponse) VisitStreamSystemEventsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "text/event-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type StreamSystemEvents500Response struct {
+}
+
+func (response StreamSystemEvents500Response) VisitStreamSystemEventsResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type GetSystemStatusRequestObject struct {
+}
+
+type GetSystemStatusResponseObject interface {
+	VisitGetSystemStatusResponse(w http.ResponseWriter) error
+}
+
+type GetSystemStatus200JSONResponse SystemStatus
+
+func (response GetSystemStatus200JSONResponse) VisitGetSystemStatusResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSystemStatus500Response struct {
+}
+
+func (response GetSystemStatus500Response) VisitGetSystemStatusResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
 type GetVaultPayloadRequestObject struct {
 }
 
@@ -2640,6 +3491,57 @@ type GetVaultPayload500Response struct {
 }
 
 func (response GetVaultPayload500Response) VisitGetVaultPayloadResponse(w http.ResponseWriter) error {
+	w.WriteHeader(500)
+	return nil
+}
+
+type UpdateVaultPayloadRequestObject struct {
+	Body *UpdateVaultPayloadJSONRequestBody
+}
+
+type UpdateVaultPayloadResponseObject interface {
+	VisitUpdateVaultPayloadResponse(w http.ResponseWriter) error
+}
+
+type UpdateVaultPayload200JSONResponse struct {
+	Message *string `json:"message,omitempty"`
+}
+
+func (response UpdateVaultPayload200JSONResponse) VisitUpdateVaultPayloadResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type UpdateVaultPayload400Response struct {
+}
+
+func (response UpdateVaultPayload400Response) VisitUpdateVaultPayloadResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type UpdateVaultPayload401Response struct {
+}
+
+func (response UpdateVaultPayload401Response) VisitUpdateVaultPayloadResponse(w http.ResponseWriter) error {
+	w.WriteHeader(401)
+	return nil
+}
+
+type UpdateVaultPayload403Response struct {
+}
+
+func (response UpdateVaultPayload403Response) VisitUpdateVaultPayloadResponse(w http.ResponseWriter) error {
+	w.WriteHeader(403)
+	return nil
+}
+
+type UpdateVaultPayload500Response struct {
+}
+
+func (response UpdateVaultPayload500Response) VisitUpdateVaultPayloadResponse(w http.ResponseWriter) error {
 	w.WriteHeader(500)
 	return nil
 }
@@ -2999,6 +3901,9 @@ type StrictServerInterface interface {
 	// List cached 3Commas bots
 	// (GET /api/bots)
 	ListBots(ctx context.Context, request ListBotsRequestObject) (ListBotsResponseObject, error)
+	// List venue assignments for a bot
+	// (GET /api/bots/{bot_id}/venues)
+	ListBotVenues(ctx context.Context, request ListBotVenuesRequestObject) (ListBotVenuesResponseObject, error)
 	// List cached 3Commas deals
 	// (GET /api/deals)
 	ListDeals(ctx context.Context, request ListDealsRequestObject) (ListDealsResponseObject, error)
@@ -3026,15 +3931,42 @@ type StrictServerInterface interface {
 	// Update the global order scaler multiplier
 	// (PUT /api/v1/order-scaler)
 	UpdateOrderScalerConfig(ctx context.Context, request UpdateOrderScalerConfigRequestObject) (UpdateOrderScalerConfigResponseObject, error)
+	// List configured venues
+	// (GET /api/venues)
+	ListVenues(ctx context.Context, request ListVenuesRequestObject) (ListVenuesResponseObject, error)
+	// Remove a venue definition
+	// (DELETE /api/venues/{venue_id})
+	DeleteVenue(ctx context.Context, request DeleteVenueRequestObject) (DeleteVenueResponseObject, error)
+	// Create or update a venue definition
+	// (PUT /api/venues/{venue_id})
+	UpsertVenue(ctx context.Context, request UpsertVenueRequestObject) (UpsertVenueResponseObject, error)
+	// List bot assignments for a venue
+	// (GET /api/venues/{venue_id}/assignments)
+	ListVenueAssignments(ctx context.Context, request ListVenueAssignmentsRequestObject) (ListVenueAssignmentsResponseObject, error)
+	// Remove a bot assignment from a venue
+	// (DELETE /api/venues/{venue_id}/assignments/{bot_id})
+	DeleteVenueAssignment(ctx context.Context, request DeleteVenueAssignmentRequestObject) (DeleteVenueAssignmentResponseObject, error)
+	// Assign a bot to a venue
+	// (PUT /api/venues/{venue_id}/assignments/{bot_id})
+	UpsertVenueAssignment(ctx context.Context, request UpsertVenueAssignmentRequestObject) (UpsertVenueAssignmentResponseObject, error)
 	// Stream Hyperliquid best bid/offer quotes
 	// (GET /sse/hyperliquid/prices)
 	StreamHyperliquidPrices(ctx context.Context, request StreamHyperliquidPricesRequestObject) (StreamHyperliquidPricesResponseObject, error)
 	// Stream live changes to acted-on orders
 	// (GET /sse/orders)
 	StreamOrders(ctx context.Context, request StreamOrdersRequestObject) (StreamOrdersResponseObject, error)
+	// Server-sent events for system notifications
+	// (GET /stream/system)
+	StreamSystemEvents(ctx context.Context, request StreamSystemEventsRequestObject) (StreamSystemEventsResponseObject, error)
+	// Get current system health and status
+	// (GET /system/status)
+	GetSystemStatus(ctx context.Context, request GetSystemStatusRequestObject) (GetSystemStatusResponseObject, error)
 	// Retrieve encrypted vault payload
 	// (GET /vault/payload)
 	GetVaultPayload(ctx context.Context, request GetVaultPayloadRequestObject) (GetVaultPayloadResponseObject, error)
+	// Update encrypted vault payload
+	// (PUT /vault/payload)
+	UpdateVaultPayload(ctx context.Context, request UpdateVaultPayloadRequestObject) (UpdateVaultPayloadResponseObject, error)
 	// Reseal the vault and clear in-memory secrets
 	// (POST /vault/seal)
 	SealVault(ctx context.Context, request SealVaultRequestObject) (SealVaultResponseObject, error)
@@ -3109,6 +4041,32 @@ func (sh *strictHandler) ListBots(w http.ResponseWriter, r *http.Request, params
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ListBotsResponseObject); ok {
 		if err := validResponse.VisitListBotsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListBotVenues operation middleware
+func (sh *strictHandler) ListBotVenues(w http.ResponseWriter, r *http.Request, botId int64) {
+	var request ListBotVenuesRequestObject
+
+	request.BotId = botId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListBotVenues(ctx, request.(ListBotVenuesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListBotVenues")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListBotVenuesResponseObject); ok {
+		if err := validResponse.VisitListBotVenuesResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -3195,10 +4153,11 @@ func (sh *strictHandler) ListOrderScalers(w http.ResponseWriter, r *http.Request
 }
 
 // CancelOrderByOrderId operation middleware
-func (sh *strictHandler) CancelOrderByOrderId(w http.ResponseWriter, r *http.Request, orderId string) {
+func (sh *strictHandler) CancelOrderByOrderId(w http.ResponseWriter, r *http.Request, orderId string, params CancelOrderByOrderIdParams) {
 	var request CancelOrderByOrderIdRequestObject
 
 	request.OrderId = orderId
+	request.Params = params
 
 	var body CancelOrderByOrderIdJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -3367,6 +4326,176 @@ func (sh *strictHandler) UpdateOrderScalerConfig(w http.ResponseWriter, r *http.
 	}
 }
 
+// ListVenues operation middleware
+func (sh *strictHandler) ListVenues(w http.ResponseWriter, r *http.Request) {
+	var request ListVenuesRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListVenues(ctx, request.(ListVenuesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListVenues")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListVenuesResponseObject); ok {
+		if err := validResponse.VisitListVenuesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteVenue operation middleware
+func (sh *strictHandler) DeleteVenue(w http.ResponseWriter, r *http.Request, venueId string) {
+	var request DeleteVenueRequestObject
+
+	request.VenueId = venueId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteVenue(ctx, request.(DeleteVenueRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteVenue")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteVenueResponseObject); ok {
+		if err := validResponse.VisitDeleteVenueResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpsertVenue operation middleware
+func (sh *strictHandler) UpsertVenue(w http.ResponseWriter, r *http.Request, venueId string) {
+	var request UpsertVenueRequestObject
+
+	request.VenueId = venueId
+
+	var body UpsertVenueJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpsertVenue(ctx, request.(UpsertVenueRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpsertVenue")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpsertVenueResponseObject); ok {
+		if err := validResponse.VisitUpsertVenueResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListVenueAssignments operation middleware
+func (sh *strictHandler) ListVenueAssignments(w http.ResponseWriter, r *http.Request, venueId string) {
+	var request ListVenueAssignmentsRequestObject
+
+	request.VenueId = venueId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListVenueAssignments(ctx, request.(ListVenueAssignmentsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListVenueAssignments")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListVenueAssignmentsResponseObject); ok {
+		if err := validResponse.VisitListVenueAssignmentsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteVenueAssignment operation middleware
+func (sh *strictHandler) DeleteVenueAssignment(w http.ResponseWriter, r *http.Request, venueId string, botId int64) {
+	var request DeleteVenueAssignmentRequestObject
+
+	request.VenueId = venueId
+	request.BotId = botId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteVenueAssignment(ctx, request.(DeleteVenueAssignmentRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteVenueAssignment")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteVenueAssignmentResponseObject); ok {
+		if err := validResponse.VisitDeleteVenueAssignmentResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpsertVenueAssignment operation middleware
+func (sh *strictHandler) UpsertVenueAssignment(w http.ResponseWriter, r *http.Request, venueId string, botId int64) {
+	var request UpsertVenueAssignmentRequestObject
+
+	request.VenueId = venueId
+	request.BotId = botId
+
+	var body UpsertVenueAssignmentJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpsertVenueAssignment(ctx, request.(UpsertVenueAssignmentRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpsertVenueAssignment")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpsertVenueAssignmentResponseObject); ok {
+		if err := validResponse.VisitUpsertVenueAssignmentResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // StreamHyperliquidPrices operation middleware
 func (sh *strictHandler) StreamHyperliquidPrices(w http.ResponseWriter, r *http.Request, params StreamHyperliquidPricesParams) {
 	var request StreamHyperliquidPricesRequestObject
@@ -3419,6 +4548,54 @@ func (sh *strictHandler) StreamOrders(w http.ResponseWriter, r *http.Request, pa
 	}
 }
 
+// StreamSystemEvents operation middleware
+func (sh *strictHandler) StreamSystemEvents(w http.ResponseWriter, r *http.Request) {
+	var request StreamSystemEventsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StreamSystemEvents(ctx, request.(StreamSystemEventsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StreamSystemEvents")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StreamSystemEventsResponseObject); ok {
+		if err := validResponse.VisitStreamSystemEventsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetSystemStatus operation middleware
+func (sh *strictHandler) GetSystemStatus(w http.ResponseWriter, r *http.Request) {
+	var request GetSystemStatusRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetSystemStatus(ctx, request.(GetSystemStatusRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetSystemStatus")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetSystemStatusResponseObject); ok {
+		if err := validResponse.VisitGetSystemStatusResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetVaultPayload operation middleware
 func (sh *strictHandler) GetVaultPayload(w http.ResponseWriter, r *http.Request) {
 	var request GetVaultPayloadRequestObject
@@ -3436,6 +4613,37 @@ func (sh *strictHandler) GetVaultPayload(w http.ResponseWriter, r *http.Request)
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetVaultPayloadResponseObject); ok {
 		if err := validResponse.VisitGetVaultPayloadResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateVaultPayload operation middleware
+func (sh *strictHandler) UpdateVaultPayload(w http.ResponseWriter, r *http.Request) {
+	var request UpdateVaultPayloadRequestObject
+
+	var body UpdateVaultPayloadJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateVaultPayload(ctx, request.(UpdateVaultPayloadRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateVaultPayload")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateVaultPayloadResponseObject); ok {
+		if err := validResponse.VisitUpdateVaultPayloadResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

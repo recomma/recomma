@@ -58,6 +58,45 @@ export type CancelOrderByOrderIdRequest =
 export type CancelOrderByOrderIdResponse =
   components['schemas']['CancelOrderByOrderIdResponse'];
 
+// Venue types
+export type VaultVenueSecret = components['schemas']['VaultVenueSecret'];
+export type VenueRecord = components['schemas']['VenueRecord'];
+export type VenueUpsertRequest = components['schemas']['VenueUpsertRequest'];
+export type VenueAssignmentRecord = components['schemas']['VenueAssignmentRecord'];
+export type VenueAssignmentUpsertRequest = components['schemas']['VenueAssignmentUpsertRequest'];
+export type BotVenueAssignmentRecord = components['schemas']['BotVenueAssignmentRecord'];
+
+export type ListVenuesResponse =
+  operations['listVenues']['responses'][200]['content']['application/json'];
+export type ListVenueAssignmentsResponse =
+  operations['listVenueAssignments']['responses'][200]['content']['application/json'];
+export type ListBotVenuesResponse =
+  operations['listBotVenues']['responses'][200]['content']['application/json'];
+
+// Custom types for venue UI
+export type VenueFormData = {
+  display_name: string;
+  api_url: string;
+  wallet: string;
+  private_key: string;
+  is_primary: boolean;
+};
+
+export type VenueWithAssignments = VenueRecord & {
+  isPrimary?: boolean;
+  assignmentCount?: number;
+};
+
+export type VenueAssignmentWithBot = VenueAssignmentRecord & {
+  bot_name?: string;
+  bot_enabled?: boolean;
+};
+
+export type BotWithVenue = BotRecord & {
+  primaryVenue?: BotVenueAssignmentRecord;
+  allVenues?: BotVenueAssignmentRecord[];
+};
+
 export type OrderFilterState = {
   order_id?: string;
   bot_id?: string;

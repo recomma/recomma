@@ -23,7 +23,6 @@ import type { OrderFilterState, VaultStatus } from './types/api';
 import { buildOpsApiUrl } from './config/opsApi';
 import { Settings as SettingsIcon } from 'lucide-react';
 import { useSystemErrors } from './hooks/useSystemErrors';
-import { useToasterReady } from './hooks/useToasterReady';
 
 export type FilterState = OrderFilterState;
 
@@ -36,12 +35,9 @@ export default function App() {
   const [vaultStatusError, setVaultStatusError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
 
-  // Track when Toaster component is ready
-  const toasterReady = useToasterReady();
-
-  // Only connect to system stream when vault is unsealed AND Toaster is ready
+  // Only connect to system stream when vault is unsealed
   const isUnsealed = vaultStatus?.state === 'unsealed';
-  useSystemErrors(isUnsealed, toasterReady);
+  useSystemErrors(isUnsealed);
 
   const fetchVaultStatus = useCallback(async () => {
     setIsLoadingVaultStatus(true);

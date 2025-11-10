@@ -1104,15 +1104,21 @@ func (h *ApiHandler) GetSystemStatus(ctx context.Context, req GetSystemStatusReq
 
 // StreamSystemEvents satisfies StrictServerInterface.
 func (h *ApiHandler) StreamSystemEvents(ctx context.Context, req StreamSystemEventsRequestObject) (StreamSystemEventsResponseObject, error) {
+	h.logger.InfoContext(ctx, "StreamSystemEvents called")
+
 	if h.systemStream == nil {
+		h.logger.ErrorContext(ctx, "systemStream is nil")
 		return StreamSystemEvents500Response{}, nil
 	}
 
+	h.logger.InfoContext(ctx, "Subscribing to system stream")
 	eventCh, err := h.systemStream.Subscribe(ctx)
 	if err != nil {
+		h.logger.ErrorContext(ctx, "Failed to subscribe to system stream", slog.String("error", err.Error()))
 		return StreamSystemEvents500Response{}, nil
 	}
 
+	h.logger.InfoContext(ctx, "Subscription successful, starting SSE stream")
 	pr, pw := io.Pipe()
 
 	go func() {
@@ -1121,11 +1127,16 @@ func (h *ApiHandler) StreamSystemEvents(ctx context.Context, req StreamSystemEve
 		for {
 			select {
 			case <-ctx.Done():
+				h.logger.InfoContext(ctx, "SSE context cancelled")
 				return
 			case evt, ok := <-eventCh:
 				if !ok {
+					h.logger.InfoContext(ctx, "Event channel closed")
 					return
 				}
+				h.logger.InfoContext(ctx, "Writing system event to SSE",
+					slog.String("level", string(evt.Level)),
+					slog.String("source", evt.Source))
 				if err := h.writeSystemSSEFrame(pw, evt); err != nil {
 					h.logger.WarnContext(ctx, "write system event frame",
 						slog.String("error", err.Error()))

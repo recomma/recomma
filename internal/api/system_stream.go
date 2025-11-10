@@ -82,19 +82,39 @@ func (c *SystemStreamController) Subscribe(ctx context.Context) (<-chan SystemEv
 
 	// Send event history to new subscriber immediately
 	history := c.getRecentHistory()
+	c.logger.Info("New subscriber registered",
+		slog.Int64("subscriber_id", sub.id),
+		slog.Int("history_events", len(history)))
 	c.mu.Unlock()
 
 	// Send history events in a goroutine to avoid blocking
 	go func() {
-		for _, evt := range history {
+		for i, evt := range history {
+			c.logger.Debug("Sending history event to new subscriber",
+				slog.Int64("subscriber_id", sub.id),
+				slog.Int("event_index", i),
+				slog.String("level", string(evt.Level)),
+				slog.String("source", evt.Source),
+				slog.String("message", evt.Message))
 			select {
 			case ch <- evt:
+				c.logger.Debug("History event sent successfully",
+					slog.Int64("subscriber_id", sub.id),
+					slog.Int("event_index", i))
 			case <-ctx.Done():
+				c.logger.Warn("Subscriber context cancelled while sending history",
+					slog.Int64("subscriber_id", sub.id))
 				return
 			default:
 				// Skip if buffer full (shouldn't happen with fresh subscriber)
+				c.logger.Warn("Skipping history event, buffer full",
+					slog.Int64("subscriber_id", sub.id),
+					slog.Int("event_index", i))
 			}
 		}
+		c.logger.Info("Finished sending history events",
+			slog.Int64("subscriber_id", sub.id),
+			slog.Int("events_sent", len(history)))
 	}()
 
 	go c.awaitCancellation(sub)
@@ -133,6 +153,9 @@ func (c *SystemStreamController) awaitCancellation(sub *systemSubscriber) {
 func (c *SystemStreamController) Publish(evt SystemEvent) {
 	// Filter by level
 	if !c.shouldPublish(evt.Level) {
+		c.logger.Debug("Event filtered by level",
+			slog.String("level", string(evt.Level)),
+			slog.String("min_level", string(c.minLevel)))
 		return
 	}
 
@@ -141,16 +164,27 @@ func (c *SystemStreamController) Publish(evt SystemEvent) {
 	c.mu.Lock()
 	// Add to history
 	c.addToHistory(evt)
+	historySize := len(c.eventHistory)
 	subscribers := make([]*systemSubscriber, 0, len(c.subscribers))
 	for _, sub := range c.subscribers {
 		subscribers = append(subscribers, sub)
 	}
 	c.mu.Unlock()
 
+	c.logger.Info("Publishing system event",
+		slog.String("level", string(evt.Level)),
+		slog.String("source", evt.Source),
+		slog.String("message", evt.Message),
+		slog.Int("subscribers", len(subscribers)),
+		slog.Int("history_size", historySize))
+
 	// Fan out to subscribers without holding lock
 	for _, sub := range subscribers {
 		select {
 		case sub.ch <- evt:
+			c.logger.Debug("Event sent to subscriber",
+				slog.Int64("subscriber", sub.id),
+				slog.String("level", string(evt.Level)))
 		default:
 			if c.logger != nil {
 				c.logger.Warn("dropping system event; subscriber buffer full",

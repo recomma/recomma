@@ -520,7 +520,9 @@ func main() {
 	// Queue + workers
 	// Q creation (typed)
 	rl := workqueue.NewTypedMaxOfRateLimiter(
-		workqueue.NewTypedItemExponentialFailureRateLimiter[engine.WorkKey](1*time.Second, 30*time.Second), // backoff on failures
+		// Exponential backoff for retries. Max duration is 2 hours to accommodate
+		// 3Commas rate limit windows, which can be up to an hour or more when quota limits are hit.
+		workqueue.NewTypedItemExponentialFailureRateLimiter[engine.WorkKey](1*time.Second, 2*time.Hour),
 	)
 
 	config := workqueue.TypedRateLimitingQueueConfig[engine.WorkKey]{
@@ -832,7 +834,10 @@ func runWorker(ctx context.Context, wg *sync.WaitGroup, q workqueue.TypedRateLim
 		if shutdown {
 			return
 		}
-		reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		// Use a longer timeout to accommodate 3Commas rate limiting.
+		// The SDK's internal rate limiter may need to wait for rate limit windows,
+		// which can be up to an hour or more when limits are exceeded.
+		reqCtx, cancel := context.WithTimeout(ctx, 2*time.Hour)
 		processWorkItem(reqCtx, q, e, wi)
 		cancel()
 	}

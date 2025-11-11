@@ -12,6 +12,7 @@ import (
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/hl"
 	"github.com/recomma/recomma/orderid"
+	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
 	"github.com/sonirico/go-hyperliquid"
 )
@@ -65,6 +66,7 @@ func WithMaxMultiplier(max float64) Option {
 
 // Request captures the details required to scale an order.
 type Request struct {
+	Identifier   recomma.OrderIdentifier
 	OrderId      orderid.OrderId
 	Coin         string
 	Side         string
@@ -136,7 +138,7 @@ func (s *Service) Scale(ctx context.Context, req Request, order *hyperliquid.Cre
 	if constraints.NotionalBelowMinimum(roundedSize, roundedPrice) {
 		reason := fmt.Sprintf("scaled order below minimum notional (%.4f < %.4f)", notional, constraints.MinNotional)
 		auditParams := storage.RecordScaledOrderParams{
-			OrderId:           req.OrderId,
+			Identifier:        req.Identifier,
 			DealID:            req.OrderId.DealID,
 			BotID:             req.OrderId.BotID,
 			OriginalSize:      req.OriginalSize,
@@ -169,7 +171,7 @@ func (s *Service) Scale(ctx context.Context, req Request, order *hyperliquid.Cre
 	order.Size = roundedSize
 
 	auditParams := storage.RecordScaledOrderParams{
-		OrderId:           req.OrderId,
+		Identifier:        req.Identifier,
 		DealID:            req.OrderId.DealID,
 		BotID:             req.OrderId.BotID,
 		OriginalSize:      req.OriginalSize,
@@ -320,8 +322,8 @@ func evaluateStackCost(original, targets, sizes []float64) float64 {
 	return cost
 }
 
-// BuildRequest from a bot event + order.
-func BuildRequest(oid orderid.OrderId, evt tc.BotEvent, order hyperliquid.CreateOrderRequest) Request {
+// BuildRequest from a bot event + order + identifier.
+func BuildRequest(ident recomma.OrderIdentifier, evt tc.BotEvent, order hyperliquid.CreateOrderRequest) Request {
 	side := "sell"
 	if order.IsBuy {
 		side = "buy"
@@ -346,7 +348,8 @@ func BuildRequest(oid orderid.OrderId, evt tc.BotEvent, order hyperliquid.Create
 	}
 
 	return Request{
-		OrderId:      oid,
+		Identifier:   ident,
+		OrderId:      ident.OrderId,
 		Coin:         order.Coin,
 		Side:         side,
 		OriginalSize: size,

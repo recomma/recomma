@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -30,6 +32,7 @@ import (
 	"github.com/recomma/recomma/internal/origin"
 	"github.com/recomma/recomma/internal/vault"
 	rlog "github.com/recomma/recomma/log"
+	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
 	"github.com/recomma/recomma/webui"
@@ -79,6 +82,24 @@ func main() {
 	appCtx = rlog.ContextWithLogger(appCtx, logger)
 
 	streamController := api.NewStreamController(api.WithStreamLogger(logger))
+
+	// Parse system stream log level
+	systemLevel := api.SystemEventInfo // default
+	switch strings.ToLower(cfg.SystemStreamMinLevel) {
+	case "debug":
+		systemLevel = api.SystemEventDebug
+	case "info":
+		systemLevel = api.SystemEventInfo
+	case "warn", "warning":
+		systemLevel = api.SystemEventWarn
+	case "error":
+		systemLevel = api.SystemEventError
+	default:
+		slog.Warn("unknown system stream level, defaulting to info", slog.String("level", cfg.SystemStreamMinLevel))
+	}
+
+	systemStream := api.NewSystemStreamController(systemLevel)
+	systemStatus := api.NewSystemStatusTracker()
 
 	store, err := storage.New(cfg.StoragePath, storage.WithStreamPublisher(streamController))
 	if err != nil {
@@ -149,6 +170,8 @@ func main() {
 		api.WithVaultController(vaultController),
 		api.WithOrderScalerMaxMultiplier(cfg.OrderScalerMaxMultiplier),
 		api.WithDebugMode(debugEnabled),
+		api.WithSystemStream(systemStream),
+		api.WithSystemStatus(systemStatus),
 	)
 
 	strictServer := api.NewStrictHandler(apiHandler, []api.StrictMiddlewareFunc{
@@ -182,6 +205,8 @@ func main() {
 	rootMux.Handle("/api", apiHandlerWithCORS)
 	rootMux.Handle("/sse/", apiHandlerWithCORS)
 	rootMux.Handle("/sse", apiHandlerWithCORS)
+	rootMux.Handle("/stream/", apiHandlerWithCORS)
+	rootMux.Handle("/stream", apiHandlerWithCORS)
 	rootMux.Handle("/webauthn/", apiHandlerWithCORS)
 	rootMux.Handle("/vault/", apiHandlerWithCORS)
 	rootMux.Handle("/vault", apiHandlerWithCORS)
@@ -232,38 +257,252 @@ func main() {
 		fatal("vault secrets unavailable", errors.New("vault secrets unavailable"))
 	}
 
-	client, err := tc.New3CommasClient(tc.ClientConfig{
-		APIKey:     secrets.Secrets.THREECOMMASAPIKEY,
-		PrivatePEM: []byte(secrets.Secrets.THREECOMMASPRIVATEKEY),
-	},
-		tc.WithRequestEditorFn(func(ctx context.Context, r *http.Request) error {
-			slog.Default().WithGroup("threecommas").Debug("sending", "method", r.Method, "url", r.URL.String())
+	planTier, defaulted, err := recomma.ParseThreeCommasPlanTierOrDefault(secrets.Secrets.THREECOMMASPLANTIER)
+	if err != nil {
+		fatal("parse threecommas plan tier", err)
+	}
+	if defaulted {
+		logger.Warn("THREECOMMAS_PLAN_TIER missing from vault; defaulting to expert rate limits")
+	}
+
+	client, err := tc.New3CommasClient(
+		tc.WithAPIKey(secrets.Secrets.THREECOMMASAPIKEY),
+		tc.WithPrivatePEM([]byte(secrets.Secrets.THREECOMMASPRIVATEKEY)),
+		tc.WithPlanTier(planTier.SDKTier()),
+
+		tc.WithClientOption(tc.WithRequestEditorFn(func(ctx context.Context, r *http.Request) error {
+			slog.Default().WithGroup("threecommas").Debug("requesting", "method", r.Method, "url", r.URL.String())
 			return nil
-		}))
+		})),
+	)
 	if err != nil {
 		fatal("3commas client init failed", err)
 	}
 
-	exchange, err := hl.NewExchange(appCtx, hl.ClientConfig{
-		BaseURL: secrets.Secrets.HYPERLIQUIDURL,
-		Wallet:  secrets.Secrets.HYPERLIQUIDWALLET,
-		Key:     secrets.Secrets.HYPERLIQUIDPRIVATEKEY,
-	})
-	if err != nil {
-		fatal("Could not create Hyperliquid Exchange", err)
-	}
-
-	info := hl.NewInfo(appCtx, hl.ClientConfig{
-		BaseURL: secrets.Secrets.HYPERLIQUIDURL,
-		Wallet:  secrets.Secrets.HYPERLIQUIDWALLET,
-	})
-
-	constraints := hl.NewOrderIdCache(info)
-	scaler := orderscaler.New(store, constraints, logger, orderscaler.WithMaxMultiplier(cfg.OrderScalerMaxMultiplier))
-
 	fillTracker := filltracker.New(store, logger)
 
-	statusRefresher := hl.NewStatusRefresher(info, store,
+	rlOrders := workqueue.NewTypedMaxOfRateLimiter(
+		workqueue.NewTypedItemExponentialFailureRateLimiter[recomma.OrderWork](1*time.Second, 30*time.Second),
+	)
+	oqCfg := workqueue.TypedRateLimitingQueueConfig[recomma.OrderWork]{Name: "orders"}
+	oq := workqueue.NewTypedRateLimitingQueueWithConfig(rlOrders, oqCfg)
+	engineEmitter := emitter.NewQueueEmitter(oq)
+
+	primaryHyperliquid, ok := secrets.Secrets.PrimaryVenueByType("hyperliquid")
+	if !ok {
+		fatal("locate primary hyperliquid venue", errors.New("no primary hyperliquid venue configured"))
+	}
+
+	primaryVenueID := strings.TrimSpace(primaryHyperliquid.ID)
+	if primaryVenueID == "" {
+		fatal("load hyperliquid configuration", errors.New("primary hyperliquid venue missing identifier"))
+	}
+	primaryWallet := strings.TrimSpace(primaryHyperliquid.Wallet)
+	if primaryWallet == "" {
+		fatal("load hyperliquid configuration", errors.New("primary hyperliquid venue missing wallet"))
+	}
+	primaryAPIURL := strings.TrimSpace(primaryHyperliquid.APIURL)
+	if primaryAPIURL == "" {
+		fatal("load hyperliquid configuration", errors.New("primary hyperliquid venue missing api_url"))
+	}
+
+	defaultIdentifier := storage.DefaultHyperliquidIdentifier(orderid.OrderId{})
+	defaultHyperliquidIdent := defaultIdentifier.VenueID
+	defaultHyperliquidWallet := defaultIdentifier.Wallet
+
+	defaultVenueWallet := primaryWallet
+	if shouldUseSentinelDefaultHyperliquidWallet(
+		secrets.Secrets.Venues,
+		recomma.VenueID(primaryVenueID),
+		primaryWallet,
+		defaultHyperliquidIdent,
+	) {
+		defaultVenueWallet = ""
+	}
+	if err := store.EnsureDefaultVenueWallet(appCtx, defaultVenueWallet); err != nil {
+		fatal("update default venue wallet", err)
+	}
+
+	defaultAliasWallet := strings.TrimSpace(defaultVenueWallet)
+	if defaultAliasWallet == "" {
+		defaultAliasWallet = defaultHyperliquidWallet
+	}
+
+	defaultVenueConfigured := false
+	for _, venue := range secrets.Secrets.Venues {
+		if recomma.VenueID(strings.TrimSpace(venue.ID)) == defaultHyperliquidIdent {
+			defaultVenueConfigured = true
+			break
+		}
+	}
+
+	primaryIdent := recomma.VenueID(primaryVenueID)
+	shouldBootstrapDefaultWs := !defaultVenueConfigured && defaultHyperliquidIdent != "" && defaultHyperliquidIdent != primaryIdent && defaultAliasWallet != defaultHyperliquidWallet
+
+	statusClients := make(hl.StatusClientRegistry)
+	wsClients := make(map[recomma.VenueID]*ws.Client)
+	gateRegistry := make(map[rateGateKey]emitter.RateGate)
+	var venueOrder []recomma.VenueID
+	var venueClosers []func()
+
+	emitterLogger := logger.WithGroup("hyperliquid").WithGroup("emitter")
+	priceLogger := logger.WithGroup("hyperliquid").WithGroup("prices")
+	runtimeLogger := logger.WithGroup("hyperliquid")
+
+	var constraintsInfo *hl.Info
+
+	for _, venue := range secrets.Secrets.Venues {
+		if !strings.EqualFold(venue.Type, "hyperliquid") {
+			runtimeLogger.Warn("unsupported venue type in secrets", slog.String("venue", venue.ID), slog.String("type", venue.Type))
+			continue
+		}
+
+		venueID := strings.TrimSpace(venue.ID)
+		if venueID == "" {
+			fatal("load hyperliquid configuration", errors.New("hyperliquid venue missing identifier"))
+		}
+
+		wallet := strings.TrimSpace(venue.Wallet)
+		if wallet == "" {
+			fatal("load hyperliquid configuration", errors.New("hyperliquid venue missing wallet"))
+		}
+
+		displayName := strings.TrimSpace(venue.DisplayName)
+		if displayName == "" {
+			displayName = venueID
+		}
+
+		privateKey := strings.TrimSpace(venue.PrivateKey)
+		if privateKey == "" {
+			fatal("load hyperliquid configuration", errors.New("hyperliquid venue missing private key"))
+		}
+
+		apiURL := strings.TrimSpace(venue.APIURL)
+		if apiURL == "" {
+			apiURL = primaryAPIURL
+		}
+
+		venueIdent := recomma.VenueID(venueID)
+
+		payload := api.VenueUpsertRequest{
+			Type:        "hyperliquid",
+			DisplayName: displayName,
+			Wallet:      wallet,
+		}
+		if flags := decorateVenueFlags(venue.Flags, venue.Primary); flags != nil {
+			payload.Flags = &flags
+		}
+
+		if _, err := store.UpsertVenue(appCtx, venueID, payload); err != nil {
+			fatal("persist venue configuration", err)
+		}
+
+		exchange, err := hl.NewExchange(appCtx, hl.ClientConfig{
+			BaseURL: apiURL,
+			Wallet:  wallet,
+			Key:     privateKey,
+		})
+		if err != nil {
+			fatal("create hyperliquid exchange", err)
+		}
+
+		info := hl.NewInfo(appCtx, hl.ClientConfig{
+			BaseURL: apiURL,
+			Wallet:  wallet,
+		})
+		registerHyperliquidStatusClient(statusClients, info, venueIdent, primaryIdent, defaultHyperliquidIdent)
+		if constraintsInfo == nil || venueIdent == primaryIdent {
+			constraintsInfo = info
+		}
+
+		wsClient, err := ws.New(appCtx, store, fillTracker, venueIdent, wallet, apiURL)
+		if err != nil {
+			fatal("create hyperliquid websocket", err)
+		}
+		registerHyperliquidWsClient(wsClients, wsClient, venueIdent)
+		venueOrder = append(venueOrder, venueIdent)
+
+		client := wsClient
+		closeVenue := func() {
+			if err := client.Close(); err != nil {
+				runtimeLogger.Debug("websocket close failed", slog.String("venue", venueID), slog.String("error", err.Error()))
+			}
+		}
+		venueClosers = append(venueClosers, closeVenue)
+
+		gateKey := rateGateKey{venueType: strings.ToLower(venue.Type), wallet: strings.ToLower(wallet)}
+		gate, exists := gateRegistry[gateKey]
+		if !exists {
+			gate = emitter.NewRateGate(0)
+			gateRegistry[gateKey] = gate
+		}
+
+		submitter := emitter.NewHyperLiquidEmitter(exchange, venueIdent, wsClient, store,
+			emitter.WithHyperLiquidRateGate(gate),
+			emitter.WithHyperLiquidEmitterConfig(emitter.HyperLiquidEmitterConfig{
+				InitialIOCOffsetBps: cfg.HyperliquidIOCInitialOffsetBps,
+			}),
+			emitter.WithHyperLiquidEmitterLogger(emitterLogger.With(slog.String("venue", venueID), slog.String("wallet", wallet))),
+		)
+
+		if shouldBootstrapDefaultWs && venueIdent == primaryIdent {
+			aliasClient, err := ws.New(appCtx, store, fillTracker, defaultHyperliquidIdent, defaultAliasWallet, apiURL)
+			if err != nil {
+				fatal("create default hyperliquid websocket", err)
+			}
+			registerHyperliquidWsClient(wsClients, aliasClient, defaultHyperliquidIdent)
+			submitter.RegisterWsClient(defaultHyperliquidIdent, aliasClient)
+			statusClients[defaultHyperliquidIdent] = info
+
+			alias := aliasClient
+			venueClosers = append(venueClosers, func() {
+				if err := alias.Close(); err != nil {
+					runtimeLogger.Debug("websocket close failed", slog.String("venue", string(defaultHyperliquidIdent)), slog.String("error", err.Error()))
+				}
+			})
+
+			runtimeLogger.Info("default hyperliquid alias configured",
+				slog.String("venue", string(defaultHyperliquidIdent)),
+				slog.String("wallet", defaultAliasWallet),
+				slog.String("api_url", apiURL),
+			)
+		}
+
+		registerHyperliquidEmitter(engineEmitter, submitter, venueIdent, primaryIdent, defaultHyperliquidIdent)
+
+		runtimeLogger.Info("hyperliquid venue configured",
+			slog.String("venue", venueID),
+			slog.String("wallet", wallet),
+			slog.String("api_url", apiURL),
+			slog.Bool("primary", venue.Primary),
+		)
+	}
+
+	if len(statusClients) == 0 {
+		fatal("load hyperliquid configuration", errors.New("no hyperliquid venues configured"))
+	}
+
+	defer func() {
+		for _, closeFn := range venueClosers {
+			closeFn()
+		}
+	}()
+
+	if _, ok := statusClients[primaryIdent]; !ok {
+		fatal("load hyperliquid configuration", errors.New("primary hyperliquid venue missing from configuration"))
+	}
+	if constraintsInfo == nil {
+		fatal("load hyperliquid configuration", errors.New("unable to resolve constraints info client"))
+	}
+
+	if err := syncPrimaryVenueAssignments(appCtx, store, runtimeLogger, primaryIdent); err != nil {
+		fatal("sync primary venue assignments", err)
+	}
+
+	constraints := hl.NewOrderIdCache(constraintsInfo)
+	scaler := orderscaler.New(store, constraints, logger, orderscaler.WithMaxMultiplier(cfg.OrderScalerMaxMultiplier))
+
+	statusRefresher := hl.NewStatusRefresher(statusClients, store,
 		hl.WithStatusRefresherLogger(logger),
 		hl.WithStatusRefresherTracker(fillTracker),
 	)
@@ -275,19 +514,20 @@ func main() {
 		logger.Warn("fill tracker rebuild failed", slog.String("error", err.Error()))
 	}
 
-	ws, err := ws.New(appCtx, store, fillTracker, secrets.Secrets.HYPERLIQUIDWALLET, secrets.Secrets.HYPERLIQUIDURL)
-	if err != nil {
-		fatal("Could not create Hyperliquid websocket conn", err)
-	}
-	defer ws.Close()
-	api.WithHyperliquidPriceSource(ws)(apiHandler)
+	priceSource := newPriceSourceMultiplexer(priceLogger, primaryIdent, venueOrder, wsClients)
+	api.WithHyperliquidPriceSource(priceSource)(apiHandler)
 
-	logger.Info("Service ready", slog.String("baseurl", secrets.Secrets.HYPERLIQUIDURL))
+	logger.Info("Service ready",
+		slog.Int("hyperliquid_venues", len(statusClients)),
+		slog.String("primary_venue", string(primaryIdent)),
+	)
 
 	// Queue + workers
 	// Q creation (typed)
 	rl := workqueue.NewTypedMaxOfRateLimiter(
-		workqueue.NewTypedItemExponentialFailureRateLimiter[engine.WorkKey](1*time.Second, 30*time.Second), // backoff on failures
+		// Exponential backoff for retries. Max duration is 2 hours to accommodate
+		// 3Commas rate limit windows, which can be up to an hour or more when quota limits are hit.
+		workqueue.NewTypedItemExponentialFailureRateLimiter[engine.WorkKey](1*time.Second, 2*time.Hour),
 	)
 
 	config := workqueue.TypedRateLimitingQueueConfig[engine.WorkKey]{
@@ -296,13 +536,6 @@ func main() {
 
 	q := workqueue.NewTypedRateLimitingQueueWithConfig(rl, config)
 
-	rlOrders := workqueue.NewTypedMaxOfRateLimiter(
-		workqueue.NewTypedItemExponentialFailureRateLimiter[recomma.OrderWork](1*time.Second, 30*time.Second),
-	)
-	oqCfg := workqueue.TypedRateLimitingQueueConfig[recomma.OrderWork]{Name: "orders"}
-	oq := workqueue.NewTypedRateLimitingQueueWithConfig(rlOrders, oqCfg)
-
-	engineEmitter := emitter.NewQueueEmitter(oq)
 	api.WithOrderEmitter(engineEmitter)(apiHandler)
 	e := engine.NewEngine(client,
 		engine.WithStorage(store),
@@ -311,16 +544,10 @@ func main() {
 		engine.WithOrderScaler(scaler),
 	)
 
-	submitter := emitter.NewHyperLiquidEmitter(exchange, ws, store,
-		emitter.WithHyperLiquidEmitterConfig(emitter.HyperLiquidEmitterConfig{
-			InitialIOCOffsetBps: cfg.HyperliquidIOCInitialOffsetBps,
-		}),
-	)
-
 	var wg sync.WaitGroup
 	for i := 0; i < cfg.OrderWorkers; i++ {
 		wg.Add(1)
-		go runOrderWorker(workerCtx, &wg, oq, submitter)
+		go runOrderWorker(workerCtx, &wg, oq, engineEmitter)
 	}
 
 	for i := 0; i < cfg.DealWorkers; i++ {
@@ -331,13 +558,31 @@ func main() {
 	// Initial produce, then periodic re-enqueue by central resync
 	produceOnce := func(ctx context.Context) {
 		if err := e.ProduceActiveDeals(ctx, q); err != nil {
-			slog.Debug("ProduceActiveDeals returned error", slog.String("error", err.Error()))
+			slog.Error("ProduceActiveDeals returned error", slog.String("error", err.Error()))
+
+			// Publish error to UI via system stream
+			systemStream.Publish(api.SystemEvent{
+				Level:     api.SystemEventError,
+				Timestamp: time.Now().UTC(),
+				Source:    "3commas",
+				Message:   err.Error(),
+			})
+
+			// Track error for polling endpoint
+			systemStatus.SetThreeCommasError(err.Error())
+		} else {
+			systemStatus.ClearThreeCommasError()
 		}
 	}
 	produceOnce(appCtx)
 
 	reconcileTakeProfits := func(ctx context.Context) {
-		fillTracker.ReconcileTakeProfits(ctx, submitter)
+		fillTracker.ReconcileTakeProfits(ctx, engineEmitter)
+	}
+
+	cleanupStaleDeals := func() {
+		// Clean up deals that have been inactive for more than 1 hour and are fully complete
+		fillTracker.CleanupStaleDeals(time.Hour)
 	}
 
 	reconcileTakeProfits(appCtx)
@@ -347,6 +592,8 @@ func main() {
 	go func() {
 		ticker := time.NewTicker(resync)
 		defer ticker.Stop()
+		cleanupTicker := time.NewTicker(10 * time.Minute)
+		defer cleanupTicker.Stop()
 		for {
 			select {
 			case <-appCtx.Done():
@@ -360,6 +607,11 @@ func main() {
 				}
 				produceOnce(appCtx)
 				reconcileTakeProfits(appCtx)
+			case <-cleanupTicker.C:
+				if appCtx.Err() != nil {
+					return
+				}
+				cleanupStaleDeals()
 			}
 		}
 	}()
@@ -392,6 +644,194 @@ func main() {
 	slog.Debug("drained; fully shutdown")
 }
 
+type priceSourceMultiplexer struct {
+	logger  *slog.Logger
+	primary recomma.VenueID
+	order   []recomma.VenueID
+	sources map[recomma.VenueID]*ws.Client
+}
+
+func newPriceSourceMultiplexer(logger *slog.Logger, primary recomma.VenueID, order []recomma.VenueID, sources map[recomma.VenueID]*ws.Client) *priceSourceMultiplexer {
+	orderCopy := append([]recomma.VenueID(nil), order...)
+	sourceCopy := make(map[recomma.VenueID]*ws.Client, len(sources))
+	for id, src := range sources {
+		sourceCopy[id] = src
+	}
+	return &priceSourceMultiplexer{
+		logger:  logger,
+		primary: primary,
+		order:   orderCopy,
+		sources: sourceCopy,
+	}
+}
+
+func (m *priceSourceMultiplexer) SubscribeBBO(ctx context.Context, coin string) (<-chan hl.BestBidOffer, error) {
+	if len(m.sources) == 0 {
+		return nil, errors.New("no hyperliquid price sources configured")
+	}
+
+	var errs []error
+	try := func(id recomma.VenueID) (<-chan hl.BestBidOffer, bool) {
+		client, ok := m.sources[id]
+		if !ok || client == nil {
+			return nil, false
+		}
+		ch, err := client.SubscribeBBO(ctx, coin)
+		if err != nil {
+			if m.logger != nil {
+				m.logger.Warn("price subscription failed",
+					slog.String("venue", string(id)),
+					slog.String("coin", coin),
+					slog.String("error", err.Error()),
+				)
+			}
+			errs = append(errs, fmt.Errorf("%s: %w", id, err))
+			return nil, false
+		}
+		if m.logger != nil {
+			m.logger.Debug("price subscription registered",
+				slog.String("venue", string(id)),
+				slog.String("coin", coin),
+			)
+		}
+		return ch, true
+	}
+
+	if m.primary != "" {
+		if ch, ok := try(m.primary); ok {
+			return ch, nil
+		}
+	}
+
+	for _, id := range m.order {
+		if id == m.primary {
+			continue
+		}
+		if ch, ok := try(id); ok {
+			return ch, nil
+		}
+	}
+
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
+	return nil, errors.New("no hyperliquid price source available")
+}
+
+func decorateVenueFlags(src map[string]interface{}, isPrimary bool) map[string]interface{} {
+	flags := cloneVenueFlags(src)
+	if flags == nil && !isPrimary {
+		return nil
+	}
+	if flags == nil {
+		flags = make(map[string]interface{}, 1)
+	}
+	flags["is_primary"] = isPrimary
+	return flags
+}
+
+func shouldUseSentinelDefaultHyperliquidWallet(
+	venues []vault.VenueSecret,
+	primaryIdent recomma.VenueID,
+	primaryWallet string,
+	defaultIdent recomma.VenueID,
+) bool {
+	trimmedPrimary := strings.TrimSpace(primaryWallet)
+	if trimmedPrimary == "" {
+		return false
+	}
+	for _, venue := range venues {
+		if !strings.EqualFold(venue.Type, "hyperliquid") {
+			continue
+		}
+		venueID := recomma.VenueID(strings.TrimSpace(venue.ID))
+		if venueID == defaultIdent {
+			continue
+		}
+		if primaryIdent != "" && strings.EqualFold(string(venueID), string(primaryIdent)) {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(venue.Wallet), trimmedPrimary) {
+			return true
+		}
+	}
+	return false
+}
+
+func cloneVenueFlags(src map[string]interface{}) map[string]interface{} {
+	if len(src) == 0 {
+		if src == nil {
+			return nil
+		}
+		return map[string]interface{}{}
+	}
+	dst := make(map[string]interface{}, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+type rateGateKey struct {
+	venueType string
+	wallet    string
+}
+
+func syncPrimaryVenueAssignments(
+	ctx context.Context,
+	store *storage.Storage,
+	logger *slog.Logger,
+	primaryVenue recomma.VenueID,
+) error {
+	if primaryVenue == "" {
+		return nil
+	}
+
+	opts := api.ListBotsOptions{Limit: 100}
+	for {
+		bots, next, err := store.ListBots(ctx, opts)
+		if err != nil {
+			return fmt.Errorf("list bots: %w", err)
+		}
+		if len(bots) == 0 {
+			break
+		}
+
+		for _, bot := range bots {
+			botID := int64(bot.Bot.Id)
+			if botID <= 0 {
+				continue
+			}
+
+			hasPrimary, err := store.HasPrimaryVenueAssignment(ctx, uint32(botID))
+			if err != nil {
+				return fmt.Errorf("check primary venue for bot %d: %w", botID, err)
+			}
+			if hasPrimary {
+				continue
+			}
+
+			if _, err := store.UpsertVenueAssignment(ctx, string(primaryVenue), botID, true); err != nil {
+				return fmt.Errorf("assign primary venue for bot %d: %w", botID, err)
+			}
+
+			if logger != nil {
+				logger.Debug("assigned primary venue to bot",
+					slog.Int64("bot_id", botID),
+					slog.String("venue", string(primaryVenue)),
+				)
+			}
+		}
+
+		if next == nil || *next == "" {
+			break
+		}
+		opts.PageToken = *next
+	}
+
+	return nil
+}
+
 func runWorker(ctx context.Context, wg *sync.WaitGroup, q workqueue.TypedRateLimitingInterface[engine.WorkKey], e *engine.Engine) {
 	defer wg.Done()
 	for {
@@ -399,7 +839,10 @@ func runWorker(ctx context.Context, wg *sync.WaitGroup, q workqueue.TypedRateLim
 		if shutdown {
 			return
 		}
-		reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		// Use a longer timeout to accommodate 3Commas rate limiting.
+		// The SDK's internal rate limiter may need to wait for rate limit windows,
+		// which can be up to an hour or more when limits are exceeded.
+		reqCtx, cancel := context.WithTimeout(ctx, 2*time.Hour)
 		processWorkItem(reqCtx, q, e, wi)
 		cancel()
 	}
@@ -435,7 +878,7 @@ func runOrderWorker(
 	ctx context.Context,
 	wg *sync.WaitGroup,
 	oq workqueue.TypedRateLimitingInterface[recomma.OrderWork],
-	submitter recomma.Emitter,
+	dispatcher *emitter.QueueEmitter,
 ) {
 	defer wg.Done()
 	for {
@@ -444,7 +887,7 @@ func runOrderWorker(
 			return
 		}
 		reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		processOrderItem(reqCtx, oq, submitter, w)
+		processOrderItem(reqCtx, oq, dispatcher, w)
 		cancel()
 	}
 }
@@ -452,12 +895,12 @@ func runOrderWorker(
 func processOrderItem(
 	ctx context.Context,
 	oq workqueue.TypedRateLimitingInterface[recomma.OrderWork],
-	submitter recomma.Emitter,
+	dispatcher *emitter.QueueEmitter,
 	w recomma.OrderWork,
 ) {
 	logger := rlog.LoggerFromContext(ctx).With("order-work", w)
 	defer oq.Done(w)
-	if err := submitter.Emit(ctx, w); err != nil {
+	if err := dispatcher.Dispatch(ctx, w); err != nil {
 		if errors.Is(err, recomma.ErrOrderAlreadySatisfied) {
 			logger.Debug("order already satisfied; skipping submission")
 			oq.Forget(w)
@@ -466,6 +909,11 @@ func processOrderItem(
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			// Requeue with backoff so transient timeouts or global pacing don't drop work
 			oq.AddRateLimited(w)
+			return
+		}
+		if errors.Is(err, emitter.ErrMissingOrderIdentifier) || errors.Is(err, emitter.ErrUnregisteredVenueEmitter) || errors.Is(err, emitter.ErrOrderIdentifierMismatch) {
+			logger.Error("discarding order work", slog.String("reason", err.Error()))
+			oq.Forget(w)
 			return
 		}
 

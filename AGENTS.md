@@ -26,7 +26,7 @@
 ## Build & Tooling
 - Go toolchain: `go 1.25.0` (module is `github.com/recomma/recomma`).
 - Primary binary: `go build ./cmd/recomma` or `go run ./cmd/recomma --help`.
-- Codegen: `go generate` runs `oapi-codegen` (OpenAPI -> `internal/api/ops.gen.go`) and `sqlc` (SQL -> `storage/sqlcgen`).
+- Codegen: `go generate ./...` runs `oapi-codegen` (OpenAPI -> `internal/api/ops.gen.go`) and `sqlc` (SQL -> `storage/sqlcgen`).
 - Tests: `go test ./...` (notably in `engine`, `filltracker`, `storage`, `internal/api`).
 - Docker: multi-stage image builds a static binary; `docker-compose.yml` has dev vs. released image profiles.
 
@@ -97,7 +97,9 @@
 
 ## Commits
 Prefer smaller commits instead of one massive one. This allows to track the changes more easily.
-The author of the commit is yourself, not the user you do it for.
+Add a co-authored to the commit message, use your own verified email if present else agent@terwey.me
+
+   Co-authored-by: Your Name <agent@terwey.me>
 
 ### Commit Messages
 - All PR titles and commit messages must follow the Conventional Commits specification (https://www.conventionalcommits.org/).

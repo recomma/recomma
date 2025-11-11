@@ -9,6 +9,7 @@ import (
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	api "github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/orderid"
+	"github.com/recomma/recomma/recomma"
 	"github.com/stretchr/testify/require"
 )
 
@@ -179,9 +180,9 @@ func TestOrderScalerConfigEvents(t *testing.T) {
 		if evt.Type != api.OrderScalerConfigEntry {
 			continue
 		}
-		if evt.OrderId.BotID == 0 {
+		if evt.OrderID.BotID == 0 {
 			defaultEvt = evt
-		} else if evt.OrderId.BotID == botID {
+		} else if evt.OrderID.BotID == botID {
 			overrideEvt = evt
 		}
 	}
@@ -220,8 +221,9 @@ func TestRecordScaledOrderPublishesEvent(t *testing.T) {
 	require.NoError(t, err)
 
 	oid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
+	ident := recomma.NewOrderIdentifier("hyperliquid:default", "default", oid)
 	params := RecordScaledOrderParams{
-		OrderId:      oid,
+		Identifier:   ident,
 		DealID:       dealID,
 		BotID:        botID,
 		OriginalSize: 200.0,
@@ -281,8 +283,9 @@ func TestRecordScaledOrderUsesAppliedMultiplier(t *testing.T) {
 
 	applied := 1.5
 	oid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 7}
+	ident := recomma.NewOrderIdentifier("hyperliquid:default", "default", oid)
 	params := RecordScaledOrderParams{
-		OrderId:           oid,
+		Identifier:        ident,
 		DealID:            dealID,
 		BotID:             botID,
 		OriginalSize:      100.0,
@@ -336,12 +339,13 @@ func TestScaledOrderAuditHistory(t *testing.T) {
 	require.NoError(t, err)
 
 	oid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 101}
+	ident := recomma.NewOrderIdentifier("hyperliquid:default", "default", oid)
 	later := base.Add(2 * time.Second)
 	earlier := base.Add(1 * time.Second)
 	submittedID := "hl-order-1"
 
 	_, err = store.InsertScaledOrderAudit(ctx, ScaledOrderAuditParams{
-		OrderId:             oid,
+		Identifier:          ident,
 		DealID:              dealID,
 		BotID:               botID,
 		OriginalSize:        250.0,
@@ -356,7 +360,7 @@ func TestScaledOrderAuditHistory(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = store.InsertScaledOrderAudit(ctx, ScaledOrderAuditParams{
-		OrderId:             oid,
+		Identifier:          ident,
 		DealID:              dealID,
 		BotID:               botID,
 		OriginalSize:        125.0,
@@ -371,8 +375,9 @@ func TestScaledOrderAuditHistory(t *testing.T) {
 	require.NoError(t, err)
 
 	otherOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 202}
+	otherIdent := recomma.NewOrderIdentifier("hyperliquid:default", "default", otherOid)
 	audit3, err := store.InsertScaledOrderAudit(ctx, ScaledOrderAuditParams{
-		OrderId:             otherOid,
+		Identifier:          otherIdent,
 		DealID:              dealID,
 		BotID:               botID,
 		OriginalSize:        300.0,

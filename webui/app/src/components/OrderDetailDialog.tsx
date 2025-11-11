@@ -35,8 +35,10 @@ import {
   Code,
   ExternalLink,
   XCircle,
+  Wallet,
 } from 'lucide-react';
 import { buildOpsApiUrl } from '../config/opsApi';
+import { truncateWalletAddress } from '../lib/venue-utils';
 
 interface OrderDetailDialogProps {
   order: OrderRecord;
@@ -585,6 +587,39 @@ export function OrderDetailDialog({ order, open, onOpenChange }: OrderDetailDial
                     </div>
                   </Card>
                 )}
+
+                {/* Venue Information Card */}
+                <Card className="p-3">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Wallet className="h-4 w-4 text-green-600" />
+                    <h3 className="text-gray-900">Execution Venue</h3>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-gray-600">Venue ID:</span>
+                      <span className="text-gray-900 font-mono text-xs">{identifiers.venue_id}</span>
+                    </div>
+                    <div className="flex justify-between text-xs items-center">
+                      <span className="text-gray-600">Wallet:</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-900 font-mono text-xs">
+                          {truncateWalletAddress(identifiers.wallet)}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-5 px-1"
+                          onClick={() => navigator.clipboard.writeText(identifiers.wallet)}
+                        >
+                          <Code className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="text-xs text-gray-500 pt-1">
+                      Full address: <span className="font-mono">{identifiers.wallet}</span>
+                    </div>
+                  </div>
+                </Card>
               </div>
 
               <Card className="p-3">

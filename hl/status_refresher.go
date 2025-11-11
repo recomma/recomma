@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/recomma/recomma/orderid"
+	"github.com/recomma/recomma/recomma"
 	"github.com/sonirico/go-hyperliquid"
 	"golang.org/x/sync/errgroup"
 )
@@ -19,19 +19,22 @@ type orderStatusClient interface {
 }
 
 type statusStore interface {
-	ListHyperliquidOrderIds(ctx context.Context) ([]orderid.OrderId, error)
-	RecordHyperliquidStatus(ctx context.Context, oid orderid.OrderId, status hyperliquid.WsOrder) error
+	ListHyperliquidOrderIds(ctx context.Context) ([]recomma.OrderIdentifier, error)
+	RecordHyperliquidStatus(ctx context.Context, ident recomma.OrderIdentifier, status hyperliquid.WsOrder) error
 }
 
 type statusTracker interface {
-	UpdateStatus(ctx context.Context, oid orderid.OrderId, status hyperliquid.WsOrder) error
+	UpdateStatus(ctx context.Context, ident recomma.OrderIdentifier, status hyperliquid.WsOrder) error
 }
+
+// StatusClientRegistry maps venue identifiers to Hyperliquid info clients.
+type StatusClientRegistry map[recomma.VenueID]orderStatusClient
 
 // StatusRefresher pulls the latest Hyperliquid order status for stored
 // submissions and mirrors the results into the local database. This is useful
 // on startup after downtime to catch up on statuses we missed while offline.
 type StatusRefresher struct {
-	client         orderStatusClient
+	clients        map[recomma.VenueID]orderStatusClient
 	store          statusStore
 	tracker        statusTracker
 	logger         *slog.Logger
@@ -77,9 +80,14 @@ func WithStatusRefresherTimeout(d time.Duration) StatusRefresherOption {
 
 // NewStatusRefresher constructs a new refresher. The client is typically
 // an *hl.Info instance.
-func NewStatusRefresher(client orderStatusClient, store statusStore, opts ...StatusRefresherOption) *StatusRefresher {
+func NewStatusRefresher(clients StatusClientRegistry, store statusStore, opts ...StatusRefresherOption) *StatusRefresher {
+	clientMap := make(map[recomma.VenueID]orderStatusClient)
+	for k, v := range clients {
+		clientMap[k] = v
+	}
+
 	refresher := &StatusRefresher{
-		client:         client,
+		clients:        clientMap,
 		store:          store,
 		logger:         slog.Default().WithGroup("hyperliquid").WithGroup("status-refresh"),
 		maxConcurrency: 4,
@@ -101,18 +109,18 @@ func NewStatusRefresher(client orderStatusClient, store statusStore, opts ...Sta
 // and stores the latest status. The returned error aggregates any failures that
 // occurred while refreshing; success for the remaining orders is best-effort.
 func (r *StatusRefresher) Refresh(ctx context.Context) error {
-	if r.client == nil {
-		return errors.New("status refresher requires a Hyperliquid info client")
+	if len(r.clients) == 0 {
+		return errors.New("status refresher requires at least one Hyperliquid info client")
 	}
 	if r.store == nil {
 		return errors.New("status refresher requires storage")
 	}
 
-	oids, err := r.store.ListHyperliquidOrderIds(ctx)
+	idents, err := r.store.ListHyperliquidOrderIds(ctx)
 	if err != nil {
 		return fmt.Errorf("list hyperliquid orderids: %w", err)
 	}
-	if len(oids) == 0 {
+	if len(idents) == 0 {
 		return nil
 	}
 
@@ -124,16 +132,23 @@ func (r *StatusRefresher) Refresh(ctx context.Context) error {
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(r.maxConcurrency)
 
-	for _, oid := range oids {
-		oid := oid
+	for _, ident := range idents {
+		ident := ident
 		g.Go(func() error {
+			client, ok := r.clients[ident.VenueID]
+			if !ok {
+				if r.logger != nil {
+					r.logger.Warn("no status client for venue", slog.String("venue", ident.Venue()))
+				}
+				return nil
+			}
 			callCtx := gctx
 			if r.timeout > 0 {
 				var cancel context.CancelFunc
 				callCtx, cancel = context.WithTimeout(gctx, r.timeout)
 				defer cancel()
 			}
-			ok, refreshErr := r.refreshOne(callCtx, oid)
+			ok, refreshErr := r.refreshOne(callCtx, client, ident)
 			if refreshErr != nil {
 				errsMu.Lock()
 				errs = append(errs, refreshErr)
@@ -151,7 +166,7 @@ func (r *StatusRefresher) Refresh(ctx context.Context) error {
 
 	if r.logger != nil {
 		r.logger.Info("refreshed hyperliquid statuses",
-			slog.Int("oids", len(oids)),
+			slog.Int("metadata", len(idents)),
 			slog.Int("updated", int(updated.Load())),
 			slog.Duration("elapsed", time.Since(start)))
 	}
@@ -162,41 +177,41 @@ func (r *StatusRefresher) Refresh(ctx context.Context) error {
 	return nil
 }
 
-func (r *StatusRefresher) refreshOne(ctx context.Context, oid orderid.OrderId) (bool, error) {
-	result, err := r.client.QueryOrderByCloid(ctx, oid.Hex())
+func (r *StatusRefresher) refreshOne(ctx context.Context, client orderStatusClient, ident recomma.OrderIdentifier) (bool, error) {
+	result, err := client.QueryOrderByCloid(ctx, ident.Hex())
 	if err != nil {
 		if r.logger != nil {
 			r.logger.Warn("failed to query order status",
-				slog.String("orderid", oid.Hex()),
+				slog.String("oid", ident.Hex()),
 				slog.String("error", err.Error()))
 		}
-		return false, fmt.Errorf("query order %s: %w", oid.Hex(), err)
+		return false, fmt.Errorf("query order %s: %w", ident.Hex(), err)
 	}
 	if result == nil {
-		return false, fmt.Errorf("query order %s returned nil result", oid.Hex())
+		return false, fmt.Errorf("query order %s returned nil result", ident.Hex())
 	}
 
-	wsOrder, err := orderResultToWsOrder(oid, result)
+	wsOrder, err := orderResultToWsOrder(ident.OrderId, result)
 	if err != nil {
-		return false, fmt.Errorf("convert order %s: %w", oid.Hex(), err)
+		return false, fmt.Errorf("convert order %s: %w", ident.Hex(), err)
 	}
 	if wsOrder == nil {
 		if r.logger != nil {
 			r.logger.Debug("order status unavailable",
-				slog.String("orderid", oid.Hex()),
+				slog.String("oid", ident.Hex()),
 				slog.String("query_status", string(result.Status)))
 		}
 		return false, nil
 	}
 
-	if err := r.store.RecordHyperliquidStatus(ctx, oid, *wsOrder); err != nil {
-		return false, fmt.Errorf("record status %s: %w", oid.Hex(), err)
+	if err := r.store.RecordHyperliquidStatus(ctx, ident, *wsOrder); err != nil {
+		return false, fmt.Errorf("record status %s: %w", ident.Hex(), err)
 	}
 
 	if r.tracker != nil {
-		if err := r.tracker.UpdateStatus(ctx, oid, *wsOrder); err != nil && r.logger != nil {
+		if err := r.tracker.UpdateStatus(ctx, ident, *wsOrder); err != nil && r.logger != nil {
 			r.logger.Warn("fill tracker update failed",
-				slog.String("orderid", oid.Hex()),
+				slog.String("oid", ident.Hex()),
 				slog.String("error", err.Error()))
 		}
 	}

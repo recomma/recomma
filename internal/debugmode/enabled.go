@@ -11,15 +11,17 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/recomma/recomma/internal/vault"
+	"github.com/recomma/recomma/recomma"
 )
 
 const (
-	envDebugThreeCommasAPIKey  = "RECOMMA_DEBUG_THREECOMMAS_API_KEY"
-	envDebugThreeCommasSecret  = "RECOMMA_DEBUG_THREECOMMAS_PRIVATE_KEY"
-	envDebugHyperliquidWallet  = "RECOMMA_DEBUG_HYPERLIQUID_WALLET"
-	envDebugHyperliquidKey     = "RECOMMA_DEBUG_HYPERLIQUID_PRIVATE_KEY"
-	envDebugHyperliquidBaseURL = "RECOMMA_DEBUG_HYPERLIQUID_URL"
-	debugUserUsername          = "debug"
+	envDebugThreeCommasAPIKey   = "RECOMMA_DEBUG_THREECOMMAS_API_KEY"
+	envDebugThreeCommasSecret   = "RECOMMA_DEBUG_THREECOMMAS_PRIVATE_KEY"
+	envDebugThreeCommasPlanTier = "RECOMMA_DEBUG_THREECOMMAS_PLAN_TIER"
+	envDebugHyperliquidWallet   = "RECOMMA_DEBUG_HYPERLIQUID_WALLET"
+	envDebugHyperliquidKey      = "RECOMMA_DEBUG_HYPERLIQUID_PRIVATE_KEY"
+	envDebugHyperliquidBaseURL  = "RECOMMA_DEBUG_HYPERLIQUID_URL"
+	debugUserUsername           = "debug"
 )
 
 // Available reports whether the binary includes debug mode helpers.
@@ -52,6 +54,11 @@ func LoadSecretsFromEnv() (*vault.Secrets, error) {
 	if err != nil {
 		return nil, err
 	}
+	planTierValue := strings.TrimSpace(os.Getenv(envDebugThreeCommasPlanTier))
+	planTier, _, err := recomma.ParseThreeCommasPlanTierOrDefault(planTierValue)
+	if err != nil {
+		return nil, fmt.Errorf("%s invalid: %w", envDebugThreeCommasPlanTier, err)
+	}
 	hyperliquidWallet, err := lookup(envDebugHyperliquidWallet)
 	if err != nil {
 		return nil, err
@@ -75,9 +82,18 @@ func LoadSecretsFromEnv() (*vault.Secrets, error) {
 		Secrets: vault.Data{
 			THREECOMMASAPIKEY:     threeCommasAPIKey,
 			THREECOMMASPRIVATEKEY: threeCommasPrivateKey,
-			HYPERLIQUIDWALLET:     hyperliquidWallet,
-			HYPERLIQUIDPRIVATEKEY: hyperliquidPrivateKey,
-			HYPERLIQUIDURL:        hyperliquidURL,
+			THREECOMMASPLANTIER:   string(planTier),
+			Venues: []vault.VenueSecret{
+				{
+					ID:          "hyperliquid:default",
+					Type:        "hyperliquid",
+					DisplayName: "Default Hyperliquid Venue",
+					Wallet:      hyperliquidWallet,
+					PrivateKey:  hyperliquidPrivateKey,
+					APIURL:      hyperliquidURL,
+					Primary:     true,
+				},
+			},
 		},
 		ReceivedAt: now,
 	}

@@ -133,6 +133,13 @@ const (
 	ThreeCommasLogEntryTypeThreeCommasEvent      ThreeCommasLogEntryType = "three_commas_event"
 )
 
+// Defines values for VaultSecretsBundleSecretsTHREECOMMASPLANTIER.
+const (
+	Expert  VaultSecretsBundleSecretsTHREECOMMASPLANTIER = "expert"
+	Pro     VaultSecretsBundleSecretsTHREECOMMASPLANTIER = "pro"
+	Starter VaultSecretsBundleSecretsTHREECOMMASPLANTIER = "starter"
+)
+
 // Defines values for VaultState.
 const (
 	Sealed        VaultState = "sealed"
@@ -642,21 +649,33 @@ type VaultEncryptedPayload struct {
 
 // VaultSecretsBundle JSON structure encrypted during setup and supplied in plaintext when unsealing the vault.
 type VaultSecretsBundle struct {
-	NotSecret struct {
-		// Username Logical username mirrored inside the plaintext payload.
-		Username string `json:"username"`
-	} `json:"not_secret"`
-	Secrets struct {
-		// THREECOMMASAPIKEY Public API key for the 3Commas integration.
-		THREECOMMASAPIKEY string `json:"THREECOMMAS_API_KEY"`
-
-		// THREECOMMASPRIVATEKEY Private API key for the 3Commas integration.
-		THREECOMMASPRIVATEKEY string `json:"THREECOMMAS_PRIVATE_KEY"`
-
-		// Venues Collection of venue credentials encrypted within the vault.
-		Venues []VaultVenueSecret `json:"venues"`
-	} `json:"secrets"`
+	NotSecret VaultSecretsBundleNotSecret `json:"not_secret"`
+	Secrets   VaultSecretsBundleSecrets   `json:"secrets"`
 }
+
+// VaultSecretsBundleNotSecret defines model for VaultSecretsBundleNotSecret.
+type VaultSecretsBundleNotSecret struct {
+	// Username Logical username mirrored inside the plaintext payload.
+	Username string `json:"username"`
+}
+
+// VaultSecretsBundleSecrets defines model for VaultSecretsBundleSecrets.
+type VaultSecretsBundleSecrets struct {
+	// THREECOMMASAPIKEY Public API key for the 3Commas integration.
+	THREECOMMASAPIKEY string `json:"THREECOMMAS_API_KEY"`
+
+	// THREECOMMASPLANTIER Subscription tier for the 3Commas client rate limits.
+	THREECOMMASPLANTIER VaultSecretsBundleSecretsTHREECOMMASPLANTIER `json:"THREECOMMAS_PLAN_TIER"`
+
+	// THREECOMMASPRIVATEKEY Private API key for the 3Commas integration.
+	THREECOMMASPRIVATEKEY string `json:"THREECOMMAS_PRIVATE_KEY"`
+
+	// Venues Collection of venue credentials encrypted within the vault.
+	Venues []VaultVenueSecret `json:"venues"`
+}
+
+// VaultSecretsBundleSecretsTHREECOMMASPLANTIER Subscription tier for the 3Commas client rate limits.
+type VaultSecretsBundleSecretsTHREECOMMASPLANTIER string
 
 // VaultSetupRequest defines model for VaultSetupRequest.
 type VaultSetupRequest struct {

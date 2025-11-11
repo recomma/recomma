@@ -642,18 +642,8 @@ export interface components {
         };
         /** @description JSON structure encrypted during setup and supplied in plaintext when unsealing the vault. */
         VaultSecretsBundle: {
-            not_secret: {
-                /** @description Logical username mirrored inside the plaintext payload. */
-                username: string;
-            };
-            secrets: {
-                /** @description Public API key for the 3Commas integration. */
-                THREECOMMAS_API_KEY: string;
-                /** @description Private API key for the 3Commas integration. */
-                THREECOMMAS_PRIVATE_KEY: string;
-                /** @description Collection of venue credentials encrypted within the vault. */
-                venues: components["schemas"]["VaultVenueSecret"][];
-            };
+            not_secret: components["schemas"]["VaultSecretsBundleNotSecret"];
+            secrets: components["schemas"]["VaultSecretsBundleSecrets"];
         };
         VaultVenueSecret: {
             /** @description Unique identifier for the venue. */
@@ -1183,6 +1173,23 @@ export interface components {
             details?: {
                 [key: string]: unknown;
             } | null;
+        };
+        VaultSecretsBundleNotSecret: {
+            /** @description Logical username mirrored inside the plaintext payload. */
+            username: string;
+        };
+        VaultSecretsBundleSecrets: {
+            /** @description Public API key for the 3Commas integration. */
+            THREECOMMAS_API_KEY: string;
+            /** @description Private API key for the 3Commas integration. */
+            THREECOMMAS_PRIVATE_KEY: string;
+            /**
+             * @description Subscription tier for the 3Commas client rate limits.
+             * @enum {string}
+             */
+            THREECOMMAS_PLAN_TIER: "starter" | "pro" | "expert";
+            /** @description Collection of venue credentials encrypted within the vault. */
+            venues: components["schemas"]["VaultVenueSecret"][];
         };
         /**
          * @description Trading pair(s) in 3Commas format.

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/recomma/recomma/internal/vault"
+	"github.com/recomma/recomma/recomma"
 )
 
 const (
@@ -558,6 +559,15 @@ func buildSecretsBundle(bundle VaultSecretsBundle, now time.Time) (vault.Secrets
 		return vault.Secrets{}, errors.New("missing required secret fields")
 	}
 
+	planTierRaw := strings.TrimSpace(string(bundle.Secrets.THREECOMMASPLANTIER))
+	if planTierRaw == "" {
+		return vault.Secrets{}, errors.New("missing required secret field 'THREECOMMAS_PLAN_TIER'")
+	}
+	planTier, err := recomma.ParseThreeCommasPlanTier(planTierRaw)
+	if err != nil {
+		return vault.Secrets{}, err
+	}
+
 	if len(bundle.Secrets.Venues) == 0 {
 		return vault.Secrets{}, errors.New("vault secrets require at least one venue")
 	}
@@ -566,6 +576,7 @@ func buildSecretsBundle(bundle VaultSecretsBundle, now time.Time) (vault.Secrets
 	normalized.NotSecret.Username = username
 	normalized.Secrets.THREECOMMASAPIKEY = threeCommasKey
 	normalized.Secrets.THREECOMMASPRIVATEKEY = threeCommasSecret
+	normalized.Secrets.THREECOMMASPLANTIER = VaultSecretsBundleSecretsTHREECOMMASPLANTIER(planTier)
 	normalized.Secrets.Venues = make([]VaultVenueSecret, 0, len(bundle.Secrets.Venues))
 
 	venues := make([]vault.VenueSecret, 0, len(bundle.Secrets.Venues))
@@ -651,6 +662,7 @@ func buildSecretsBundle(bundle VaultSecretsBundle, now time.Time) (vault.Secrets
 		Secrets: vault.Data{
 			THREECOMMASAPIKEY:     threeCommasKey,
 			THREECOMMASPRIVATEKEY: threeCommasSecret,
+			THREECOMMASPLANTIER:   string(planTier),
 			Venues:                venues,
 		},
 		Raw:        raw,

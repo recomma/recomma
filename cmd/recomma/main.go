@@ -257,14 +257,19 @@ func main() {
 		fatal("vault secrets unavailable", errors.New("vault secrets unavailable"))
 	}
 
-	client, err := tc.New3CommasClient(tc.ClientConfig{
-		APIKey:     secrets.Secrets.THREECOMMASAPIKEY,
-		PrivatePEM: []byte(secrets.Secrets.THREECOMMASPRIVATEKEY),
-	},
-		tc.WithRequestEditorFn(func(ctx context.Context, r *http.Request) error {
-			slog.Default().WithGroup("threecommas").Debug("sending", "method", r.Method, "url", r.URL.String())
-			return nil
-		}))
+	planTier, defaulted, err := recomma.ParseThreeCommasPlanTierOrDefault(secrets.Secrets.THREECOMMASPLANTIER)
+	if err != nil {
+		fatal("parse threecommas plan tier", err)
+	}
+	if defaulted {
+		logger.Warn("THREECOMMAS_PLAN_TIER missing from vault; defaulting to expert rate limits")
+	}
+
+	client, err := tc.New3CommasClient(
+		tc.WithAPIKey(secrets.Secrets.THREECOMMASAPIKEY),
+		tc.WithPrivatePEM([]byte(secrets.Secrets.THREECOMMASPRIVATEKEY)),
+		tc.WithPlanTier(planTier.SDKTier()),
+	)
 	if err != nil {
 		fatal("3commas client init failed", err)
 	}

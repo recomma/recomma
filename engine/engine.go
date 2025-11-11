@@ -14,6 +14,7 @@ import (
 	"github.com/recomma/recomma/engine/orderscaler"
 	"github.com/recomma/recomma/filltracker"
 	"github.com/recomma/recomma/orderid"
+	"github.com/recomma/recomma/ratelimit"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
 	"golang.org/x/sync/errgroup"
@@ -37,12 +38,14 @@ type Queue interface {
 }
 
 type Engine struct {
-	client  ThreeCommasAPI
-	store   *storage.Storage
-	emitter recomma.Emitter
-	logger  *slog.Logger
-	tracker *filltracker.Service
-	scaler  *orderscaler.Service
+	client             ThreeCommasAPI
+	store              *storage.Storage
+	emitter            recomma.Emitter
+	logger             *slog.Logger
+	tracker            *filltracker.Service
+	scaler             *orderscaler.Service
+	limiter            *ratelimit.Limiter
+	produceConcurrency int
 }
 
 type EngineOption func(*Engine)
@@ -71,10 +74,23 @@ func WithOrderScaler(scaler *orderscaler.Service) EngineOption {
 	}
 }
 
+func WithRateLimiter(limiter *ratelimit.Limiter) EngineOption {
+	return func(h *Engine) {
+		h.limiter = limiter
+	}
+}
+
+func WithProduceConcurrency(concurrency int) EngineOption {
+	return func(h *Engine) {
+		h.produceConcurrency = concurrency
+	}
+}
+
 func NewEngine(client ThreeCommasAPI, opts ...EngineOption) *Engine {
 	e := &Engine{
-		client: client,
-		logger: slog.Default().WithGroup("engine"),
+		client:             client,
+		logger:             slog.Default().WithGroup("engine"),
+		produceConcurrency: 32, // Default to current behavior
 	}
 
 	for _, opt := range opts {
@@ -85,6 +101,27 @@ func NewEngine(client ThreeCommasAPI, opts ...EngineOption) *Engine {
 }
 
 func (e *Engine) ProduceActiveDeals(ctx context.Context, q Queue) error {
+	// Rate limiting workflow: Reserve → Consume → AdjustDown → SignalComplete → Release
+	workflowID := "produce:all-bots"
+
+	// If rate limiter is configured, use the reservation pattern
+	if e.limiter != nil {
+		// Get current stats to determine pessimistic reservation
+		_, limit, _, _ := e.limiter.Stats()
+
+		// Reserve entire quota pessimistically (we don't know how many bots yet)
+		if err := e.limiter.Reserve(ctx, workflowID, limit); err != nil {
+			return fmt.Errorf("rate limit reserve: %w", err)
+		}
+
+		// Ensure we release the reservation even if there's an error
+		defer e.limiter.Release(workflowID)
+		defer e.limiter.SignalComplete(workflowID)
+	}
+
+	// Add workflow ID to context for consumption tracking
+	ctx = ratelimit.WithWorkflowID(ctx, workflowID)
+
 	// Producer: list enabled bots → list deals per bot → enqueue each deal (by comparable key)
 	bots, err := e.client.ListBots(ctx, tc.WithScopeForListBots(tc.Enabled))
 	if err != nil {
@@ -98,9 +135,18 @@ func (e *Engine) ProduceActiveDeals(ctx context.Context, q Queue) error {
 
 	e.logger.Info("Checking for new deals from bots", slog.Int("bots", len(bots)))
 
-	// Fetch deals per bot concurrently with a reasonable cap.
+	// Now we know how many bots we have, adjust down the reservation
+	// We need: 1 (ListBots) + len(bots) (GetListOfDeals per bot)
+	if e.limiter != nil {
+		neededSlots := 1 + len(bots)
+		if err := e.limiter.AdjustDown(workflowID, neededSlots); err != nil {
+			e.logger.Warn("rate limit adjust down failed", slog.String("error", err.Error()))
+		}
+	}
+
+	// Fetch deals per bot concurrently with tier-specific concurrency cap
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(32)
+	g.SetLimit(e.produceConcurrency)
 
 	for _, bot := range bots {
 		b := bot // capture loop var
@@ -186,10 +232,35 @@ func (e *Engine) HandleDeal(ctx context.Context, wi WorkKey) error {
 		return nil
 	}
 
+	// Rate limiting workflow: Reserve → Consume → AdjustDown → SignalComplete → Release
+	workflowID := fmt.Sprintf("deal:%d:%d", wi.DealID, wi.BotID)
+
+	// If rate limiter is configured, use the reservation pattern
+	if e.limiter != nil {
+		// Reserve conservatively: 1 for GetDealForID + 1 buffer for potential future calls
+		if err := e.limiter.Reserve(ctx, workflowID, 2); err != nil {
+			return fmt.Errorf("rate limit reserve: %w", err)
+		}
+
+		// Ensure we release the reservation even if there's an error
+		defer e.limiter.Release(workflowID)
+		defer e.limiter.SignalComplete(workflowID)
+	}
+
+	// Add workflow ID to context for consumption tracking
+	ctx = ratelimit.WithWorkflowID(ctx, workflowID)
+
 	deal, err := e.client.GetDealForID(ctx, tc.DealPathId(dealID))
 	if err != nil {
 		logger.Warn("error on getting deal", slog.String("error", err.Error()))
 		return err
+	}
+
+	// Adjust down to actual consumption (only needed 1 slot)
+	if e.limiter != nil {
+		if err := e.limiter.AdjustDown(workflowID, 1); err != nil {
+			logger.Warn("rate limit adjust down failed", slog.String("error", err.Error()))
+		}
 	}
 
 	return e.processDeal(ctx, wi, deal.ToCurrency, deal.Events())

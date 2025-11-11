@@ -82,6 +82,9 @@ type Data struct {
 
 	// THREECOMMASPRIVATEKEY Private API key for the 3Commas integration.
 	THREECOMMASPRIVATEKEY string
+
+	// THREECOMMASPLANTIER Plan tier for 3Commas rate limiting (starter, pro, expert).
+	THREECOMMASPLANTIER string
 }
 
 // Clone returns a deep copy of the Secrets instance.

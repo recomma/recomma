@@ -30,6 +30,7 @@ import (
 	"github.com/recomma/recomma/internal/origin"
 	"github.com/recomma/recomma/internal/vault"
 	rlog "github.com/recomma/recomma/log"
+	"github.com/recomma/recomma/ratelimit"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
 	"github.com/recomma/recomma/webui"
@@ -232,7 +233,38 @@ func main() {
 		fatal("vault secrets unavailable", errors.New("vault secrets unavailable"))
 	}
 
-	client, err := tc.New3CommasClient(tc.ClientConfig{
+	// Parse ThreeCommas plan tier for rate limiting configuration
+	planTier, defaulted, err := recomma.ParseThreeCommasPlanTierOrDefault(secrets.Secrets.THREECOMMASPLANTIER)
+	if err != nil {
+		fatal("parse threecommas plan tier", err)
+	}
+	if defaulted {
+		logger.Warn("THREECOMMAS_PLAN_TIER missing from vault; defaulting to expert rate limits")
+	}
+
+	// Get tier-specific rate limit configuration
+	rateLimitCfg := planTier.RateLimitConfig()
+
+	// Override configuration with tier-specific values (unless explicitly set by user)
+	cfg.DealWorkers = rateLimitCfg.DealWorkers
+	cfg.ResyncInterval = rateLimitCfg.ResyncInterval
+
+	logger.Info("Rate limiting configured",
+		slog.String("tier", string(planTier)),
+		slog.Int("requests_per_minute", rateLimitCfg.RequestsPerMinute),
+		slog.Int("deal_workers", cfg.DealWorkers),
+		slog.Duration("resync_interval", cfg.ResyncInterval),
+	)
+
+	// Create rate limiter
+	limiter := ratelimit.NewLimiter(ratelimit.Config{
+		RequestsPerMinute: rateLimitCfg.RequestsPerMinute,
+		PrioritySlots:     rateLimitCfg.PrioritySlots,
+		Logger:            logger,
+	})
+
+	// Create ThreeCommas client
+	baseClient, err := tc.New3CommasClient(tc.ClientConfig{
 		APIKey:     secrets.Secrets.THREECOMMASAPIKEY,
 		PrivatePEM: []byte(secrets.Secrets.THREECOMMASPRIVATEKEY),
 	},
@@ -243,6 +275,9 @@ func main() {
 	if err != nil {
 		fatal("3commas client init failed", err)
 	}
+
+	// Wrap client with rate limiter
+	client := ratelimit.NewClient(baseClient, limiter)
 
 	exchange, err := hl.NewExchange(appCtx, hl.ClientConfig{
 		BaseURL: secrets.Secrets.HYPERLIQUIDURL,
@@ -309,6 +344,8 @@ func main() {
 		engine.WithEmitter(engineEmitter),
 		engine.WithFillTracker(fillTracker),
 		engine.WithOrderScaler(scaler),
+		engine.WithRateLimiter(limiter),
+		engine.WithProduceConcurrency(rateLimitCfg.ProduceConcurrency),
 	)
 
 	submitter := emitter.NewHyperLiquidEmitter(exchange, ws, store,

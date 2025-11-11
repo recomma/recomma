@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
@@ -237,7 +238,9 @@ func main() {
 		PrivatePEM: []byte(secrets.Secrets.THREECOMMASPRIVATEKEY),
 	},
 		tc.WithRequestEditorFn(func(ctx context.Context, r *http.Request) error {
-			slog.Default().WithGroup("threecommas").Debug("sending", "method", r.Method, "url", r.URL.String())
+			// Log to both stderr (for guaranteed visibility) and slog
+			fmt.Fprintf(os.Stderr, "[3COMMAS] %s %s\n", r.Method, r.URL.String())
+			logger.WithGroup("threecommas").Debug("request", "method", r.Method, "url", r.URL.String())
 			return nil
 		}))
 	if err != nil {

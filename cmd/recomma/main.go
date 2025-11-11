@@ -269,6 +269,11 @@ func main() {
 		tc.WithAPIKey(secrets.Secrets.THREECOMMASAPIKEY),
 		tc.WithPrivatePEM([]byte(secrets.Secrets.THREECOMMASPRIVATEKEY)),
 		tc.WithPlanTier(planTier.SDKTier()),
+
+		tc.WithClientOption(tc.WithRequestEditorFn(func(ctx context.Context, r *http.Request) error {
+			slog.Default().WithGroup("threecommas").Debug("requesting", "method", r.Method, "url", r.URL.String())
+			return nil
+		})),
 	)
 	if err != nil {
 		fatal("3commas client init failed", err)

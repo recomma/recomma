@@ -80,8 +80,8 @@ The SDK cannot coordinate *before* requests are made - it only reacts *at* the H
 
 The solution must handle:
 
-- *Starter tier*: 2 bots, 5 deals ’ 8 total requests with 5 req/min quota
-- *Expert tier*: 1000 bots (max allowed), 1000 deals (max allowed) ’ 2001 requests with 120 req/min quota
+- *Starter tier*: 2 bots, 5 deals ï¿½ 8 total requests with 5 req/min quota
+- *Expert tier*: 1000 bots (max allowed), 1000 deals (max allowed) ï¿½ 2001 requests with 120 req/min quota
 
 == Core Design: Workflow Reservation System
 
@@ -95,13 +95,13 @@ The rate limiter operates as a gatekeeper that serializes workflow execution thr
 
 ```
 Reserve (pessimistic)
-  “
+  ï¿½
 Consume (as API calls are made)
-  “
+  ï¿½
 AdjustDown (when actual needs known)
-  “
+  ï¿½
 SignalComplete (no more API calls)
-  “
+  ï¿½
 Release (free reservation)
 ```
 
@@ -147,8 +147,8 @@ Workflows signal when they will make no further API calls. This is distinct from
 Request N slots for a workflow. Blocks until granted or context cancelled.
 
 Behavior:
-1. If no active reservation and window has capacity ’ grant immediately
-2. If active reservation exists ’ add to wait queue and block
+1. If no active reservation and window has capacity ï¿½ grant immediately
+2. If active reservation exists ï¿½ add to wait queue and block
 3. When window resets, recalculate capacity before granting
 4. FIFO ordering ensures fairness
 
@@ -177,8 +177,8 @@ Request additional slots beyond current reservation.
 Behavior:
 1. Verify workflowID holds active reservation
 2. Calculate if current window has capacity
-3. If yes ’ grant immediately, increase `slotsReserved`
-4. If no ’ block until next window reset (keep reservation, block queue)
+3. If yes ï¿½ grant immediately, increase `slotsReserved`
+4. If no ï¿½ block until next window reset (keep reservation, block queue)
 
 *SignalComplete(workflowID)*::
 Indicate no more API calls will be made.
@@ -222,24 +222,24 @@ If a workflow was blocked waiting for window reset (e.g., Extend needed 10 slots
 
 ```
 1. Reserve(5) on Starter, Reserve(50) on Pro, Reserve(120) on Expert
-   ’ Reserves entire quota pessimistically
+   ï¿½ Reserves entire quota pessimistically
 
-2. Consume() ’ ListBots()
-   ’ Returns bot list (e.g., 2 bots)
+2. Consume() ï¿½ ListBots()
+   ï¿½ Returns bot list (e.g., 2 bots)
 
 3. AdjustDown(3)
-   ’ Now we know: 1 ListBots + 2 GetListOfDeals = 3 total
-   ’ Releases 2 slots (Starter) or 47 slots (Pro) or 117 slots (Expert)
-   ’ HandleDeal workflows can NOW start reserving
+   ï¿½ Now we know: 1 ListBots + 2 GetListOfDeals = 3 total
+   ï¿½ Releases 2 slots (Starter) or 47 slots (Pro) or 117 slots (Expert)
+   ï¿½ HandleDeal workflows can NOW start reserving
 
 4. For each bot (respecting errgroup limit):
-     Consume() ’ GetListOfDeals(botId)
+     Consume() ï¿½ GetListOfDeals(botId)
 
 5. SignalComplete()
-   ’ No more API calls
+   ï¿½ No more API calls
 
 6. Release()
-   ’ Next cycle or HandleDeal can proceed
+   ï¿½ Next cycle or HandleDeal can proceed
 ```
 
 *Priority Consideration*::
@@ -257,21 +257,21 @@ If a workflow was blocked waiting for window reset (e.g., Extend needed 10 slots
 
 ```
 1. Reserve(2)
-   ’ Conservative: 1 for GetDealForID + 1 buffer for potential future calls
-   ’ Blocks until granted (FIFO with other HandleDeal workflows)
+   ï¿½ Conservative: 1 for GetDealForID + 1 buffer for potential future calls
+   ï¿½ Blocks until granted (FIFO with other HandleDeal workflows)
 
-2. Consume() ’ GetDealForID()
-   ’ Deal data retrieved
+2. Consume() ï¿½ GetDealForID()
+   ï¿½ Deal data retrieved
 
 3. AdjustDown(1)
-   ’ Only needed 1 slot, release the buffer
-   ’ OR skip AdjustDown if 1 slot difference is negligible
+   ï¿½ Only needed 1 slot, release the buffer
+   ï¿½ OR skip AdjustDown if 1 slot difference is negligible
 
 4. SignalComplete()
-   ’ No more API calls
+   ï¿½ No more API calls
 
 5. Release()
-   ’ Next HandleDeal workflow in queue proceeds
+   ï¿½ Next HandleDeal workflow in queue proceeds
 ```
 
 == Tier-Specific Configuration
@@ -446,24 +446,24 @@ Demonstrates how AdjustDown enables natural concurrency without multiple active 
 
 ```
 Time 0s:
-  ProduceActiveDeals: Reserve(5) ’ GRANTED
-  HandleDeal(AAA): Reserve(2) ’ QUEUED (position 1)
-  HandleDeal(BBB): Reserve(2) ’ QUEUED (position 2)
+  ProduceActiveDeals: Reserve(5) ï¿½ GRANTED
+  HandleDeal(AAA): Reserve(2) ï¿½ QUEUED (position 1)
+  HandleDeal(BBB): Reserve(2) ï¿½ QUEUED (position 2)
 
 Time 1s:
-  ProduceActiveDeals: Consume() ’ ListBots() (2 bots found)
+  ProduceActiveDeals: Consume() ï¿½ ListBots() (2 bots found)
   ProduceActiveDeals: AdjustDown(3)
   Window: consumed=1, reserved=3, available=2
-  HandleDeal(AAA): Reserve(2) ’ GRANTED
-  HandleDeal(BBB): Reserve(2) ’ QUEUED (not enough capacity)
+  HandleDeal(AAA): Reserve(2) ï¿½ GRANTED
+  HandleDeal(BBB): Reserve(2) ï¿½ QUEUED (not enough capacity)
 
 Time 2s:
-  ProduceActiveDeals: Consume() ’ GetListOfDeals(bot1)
-  HandleDeal(AAA): Consume() ’ GetDealForID()
+  ProduceActiveDeals: Consume() ï¿½ GetListOfDeals(bot1)
+  HandleDeal(AAA): Consume() ï¿½ GetDealForID()
   Window: consumed=2, reserved=5, available=0
 
 Time 3s:
-  ProduceActiveDeals: Consume() ’ GetListOfDeals(bot2)
+  ProduceActiveDeals: Consume() ï¿½ GetListOfDeals(bot2)
   ProduceActiveDeals: SignalComplete()
   HandleDeal(AAA): AdjustDown(1)
   Window: consumed=3, reserved=4, available=1
@@ -471,12 +471,12 @@ Time 3s:
 Time 4s:
   ProduceActiveDeals: Release()
   HandleDeal(AAA): SignalComplete()
-  HandleDeal(BBB): Reserve(2) ’ WAIT (only 1 slot available, need 2)
+  HandleDeal(BBB): Reserve(2) ï¿½ WAIT (only 1 slot available, need 2)
 
 Time 60s:
   Window reset
   Window: consumed=0, reserved=0, available=5
-  HandleDeal(BBB): Reserve(2) ’ GRANTED
+  HandleDeal(BBB): Reserve(2) ï¿½ GRANTED
 ```
 
 *Key Insight*: AdjustDown at Time 1s allowed HandleDeal(AAA) to start while ProduceActiveDeals was still running. This is the mechanism for overlapping workflow execution without violating the single-reservation principle.

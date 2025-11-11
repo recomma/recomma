@@ -3,8 +3,6 @@ package recomma
 import (
 	"context"
 	"errors"
-	"fmt"
-	"strings"
 	"time"
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
@@ -101,63 +99,4 @@ func ToThreeCommasBotEvent(in []BotEvent) []tc.BotEvent {
 		out = append(out, be.BotEvent)
 	}
 	return out
-}
-
-// ThreeCommasPlanTier represents a 3Commas subscription tier that governs rate limits.
-type ThreeCommasPlanTier string
-
-const (
-	// ThreeCommasPlanTierStarter represents the starter subscription tier
-	ThreeCommasPlanTierStarter ThreeCommasPlanTier = "starter"
-	// ThreeCommasPlanTierPro represents the pro subscription tier
-	ThreeCommasPlanTierPro ThreeCommasPlanTier = "pro"
-	// ThreeCommasPlanTierExpert represents the expert subscription tier
-	ThreeCommasPlanTierExpert ThreeCommasPlanTier = "expert"
-)
-
-// ParseThreeCommasPlanTier parses a plan tier string into a ThreeCommasPlanTier.
-// Returns an error if the tier is not recognized.
-func ParseThreeCommasPlanTier(tier string) (ThreeCommasPlanTier, error) {
-	normalized := strings.ToLower(strings.TrimSpace(tier))
-	switch normalized {
-	case "starter":
-		return ThreeCommasPlanTierStarter, nil
-	case "pro":
-		return ThreeCommasPlanTierPro, nil
-	case "expert":
-		return ThreeCommasPlanTierExpert, nil
-	case "":
-		return "", errors.New("plan tier is empty")
-	default:
-		return "", fmt.Errorf("unrecognized plan tier %q (valid values: starter, pro, expert)", tier)
-	}
-}
-
-// ParseThreeCommasPlanTierOrDefault parses a plan tier string, defaulting to expert if empty.
-// Returns the tier, a boolean indicating whether the default was used, and any error.
-func ParseThreeCommasPlanTierOrDefault(tier string) (ThreeCommasPlanTier, bool, error) {
-	normalized := strings.TrimSpace(tier)
-	if normalized == "" {
-		return ThreeCommasPlanTierExpert, true, nil
-	}
-	parsed, err := ParseThreeCommasPlanTier(normalized)
-	if err != nil {
-		return "", false, err
-	}
-	return parsed, false, nil
-}
-
-// SDKTier converts the ThreeCommasPlanTier to the SDK's PlanTier type.
-func (t ThreeCommasPlanTier) SDKTier() tc.PlanTier {
-	switch t {
-	case ThreeCommasPlanTierStarter:
-		return tc.PlanTierStarter
-	case ThreeCommasPlanTierPro:
-		return tc.PlanTierPro
-	case ThreeCommasPlanTierExpert:
-		return tc.PlanTierExpert
-	default:
-		// Fallback to expert if somehow an invalid tier gets through
-		return tc.PlanTierExpert
-	}
 }

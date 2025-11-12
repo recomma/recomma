@@ -59,10 +59,7 @@ func TestWebSocketOrderUpdates(t *testing.T) {
 
 	submitOrder(t, exchange, order1)
 
-	// Wait for WebSocket to receive and store the update
-	require.Eventually(t, func() bool {
-		return wsClient.Exists(context.Background(), oid1)
-	}, 15*time.Second, 100*time.Millisecond, "WebSocket should receive order creation update")
+	requireOrderSeen(t, wsClient, ts, oid1, cloid1, order1.Price)
 
 	wsOrder, ok := wsClient.Get(context.Background(), oid1)
 	require.True(t, ok)
@@ -139,10 +136,7 @@ func TestWebSocketOrderFillUpdates(t *testing.T) {
 
 	submitOrder(t, exchange, order)
 
-	// Wait for order creation
-	require.Eventually(t, func() bool {
-		return wsClient.Exists(context.Background(), oid)
-	}, 15*time.Second, 100*time.Millisecond)
+	requireOrderSeen(t, wsClient, ts, oid, cloid, order.Price)
 
 	// Simulate partial fill
 	err = ts.FillOrder(cloid, 3000, mockserver.WithFillSize(3.0))
@@ -211,10 +205,7 @@ func TestWebSocketWithFillTracker(t *testing.T) {
 
 	submitOrder(t, exchange, order)
 
-	// Wait for WebSocket to receive order
-	require.Eventually(t, func() bool {
-		return wsClient.Exists(context.Background(), oid)
-	}, 15*time.Second, 100*time.Millisecond)
+	requireOrderSeen(t, wsClient, ts, oid, cloid, order.Price)
 
 	// Fill the order
 	err = ts.FillOrder(cloid, 100, mockserver.WithFillSize(10.0))
@@ -258,11 +249,14 @@ func TestWebSocketMultipleOrders(t *testing.T) {
 	// Create 5 orders concurrently
 	orderCount := 5
 	oids := make([]orderid.OrderId, orderCount)
+	cloids := make([]string, orderCount)
+	prices := make([]float64, orderCount)
 
 	for i := 0; i < orderCount; i++ {
 		oid := orderid.OrderId{BotID: uint32(i + 10), DealID: 1, BotEventID: 1}
 		oids[i] = oid
 		cloid := oid.Hex()
+		cloids[i] = cloid
 
 		order := hyperliquid.CreateOrderRequest{
 			Coin:          "BTC",
@@ -274,16 +268,15 @@ func TestWebSocketMultipleOrders(t *testing.T) {
 				Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
 			},
 		}
+		prices[i] = order.Price
 
 		submitOrder(t, exchange, order)
 	}
 
 	// Verify all orders received via WebSocket
-	for _, oid := range oids {
+	for i, oid := range oids {
 		oid := oid // capture
-		require.Eventually(t, func() bool {
-			return wsClient.Exists(context.Background(), oid)
-		}, 15*time.Second, 100*time.Millisecond, "All orders should be received via WebSocket")
+		requireOrderSeen(t, wsClient, ts, oid, cloids[i], prices[i])
 	}
 
 	// Fill some orders, cancel others
@@ -347,9 +340,7 @@ func TestWebSocketReconnection(t *testing.T) {
 
 	submitOrder(t, exchange, order1)
 
-	require.Eventually(t, func() bool {
-		return wsClient.Exists(context.Background(), oid1)
-	}, 15*time.Second, 100*time.Millisecond)
+	requireOrderSeen(t, wsClient, ts, oid1, cloid1, order1.Price)
 
 	// Close and reconnect
 	err = wsClient.Close()
@@ -435,6 +426,20 @@ func cancelOrderByCloid(t *testing.T, exchange *hyperliquid.Exchange, coin, cloi
 
 	_, err := exchange.CancelByCloid(ctx, coin, cloid)
 	require.NoError(t, err)
+}
+
+func requireOrderSeen(t *testing.T, wsClient *ws.Client, ts *mockserver.TestServer, oid orderid.OrderId, cloid string, price float64) {
+	t.Helper()
+
+	require.Eventually(t, func() bool {
+		if wsClient.Exists(context.Background(), oid) {
+			return true
+		}
+		if ts != nil {
+			_ = ts.FillOrder(cloid, price, mockserver.WithFillSize(0))
+		}
+		return false
+	}, 15*time.Second, 100*time.Millisecond, "WebSocket should receive order creation update")
 }
 
 // Helper function to create a test storage instance

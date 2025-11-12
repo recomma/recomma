@@ -276,9 +276,9 @@ func (l *Limiter) Extend(ctx context.Context, workflowID string, additional int)
 	newReservation := currentReservation + additional
 
 	// Check if we have capacity in current window
+	// For Extend, we check if the additional consumption fits, since reservations can span multiple windows
 	l.resetWindowIfNeeded()
-	totalReserved := l.calculateTotalReserved()
-	if l.consumed+totalReserved-res.slotsReserved+newReservation <= l.limit {
+	if l.consumed+newReservation-res.slotsConsumed <= l.limit {
 		res.slotsReserved = newReservation
 		l.logger.Info("rate limit extend granted",
 			slog.String("workflow_id", workflowID),
@@ -316,8 +316,7 @@ func (l *Limiter) Extend(ctx context.Context, workflowID string, additional int)
 			defer l.mu.Unlock()
 
 			l.resetWindowIfNeeded()
-			totalReserved := l.calculateTotalReserved()
-			if l.consumed+totalReserved-res.slotsReserved+newReservation <= l.limit {
+			if l.consumed+newReservation-res.slotsConsumed <= l.limit {
 				res.slotsReserved = newReservation
 				return nil
 			}
@@ -334,8 +333,7 @@ func (l *Limiter) Extend(ctx context.Context, workflowID string, additional int)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.resetWindowIfNeeded()
-	totalReserved = l.calculateTotalReserved()
-	if l.consumed+totalReserved-res.slotsReserved+newReservation <= l.limit {
+	if l.consumed+newReservation-res.slotsConsumed <= l.limit {
 		res.slotsReserved = newReservation
 		return nil
 	}

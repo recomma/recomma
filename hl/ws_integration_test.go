@@ -15,13 +15,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	requestTimeout           = 15 * time.Second
+	websocketDeadlinePadding = 5 * time.Second
+	defaultWebsocketTimeout  = time.Minute
+)
+
 // TestWebSocketOrderUpdates verifies that the WebSocket client receives order
 // status updates when orders are created, modified, and canceled.
 func TestWebSocketOrderUpdates(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	wsCtx, wsCancel := newWebsocketContext(t)
+	defer wsCancel()
 
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
@@ -30,7 +36,7 @@ func TestWebSocketOrderUpdates(t *testing.T) {
 	exchange, wallet := newMockExchange(t, ts.URL())
 
 	// Create WebSocket client
-	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
+	wsClient, err := ws.New(wsCtx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
 
@@ -51,15 +57,14 @@ func TestWebSocketOrderUpdates(t *testing.T) {
 		},
 	}
 
-	_, err = exchange.Order(ctx, order1, nil)
-	require.NoError(t, err)
+	submitOrder(t, exchange, order1)
 
 	// Wait for WebSocket to receive and store the update
 	require.Eventually(t, func() bool {
-		return wsClient.Exists(ctx, oid1)
+		return wsClient.Exists(context.Background(), oid1)
 	}, 15*time.Second, 100*time.Millisecond, "WebSocket should receive order creation update")
 
-	wsOrder, ok := wsClient.Get(ctx, oid1)
+	wsOrder, ok := wsClient.Get(context.Background(), oid1)
 	require.True(t, ok)
 	require.Equal(t, hyperliquid.OrderStatusValueOpen, wsOrder.Status)
 	require.Equal(t, cloid1, *wsOrder.Order.Cloid)
@@ -68,7 +73,7 @@ func TestWebSocketOrderUpdates(t *testing.T) {
 	storedOrder, exists := ts.GetOrder(cloid1)
 	require.True(t, exists)
 
-	_, err = exchange.ModifyOrder(ctx, hyperliquid.ModifyOrderRequest{
+	modifyOrder(t, exchange, hyperliquid.ModifyOrderRequest{
 		Oid: &storedOrder.Order.Oid,
 		Order: hyperliquid.CreateOrderRequest{
 			Coin:          "BTC",
@@ -81,20 +86,18 @@ func TestWebSocketOrderUpdates(t *testing.T) {
 			},
 		},
 	})
-	require.NoError(t, err)
 
 	// Wait for modification update
 	require.Eventually(t, func() bool {
-		wsOrder, ok := wsClient.Get(ctx, oid1)
+		wsOrder, ok := wsClient.Get(context.Background(), oid1)
 		return ok && wsOrder.Order.LimitPx == "51000"
 	}, 15*time.Second, 100*time.Millisecond, "WebSocket should receive order modification update")
 
 	// Test 3: Cancel order and verify WebSocket receives update
-	_, err = exchange.CancelByCloid(ctx, "BTC", cloid1)
-	require.NoError(t, err)
+	cancelOrderByCloid(t, exchange, "BTC", cloid1)
 
 	require.Eventually(t, func() bool {
-		wsOrder, ok := wsClient.Get(ctx, oid1)
+		wsOrder, ok := wsClient.Get(context.Background(), oid1)
 		return ok && wsOrder.Status == hyperliquid.OrderStatusValueCanceled
 	}, 15*time.Second, 100*time.Millisecond, "WebSocket should receive cancellation update")
 }
@@ -104,8 +107,8 @@ func TestWebSocketOrderUpdates(t *testing.T) {
 func TestWebSocketOrderFillUpdates(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	wsCtx, wsCancel := newWebsocketContext(t)
+	defer wsCancel()
 
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
@@ -113,7 +116,7 @@ func TestWebSocketOrderFillUpdates(t *testing.T) {
 
 	exchange, wallet := newMockExchange(t, ts.URL())
 
-	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
+	wsClient, err := ws.New(wsCtx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
 
@@ -134,12 +137,11 @@ func TestWebSocketOrderFillUpdates(t *testing.T) {
 		},
 	}
 
-	_, err = exchange.Order(ctx, order, nil)
-	require.NoError(t, err)
+	submitOrder(t, exchange, order)
 
 	// Wait for order creation
 	require.Eventually(t, func() bool {
-		return wsClient.Exists(ctx, oid)
+		return wsClient.Exists(context.Background(), oid)
 	}, 15*time.Second, 100*time.Millisecond)
 
 	// Simulate partial fill
@@ -148,7 +150,7 @@ func TestWebSocketOrderFillUpdates(t *testing.T) {
 
 	// WebSocket should receive partial fill update
 	require.Eventually(t, func() bool {
-		wsOrder, ok := wsClient.Get(ctx, oid)
+		wsOrder, ok := wsClient.Get(context.Background(), oid)
 		if !ok {
 			return false
 		}
@@ -162,7 +164,7 @@ func TestWebSocketOrderFillUpdates(t *testing.T) {
 
 	// WebSocket should receive full fill update
 	require.Eventually(t, func() bool {
-		wsOrder, ok := wsClient.Get(ctx, oid)
+		wsOrder, ok := wsClient.Get(context.Background(), oid)
 		return ok && wsOrder.Status == hyperliquid.OrderStatusValueFilled
 	}, 15*time.Second, 100*time.Millisecond, "WebSocket should receive full fill update")
 }
@@ -172,8 +174,8 @@ func TestWebSocketOrderFillUpdates(t *testing.T) {
 func TestWebSocketWithFillTracker(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	wsCtx, wsCancel := newWebsocketContext(t)
+	defer wsCancel()
 
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
@@ -185,7 +187,7 @@ func TestWebSocketWithFillTracker(t *testing.T) {
 	tracker := filltracker.New(store, nil)
 
 	// Create WebSocket client with fill tracker
-	wsClient, err := ws.New(ctx, store, tracker, venueID, wallet, ts.WebSocketURL())
+	wsClient, err := ws.New(wsCtx, store, tracker, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
 
@@ -207,12 +209,11 @@ func TestWebSocketWithFillTracker(t *testing.T) {
 		},
 	}
 
-	_, err = exchange.Order(ctx, order, nil)
-	require.NoError(t, err)
+	submitOrder(t, exchange, order)
 
 	// Wait for WebSocket to receive order
 	require.Eventually(t, func() bool {
-		return wsClient.Exists(ctx, oid)
+		return wsClient.Exists(context.Background(), oid)
 	}, 15*time.Second, 100*time.Millisecond)
 
 	// Fill the order
@@ -221,7 +222,7 @@ func TestWebSocketWithFillTracker(t *testing.T) {
 
 	// WebSocket should receive fill update
 	require.Eventually(t, func() bool {
-		wsOrder, ok := wsClient.Get(ctx, oid)
+		wsOrder, ok := wsClient.Get(context.Background(), oid)
 		if !ok {
 			return false
 		}
@@ -238,8 +239,8 @@ func TestWebSocketWithFillTracker(t *testing.T) {
 func TestWebSocketMultipleOrders(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	wsCtx, wsCancel := newWebsocketContext(t)
+	defer wsCancel()
 
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
@@ -247,7 +248,7 @@ func TestWebSocketMultipleOrders(t *testing.T) {
 
 	exchange, wallet := newMockExchange(t, ts.URL())
 
-	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
+	wsClient, err := ws.New(wsCtx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
 
@@ -274,15 +275,14 @@ func TestWebSocketMultipleOrders(t *testing.T) {
 			},
 		}
 
-		_, err := exchange.Order(ctx, order, nil)
-		require.NoError(t, err)
+		submitOrder(t, exchange, order)
 	}
 
 	// Verify all orders received via WebSocket
 	for _, oid := range oids {
 		oid := oid // capture
 		require.Eventually(t, func() bool {
-			return wsClient.Exists(ctx, oid)
+			return wsClient.Exists(context.Background(), oid)
 		}, 15*time.Second, 100*time.Millisecond, "All orders should be received via WebSocket")
 	}
 
@@ -295,8 +295,7 @@ func TestWebSocketMultipleOrders(t *testing.T) {
 			require.NoError(t, err)
 		} else {
 			// Cancel odd-indexed orders
-			_, err := exchange.CancelByCloid(ctx, "BTC", cloid)
-			require.NoError(t, err)
+			cancelOrderByCloid(t, exchange, "BTC", cloid)
 		}
 	}
 
@@ -309,7 +308,7 @@ func TestWebSocketMultipleOrders(t *testing.T) {
 		}
 
 		require.Eventually(t, func() bool {
-			wsOrder, ok := wsClient.Get(ctx, oid)
+			wsOrder, ok := wsClient.Get(context.Background(), oid)
 			return ok && wsOrder.Status == expectedStatus
 		}, 15*time.Second, 100*time.Millisecond)
 	}
@@ -320,8 +319,8 @@ func TestWebSocketMultipleOrders(t *testing.T) {
 func TestWebSocketReconnection(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	wsCtx, wsCancel := newWebsocketContext(t)
+	defer wsCancel()
 
 	ts := mockserver.NewTestServer(t)
 	store := newTestStore(t)
@@ -329,7 +328,7 @@ func TestWebSocketReconnection(t *testing.T) {
 
 	exchange, wallet := newMockExchange(t, ts.URL())
 
-	wsClient, err := ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
+	wsClient, err := ws.New(wsCtx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 
 	// Create an order before disconnect
@@ -346,11 +345,10 @@ func TestWebSocketReconnection(t *testing.T) {
 		},
 	}
 
-	_, err = exchange.Order(ctx, order1, nil)
-	require.NoError(t, err)
+	submitOrder(t, exchange, order1)
 
 	require.Eventually(t, func() bool {
-		return wsClient.Exists(ctx, oid1)
+		return wsClient.Exists(context.Background(), oid1)
 	}, 15*time.Second, 100*time.Millisecond)
 
 	// Close and reconnect
@@ -358,7 +356,7 @@ func TestWebSocketReconnection(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create new WebSocket client (simulating reconnection)
-	wsClient, err = ws.New(ctx, store, nil, venueID, wallet, ts.WebSocketURL())
+	wsClient, err = ws.New(wsCtx, store, nil, venueID, wallet, ts.WebSocketURL())
 	require.NoError(t, err)
 	defer wsClient.Close()
 
@@ -379,16 +377,64 @@ func TestWebSocketReconnection(t *testing.T) {
 		},
 	}
 
-	_, err = exchange.Order(ctx, order2, nil)
-	require.NoError(t, err)
+	submitOrder(t, exchange, order2)
 
 	// Verify new order is received
 	require.Eventually(t, func() bool {
-		return wsClient.Exists(ctx, oid2)
+		return wsClient.Exists(context.Background(), oid2)
 	}, 15*time.Second, 100*time.Millisecond, "Should receive orders after reconnection")
 
 	// Verify old order is still in storage (persisted)
-	require.True(t, wsClient.Exists(ctx, oid1), "Old orders should persist in storage")
+	require.True(t, wsClient.Exists(context.Background(), oid1), "Old orders should persist in storage")
+}
+
+func newWebsocketContext(t *testing.T) (context.Context, context.CancelFunc) {
+	t.Helper()
+
+	if deadline, ok := t.Deadline(); ok {
+		wsDeadline := deadline.Add(-websocketDeadlinePadding)
+		if time.Until(wsDeadline) <= 0 {
+			wsDeadline = deadline
+		}
+		return context.WithDeadline(context.Background(), wsDeadline)
+	}
+
+	return context.WithTimeout(context.Background(), defaultWebsocketTimeout)
+}
+
+func newRequestContext(t *testing.T) (context.Context, context.CancelFunc) {
+	t.Helper()
+	return context.WithTimeout(context.Background(), requestTimeout)
+}
+
+func submitOrder(t *testing.T, exchange *hyperliquid.Exchange, order hyperliquid.CreateOrderRequest) {
+	t.Helper()
+
+	ctx, cancel := newRequestContext(t)
+	defer cancel()
+
+	_, err := exchange.Order(ctx, order, nil)
+	require.NoError(t, err)
+}
+
+func modifyOrder(t *testing.T, exchange *hyperliquid.Exchange, req hyperliquid.ModifyOrderRequest) {
+	t.Helper()
+
+	ctx, cancel := newRequestContext(t)
+	defer cancel()
+
+	_, err := exchange.ModifyOrder(ctx, req)
+	require.NoError(t, err)
+}
+
+func cancelOrderByCloid(t *testing.T, exchange *hyperliquid.Exchange, coin, cloid string) {
+	t.Helper()
+
+	ctx, cancel := newRequestContext(t)
+	defer cancel()
+
+	_, err := exchange.CancelByCloid(ctx, coin, cloid)
+	require.NoError(t, err)
 }
 
 // Helper function to create a test storage instance

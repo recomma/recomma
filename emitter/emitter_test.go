@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
@@ -588,4 +589,78 @@ func newTestStore(t *testing.T) *storage.Storage {
 		require.NoError(t, store.Close())
 	})
 	return store
+}
+
+func TestHyperLiquidEmitterRoundsHalfEven(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	exchange := NewMockExchange(t, nil) // uses real SDK + mock HTTP server
+	store := newTestStore(t)
+
+	emitter := NewHyperLiquidEmitter(exchange, "", nil, store)
+
+	oid := orderid.OrderId{BotID: 16567027, DealID: 2385553190, BotEventID: 1917367905}
+	cloid := oid.Hex()
+
+	order := hyperliquid.CreateOrderRequest{
+		Coin:          "DOGE",
+		IsBuy:         true,
+		Price:         0.172556235, // ninth decimal triggers floatToWire failure
+		Size:          86,
+		ClientOrderID: &cloid,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifIoc},
+		},
+	}
+
+	work := recomma.OrderWork{
+		Identifier: recomma.NewOrderIdentifier("hyperliquid:main", "0xfeed", oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent: recomma.BotEvent{
+			RowID: 13,
+			BotEvent: tc.BotEvent{
+				Action: "Placing",
+				Coin:   "DOGE",
+			},
+		},
+	}
+
+	err := emitter.Emit(ctx, work)
+	require.NotContains(t, err.Error(), "float_to_wire causes rounding")
+}
+
+func TestRoundHalfEven(t *testing.T) {
+	tests := []struct {
+		name string // description of this test case
+		// Named input parameters for target function.
+		x    float64
+		want float64
+	}{
+		{
+			x:    0.172556235,
+			want: 0.17255624,
+		},
+		{
+			x:    0.172556236,
+			want: 0.17255624,
+		},
+		{
+			x:    0.172556234,
+			want: 0.17255623,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := RoundHalfEven(tt.x)
+
+			gotS := fmt.Sprintf("%.8f", got)
+			wantS := fmt.Sprintf("%.8f", tt.want)
+
+			if gotS != wantS {
+				t.Errorf("RoundHalfEven() = %s, want %s", gotS, wantS)
+			}
+		})
+	}
 }

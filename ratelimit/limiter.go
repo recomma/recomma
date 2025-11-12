@@ -32,10 +32,10 @@ type Limiter struct {
 	mu sync.Mutex
 
 	// Configuration
-	limit          int
-	window         time.Duration
-	prioritySlots  int
-	logger         *slog.Logger
+	limit         int
+	window        time.Duration
+	prioritySlots int
+	logger        *slog.Logger
 
 	// Window state
 	windowStart time.Time
@@ -47,11 +47,11 @@ type Limiter struct {
 }
 
 type reservation struct {
-	workflowID     string
-	slotsReserved  int
-	slotsConsumed  int
-	createdAt      time.Time
-	completed      bool
+	workflowID    string
+	slotsReserved int
+	slotsConsumed int
+	createdAt     time.Time
+	completed     bool
 }
 
 type waitingWorkflow struct {
@@ -473,6 +473,7 @@ func (l *Limiter) tryGrantWaiting() {
 			// Remove from queue and signal
 			l.waitQueue = l.waitQueue[1:]
 			close(next.ready)
+			return
 		} else {
 			// Not enough capacity yet, stop trying
 			break

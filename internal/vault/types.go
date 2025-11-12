@@ -239,7 +239,6 @@ func (d Data) PrimaryVenueByType(venueType string) (VenueSecret, bool) {
 		}
 	}
 	return VenueSecret{}, false
->>>>>>> spec/tc-rate-limit
 }
 
 // Clone returns a deep copy of the Secrets instance.

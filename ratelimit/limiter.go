@@ -435,7 +435,8 @@ func (l *Limiter) resetWindowIfNeeded() {
 		l.consumed = 0
 
 		// Active reservation is NOT cancelled, workflow continues
-		// Waiting workflows are NOT automatically granted, must re-check capacity
+		// Try to grant waiting workflows now that window has reset
+		l.tryGrantWaiting()
 	}
 }
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -6,17 +6,55 @@ import { Textarea } from '../ui/textarea';
 import { Alert, AlertDescription } from '../ui/alert';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '../ui/dialog';
 import { HelpCircle, Upload, FileText, AlertCircle } from 'lucide-react';
+import type { VaultSecretsBundle } from '../../types/api';
 
 interface ThreeCommasSetupProps {
-  onComplete: (data: { apiKey: string; privateKeyFile: string }) => void;
+  onComplete: (data: {
+    apiKey: string;
+    privateKeyFile: string;
+    planTier: VaultSecretsBundle['secrets']['THREECOMMAS_PLAN_TIER'];
+  }) => void;
   onBack: () => void;
 }
+
+const planOptions: Array<{
+  value: VaultSecretsBundle['secrets']['THREECOMMAS_PLAN_TIER'];
+  title: string;
+  description: string;
+  limit: string;
+}> = [
+  {
+    value: 'starter',
+    title: 'Starter',
+    description: '5 requests/minute · read-only',
+    limit: 'For basic monitoring',
+  },
+  {
+    value: 'pro',
+    title: 'Pro',
+    description: '50 requests/minute · read-only',
+    limit: 'Recommended for most setups',
+  },
+  {
+    value: 'expert',
+    title: 'Expert',
+    description: '120 requests/minute · read & write',
+    limit: 'Enables fastest sync + manual actions',
+  },
+];
 
 export function ThreeCommasSetup({ onComplete, onBack }: ThreeCommasSetupProps) {
   const [apiKey, setApiKey] = useState('');
   const [privateKeyFile, setPrivateKeyFile] = useState('');
+  const [planTier, setPlanTier] =
+    useState<VaultSecretsBundle['secrets']['THREECOMMAS_PLAN_TIER']>('expert');
   const [uploadMethod, setUploadMethod] = useState<'paste' | 'upload'>('paste');
   const [error, setError] = useState<string | null>(null);
+
+  const selectedPlan = useMemo(
+    () => planOptions.find((option) => option.value === planTier),
+    [planTier],
+  );
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -49,7 +87,7 @@ export function ThreeCommasSetup({ onComplete, onBack }: ThreeCommasSetupProps) 
       return;
     }
 
-    onComplete({ apiKey, privateKeyFile });
+    onComplete({ apiKey, privateKeyFile, planTier });
   };
 
   return (
@@ -94,6 +132,36 @@ export function ThreeCommasSetup({ onComplete, onBack }: ThreeCommasSetupProps) 
           onChange={(e) => setApiKey(e.target.value)}
           placeholder="Enter your 3Commas API key"
         />
+      </div>
+
+      <div className="space-y-2">
+        <Label>3Commas plan tier</Label>
+        <div className="grid gap-3 md:grid-cols-3">
+          {planOptions.map((option) => {
+            const active = option.value === planTier;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setPlanTier(option.value)}
+                className={`rounded-lg border p-3 text-left transition ${
+                  active
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-slate-200 bg-white hover:border-slate-300'
+                }`}
+              >
+                <div className="font-semibold text-slate-900">{option.title}</div>
+                <div className="text-sm text-slate-600">{option.description}</div>
+                <div className="text-xs text-slate-500 mt-1">{option.limit}</div>
+              </button>
+            );
+          })}
+        </div>
+        {selectedPlan && (
+          <p className="text-xs text-slate-500">
+            Using the right tier keeps the SDK&apos;s rate limiter in sync with your 3Commas subscription.
+          </p>
+        )}
       </div>
 
       <div className="space-y-3">

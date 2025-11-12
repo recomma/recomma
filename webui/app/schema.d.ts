@@ -176,6 +176,55 @@ export interface paths {
          * @description Returns the stored ciphertext bundle for the authenticated user. Requires a valid session cookie obtained via WebAuthn and is typically called immediately before `/vault/unseal`.
          */
         get: operations["getVaultPayload"];
+        /**
+         * Update encrypted vault payload
+         * @description Replaces the encrypted vault payload with a new version. Requires an active
+         *     WebAuthn session and unsealed vault state. The server validates the decrypted
+         *     payload before persisting the encrypted version. After update, the vault remains
+         *     unsealed but the new configuration is not active until seal/re-unseal cycle.
+         */
+        put: operations["updateVaultPayload"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/system/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get current system health and status
+         * @description Polling endpoint for system health. Returns current status of 3commas API,
+         *     Hyperliquid venues, and engine state. Suitable for container health checks.
+         */
+        get: operations["getSystemStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stream/system": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Server-sent events for system notifications
+         * @description Real-time stream of system events (errors, warnings, info, logs).
+         *     Events are filtered by server-side log level configuration.
+         */
+        get: operations["streamSystemEvents"];
         put?: never;
         post?: never;
         delete?: never;
@@ -256,6 +305,114 @@ export interface paths {
          * @description Returns the effective multiplier applied to each OrderId tuple that has interacted with the scaler subsystem. The response resolves bot-level overrides against the global default multiplier and surfaces the source OrderId (default vs. override) along with operator notes. Use the filters to scope results to a OrderId prefix, bot, deal, or bot-event identifier.
          */
         get: operations["listOrderScalers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/venues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List configured venues
+         * @description Returns the inventory of venues available to the runtime. Each venue describes the upstream connector, wallet, and optional feature flags applied when dispatching work.
+         */
+        get: operations["listVenues"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/venues/{venue_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Create or update a venue definition
+         * @description Inserts or updates a venue record. Venue identifiers are immutable and must be unique. Updating a venue overwrites the display name, wallet, and flags with the supplied payload.
+         */
+        put: operations["upsertVenue"];
+        post?: never;
+        /**
+         * Remove a venue definition
+         * @description Deletes the venue and any associated assignments. Existing submissions remain in history but new work will no longer target the deleted venue.
+         */
+        delete: operations["deleteVenue"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/venues/{venue_id}/assignments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List bot assignments for a venue
+         * @description Returns all bot assignments targeting the requested venue. Each entry indicates whether the venue is the primary destination for the bot.
+         */
+        get: operations["listVenueAssignments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/venues/{venue_id}/assignments/{bot_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Assign a bot to a venue
+         * @description Creates or updates the bot-to-venue assignment. Marking an assignment as primary demotes any existing primary mapping for the bot.
+         */
+        put: operations["upsertVenueAssignment"];
+        post?: never;
+        /**
+         * Remove a bot assignment from a venue
+         * @description Deletes the assignment linking the bot to the venue.
+         */
+        delete: operations["deleteVenueAssignment"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bots/{bot_id}/venues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List venue assignments for a bot
+         * @description Returns all venue assignments configured for the supplied bot identifier. When no explicit assignment exists the response contains the default Hyperliquid venue.
+         */
+        get: operations["listBotVenues"];
         put?: never;
         post?: never;
         delete?: never;
@@ -457,6 +614,8 @@ export interface components {
              * @description Session expiry for the current user when unsealed.
              */
             session_expires_at?: string | null;
+            /** @description Indicates whether the server is running in debug mode. */
+            debug_mode?: boolean;
         };
         VaultEncryptedPayload: {
             /** @description Payload version label used to interpret the ciphertext. */
@@ -483,22 +642,28 @@ export interface components {
         };
         /** @description JSON structure encrypted during setup and supplied in plaintext when unsealing the vault. */
         VaultSecretsBundle: {
-            not_secret: {
-                /** @description Logical username mirrored inside the plaintext payload. */
-                username: string;
-            };
-            secrets: {
-                /** @description Public API key for the 3Commas integration. */
-                THREECOMMAS_API_KEY: string;
-                /** @description Private API key for the 3Commas integration. */
-                THREECOMMAS_PRIVATE_KEY: string;
-                /** @description Hyperliquid wallet address. */
-                HYPERLIQUID_WALLET: string;
-                /** @description Hyperliquid private key corresponding to the wallet. */
-                HYPERLIQUID_PRIVATE_KEY: string;
-                /** @description Hyperliquid URL, mainnet https://api.hyperliquid.xyz testnet https://api.hyperliquid-testnet.xyz or custom */
-                HYPERLIQUID_URL: string;
-            };
+            not_secret: components["schemas"]["VaultSecretsBundleNotSecret"];
+            secrets: components["schemas"]["VaultSecretsBundleSecrets"];
+        };
+        VaultVenueSecret: {
+            /** @description Unique identifier for the venue. */
+            id: string;
+            /** @description Connector type backing the venue (for example `hyperliquid`). */
+            type: string;
+            /** @description Human readable venue label. */
+            display_name?: string;
+            /** @description Wallet address used for submissions to this venue. */
+            wallet: string;
+            /** @description Secret key associated with the configured wallet. */
+            private_key: string;
+            /** @description Optional API base URL for the venue. */
+            api_url?: string | null;
+            /** @description Connector specific options encoded alongside the venue metadata. */
+            flags?: {
+                [key: string]: unknown;
+            } | null;
+            /** @description Indicates whether this venue should be treated as primary. */
+            is_primary: boolean;
         };
         VaultSetupRequest: {
             /** @description Logical username for the vault owner. */
@@ -583,6 +748,10 @@ export interface components {
              * @description When the originating 3Commas event was created.
              */
             created_at: string;
+            /** @description Upstream venue identifier associated with the submission. */
+            venue_id: string;
+            /** @description Wallet address tied to the venue submission. */
+            wallet: string;
         };
         ThreeCommasOrderState: {
             /** @description Parsed 3Commas bot event emitted for this OrderId. */
@@ -622,6 +791,8 @@ export interface components {
             text: string;
         };
         HyperliquidOrderState: {
+            /** @description Identifier describing the venue and wallet for the surfaced submission/status. */
+            identifier?: components["schemas"]["OrderIdentifiers"];
             /** @description Most recent action we submitted to Hyperliquid for this OrderId (last write wins). */
             latest_submission?: components["schemas"]["HyperliquidAction"];
             /** @description Most recent order status update received from Hyperliquid for this OrderId. */
@@ -777,6 +948,41 @@ export interface components {
             /** Format: int64 */
             bot_event_id?: number | null;
         };
+        VenueRecord: {
+            venue_id: string;
+            type: string;
+            display_name: string;
+            wallet: string;
+            /** @description Connector specific options encoded as JSON. */
+            flags?: {
+                [key: string]: unknown;
+            };
+        };
+        VenueUpsertRequest: {
+            type: string;
+            display_name: string;
+            wallet: string;
+            /** @description Connector specific options encoded as JSON. */
+            flags?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        VenueAssignmentRecord: {
+            /** Format: int64 */
+            bot_id: number;
+            venue_id: string;
+            is_primary: boolean;
+            /** Format: date-time */
+            assigned_at: string;
+        };
+        VenueAssignmentUpsertRequest: {
+            is_primary: boolean;
+        };
+        BotVenueAssignmentRecord: {
+            venue_id: string;
+            wallet: string;
+            is_primary: boolean;
+        };
         /** @enum {string} */
         OrderScalerSource: "default" | "bot_override";
         OrderScalerState: {
@@ -908,6 +1114,82 @@ export interface components {
              * @enum {string}
              */
             type: "hyperliquid_status";
+        };
+        SystemStatus: {
+            /**
+             * Format: date-time
+             * @description When this status snapshot was captured
+             */
+            timestamp: string;
+            threecommas_api?: {
+                /** @description Whether 3commas API is currently reachable */
+                available?: boolean;
+                /** @description Most recent error from 3commas API, if any */
+                last_error?: string | null;
+                /**
+                 * Format: date-time
+                 * @description Timestamp of last successful 3commas API call
+                 */
+                last_successful_call?: string | null;
+            } | null;
+            hyperliquid_venues?: {
+                /** @description Venue identifier */
+                venue_id: string;
+                /** @description Wallet address for this venue */
+                wallet: string;
+                /** @description Whether venue websocket/client is connected */
+                connected: boolean;
+                /** @description Most recent error for this venue */
+                last_error?: string | null;
+            }[];
+            engine: {
+                /** @description Whether the order engine is running */
+                running: boolean;
+                /** @description Number of active deals being tracked */
+                active_deals: number;
+                /**
+                 * Format: date-time
+                 * @description Timestamp of last deal sync with 3commas
+                 */
+                last_sync?: string | null;
+            };
+        };
+        SystemEvent: {
+            /**
+             * @description Log level matching slog levels
+             * @enum {string}
+             */
+            level: "debug" | "info" | "warn" | "error";
+            /**
+             * Format: date-time
+             * @description When this event occurred
+             */
+            timestamp: string;
+            /** @description Component that emitted the event (e.g., "3commas", "hyperliquid", "engine", "storage") */
+            source: string;
+            /** @description Human-readable error/info message */
+            message: string;
+            /** @description Structured context (optional) */
+            details?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        VaultSecretsBundleNotSecret: {
+            /** @description Logical username mirrored inside the plaintext payload. */
+            username: string;
+        };
+        VaultSecretsBundleSecrets: {
+            /** @description Public API key for the 3Commas integration. */
+            THREECOMMAS_API_KEY: string;
+            /** @description Private API key for the 3Commas integration. */
+            THREECOMMAS_PRIVATE_KEY: string;
+            /**
+             * @description Subscription tier for the 3Commas client rate limits.
+             * @enum {string}
+             */
+            THREECOMMAS_PLAN_TIER: "starter" | "pro" | "expert";
+            /** @description Collection of venue credentials encrypted within the vault. */
+            venues: components["schemas"]["VaultVenueSecret"][];
         };
         /**
          * @description Trading pair(s) in 3Commas format.
@@ -1765,6 +2047,120 @@ export interface operations {
             };
         };
     };
+    updateVaultPayload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Encrypted payload to persist */
+                    encrypted_payload: components["schemas"]["VaultEncryptedPayload"];
+                    /** @description Decrypted payload for server-side validation */
+                    decrypted_payload: components["schemas"]["VaultSecretsBundle"];
+                };
+            };
+        };
+        responses: {
+            /** @description Payload updated successfully */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example Vault payload updated successfully */
+                        message?: string;
+                    };
+                };
+            };
+            /** @description Invalid payload or validation failed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid session */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Vault is sealed or session expired */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getSystemStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current system status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemStatus"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    streamSystemEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE stream of system events */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     listBots: {
         parameters: {
             query?: {
@@ -1955,6 +2351,353 @@ export interface operations {
             };
             /** @description Invalid parameters */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listVenues: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Venue records ordered by venue identifier. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["VenueRecord"][];
+                    };
+                };
+            };
+            /** @description Missing or invalid session. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    upsertVenue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable venue identifier. */
+                venue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VenueUpsertRequest"];
+            };
+        };
+        responses: {
+            /** @description Venue stored successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VenueRecord"];
+                };
+            };
+            /** @description Invalid payload or venue identifier. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid session. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deleteVenue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable venue identifier. */
+                venue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Venue removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid venue identifier. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid session. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Venue not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Venue cannot be removed due to existing runtime constraints. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listVenueAssignments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable venue identifier. */
+                venue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bot assignments ordered by bot identifier. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["VenueAssignmentRecord"][];
+                    };
+                };
+            };
+            /** @description Invalid venue identifier. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid session. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Venue not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    upsertVenueAssignment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable venue identifier. */
+                venue_id: string;
+                /** @description 3Commas bot identifier. */
+                bot_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VenueAssignmentUpsertRequest"];
+            };
+        };
+        responses: {
+            /** @description Assignment stored successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VenueAssignmentRecord"];
+                };
+            };
+            /** @description Invalid bot or venue identifier. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid session. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Venue not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deleteVenueAssignment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable venue identifier. */
+                venue_id: string;
+                /** @description 3Commas bot identifier. */
+                bot_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Assignment removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid bot or venue identifier. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid session. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Assignment not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listBotVenues: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 3Commas bot identifier. */
+                bot_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Venue assignments ordered by venue identifier. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["BotVenueAssignmentRecord"][];
+                    };
+                };
+            };
+            /** @description Invalid bot identifier. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid session. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2186,7 +2929,10 @@ export interface operations {
     };
     cancelOrderByOrderId: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Optional venue selector. When provided the cancel is limited to submissions recorded for this venue. */
+                venue_id?: string;
+            };
             header?: never;
             path: {
                 /** @description Order OrderId identifier (case-insensitive hex string with optional `0x` prefix). */

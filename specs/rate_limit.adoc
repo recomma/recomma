@@ -1,0 +1,639 @@
+= ThreeCommas API Rate Limiting Design Specification
+:toc:
+:toclevels: 3
+:numbered:
+
+== Problem Statement
+
+ThreeCommas recently (as of 2 weeks ago) made their API rate limits public and enforced. The limits are tier-based:
+
+* *Starter*: 5 read requests per minute
+* *Pro*: 50 read requests per minute
+* *Expert*: 120 read/write requests per minute
+
+Our current application spawns 25+ concurrent workers that independently call the ThreeCommas API. While the SDK (v0.4.0) includes a built-in fixed-window rate limiter, it operates at the individual request level and *cannot coordinate across our application's concurrent goroutines*.
+
+=== Observed Behavior (Starter Tier)
+
+From production logs:
+
+```
+18:07:36 - ProduceActiveDeals starts
+           - ListBots(): 1 request
+           - GetListOfDeals(bot 16567027): 1 request
+           - GetListOfDeals(bot 16583660): 1 request
+           = 3 requests consumed
+
+18:07:37 - 25 DealWorkers start simultaneously
+           - GetDealForID(2385544352): 1 request 
+           - GetDealForID(2385345200): 1 request 
+           - GetDealForID(2385335637): 1 request (RATE LIMIT BREACHED)
+           - 22 more workers blocked by SDK rate limiter
+
+18:08:00 - Multiple 429 errors: "Rate limit exceeded. Next request at 2025-11-11 17:08:36 UTC"
+```
+
+*Result*: No data is successfully processed. The system is effectively non-functional on Starter tier.
+
+== Current System Analysis
+
+=== API Call Patterns
+
+From code investigation (`engine/engine.go`):
+
+*ProduceActiveDeals Workflow*::
+- `ListBots()`: 1 API call
+- For each bot: `GetListOfDeals(botId, from)`: N API calls (N = number of enabled bots)
+- Total: 1 + N requests
+
+*HandleDeal Workflow*::
+- `GetDealForID(dealId)`: 1 API call
+- `deal.Events()`: No additional API calls (processes in-memory data)
+- Total: 1 request per deal
+
+NOTE: `GetMarketOrdersForDeal` is commented out and not currently used.
+
+=== Concurrency Configuration
+
+*Current defaults* (`cmd/recomma/internal/config/config.go:33-35`):
+
+- `DealWorkers`: 25 concurrent goroutines processing deals
+- `OrderWorkers`: 5 concurrent goroutines for order emission
+- `ResyncInterval`: 15 seconds between ProduceActiveDeals cycles
+- `errgroup limit`: 32 concurrent bot processors in ProduceActiveDeals
+
+*Why SDK Rate Limiter Fails*::
+The SDK rate limiter blocks individual requests when quota is exhausted, but all 25 workers start simultaneously and race to the API. The first 5 requests succeed, then 20+ workers queue behind the SDK's internal limiter. When the window resets, potential thundering herd effect causes another rate limit breach.
+
+The SDK cannot coordinate *before* requests are made - it only reacts *at* the HTTP client level.
+
+== Design Goals
+
+=== Primary Objectives
+
+1. *Fair Resource Allocation*: Every bot and every deal must get a fair chance to process its data
+2. *Workflow Completion Guarantee*: Once a workflow starts, it should be able to complete without being starved
+3. *No 429 Errors*: Stay within API quota at all times
+4. *Observable Behavior*: Comprehensive logging to understand rate limiting decisions
+
+=== Scaling Requirements
+
+The solution must handle:
+
+- *Starter tier*: 2 bots, 5 deals � 8 total requests with 5 req/min quota
+- *Expert tier*: 1000 bots (max allowed), 1000 deals (max allowed) � 2001 requests with 120 req/min quota
+
+== Core Design: Workflow Reservation System
+
+=== Principle
+
+*Coordinate at the application level, before requests reach the SDK.*
+
+The rate limiter operates as a gatekeeper that serializes workflow execution through a reservation mechanism. Only ONE workflow can hold an active reservation at any time.
+
+=== Reservation Lifecycle
+
+```
+Reserve (pessimistic)
+  �
+Consume (as API calls are made)
+  �
+AdjustDown (when actual needs known)
+  �
+SignalComplete (no more API calls)
+  �
+Release (free reservation)
+```
+
+=== Key Mechanisms
+
+*Single Active Reservation*::
+Only one workflow can hold a reservation at any given time. All other workflows wait in a FIFO queue.
+
+*Pessimistic Initial Reservation*::
+Workflows reserve conservatively (more slots than likely needed) to ensure they can complete. Once actual requirements are known, they adjust downward.
+
+*Early Release Through AdjustDown*::
+When a workflow determines it needs fewer slots than reserved, it immediately releases the excess. This allows queued workflows to start *while the original workflow is still executing*.
+
+*SignalComplete*::
+Workflows signal when they will make no further API calls. This is distinct from Release - the workflow may still be processing in-memory data but has freed its API quota claim.
+
+== Rate Limiter Architecture
+
+=== Core State
+
+*Window Management*::
+- `limit`: Requests per minute (5, 50, or 120 based on tier)
+- `window`: Duration (60 seconds)
+- `windowStart`: Timestamp when current window began
+- `consumed`: Number of API calls actually made in current window
+
+*Reservation Tracking*::
+- `activeReservation`: Single active workflow reservation (can be nil)
+  * `workflowID`: Unique identifier for workflow
+  * `slotsReserved`: Number of slots claimed
+  * `slotsConsumed`: Number of API calls actually made
+  * `createdAt`: Timestamp for metrics
+- `waitQueue`: FIFO queue of workflow IDs waiting to reserve
+
+*Priority System* (Future)::
+- `prioritySlots`: Reserved quota for critical operations
+- `priorityPool`: Separate counter that doesn't affect regular reservations
+
+=== Operations
+
+*Reserve(workflowID, count)*::
+Request N slots for a workflow. Blocks until granted or context cancelled.
+
+Behavior:
+1. If no active reservation and window has capacity � grant immediately
+2. If active reservation exists � add to wait queue and block
+3. When window resets, recalculate capacity before granting
+4. FIFO ordering ensures fairness
+
+*Consume(workflowID)*::
+Mark one slot as consumed (called immediately before each API call).
+
+Behavior:
+1. Verify workflowID holds active reservation
+2. Increment `consumed` counter
+3. Increment `slotsConsumed` in reservation
+4. Error if consuming more than reserved
+
+*AdjustDown(workflowID, newTotal)*::
+Reduce reservation size when actual needs are known.
+
+Behavior:
+1. Verify workflowID holds active reservation
+2. Verify newTotal >= slotsConsumed (can't adjust below what's already used)
+3. Update `slotsReserved` to newTotal
+4. Signal waiting workflows that capacity may be available
+5. Does NOT release the reservation - workflow continues
+
+*Extend(workflowID, additional)*::
+Request additional slots beyond current reservation.
+
+Behavior:
+1. Verify workflowID holds active reservation
+2. Calculate if current window has capacity
+3. If yes � grant immediately, increase `slotsReserved`
+4. If no � block until next window reset (keep reservation, block queue)
+
+*SignalComplete(workflowID)*::
+Indicate no more API calls will be made.
+
+Behavior:
+1. Verify workflowID holds active reservation
+2. Mark reservation as complete
+3. Signal waiting workflows that they can begin reserving
+4. Reservation still held until explicit Release
+
+*Release(workflowID)*::
+Free the reservation entirely.
+
+Behavior:
+1. Remove from activeReservation
+2. Signal next workflow in wait queue
+3. Next workflow attempts Reserve from step 1
+
+=== Window Reset Logic
+
+Every 60 seconds, the window resets:
+
+1. `windowStart` = current time
+2. `consumed` = 0
+3. Active reservation is NOT cancelled (workflow continues)
+4. Waiting workflows are NOT automatically granted (must re-check capacity)
+
+If a workflow was blocked waiting for window reset (e.g., Extend needed 10 slots but only 3 available), it wakes up and retries.
+
+== Workflow Integration
+
+=== ProduceActiveDeals
+
+*Workflow ID*: `"produce:all-bots"`
+
+*API Call Pattern*:
+1. `ListBots()` - 1 request
+2. `GetListOfDeals()` for each bot - N requests
+
+*Reservation Strategy*:
+
+```
+1. Reserve(5) on Starter, Reserve(50) on Pro, Reserve(120) on Expert
+   � Reserves entire quota pessimistically
+
+2. Consume() � ListBots()
+   � Returns bot list (e.g., 2 bots)
+
+3. AdjustDown(3)
+   � Now we know: 1 ListBots + 2 GetListOfDeals = 3 total
+   � Releases 2 slots (Starter) or 47 slots (Pro) or 117 slots (Expert)
+   � HandleDeal workflows can NOW start reserving
+
+4. For each bot (respecting errgroup limit):
+     Consume() � GetListOfDeals(botId)
+
+5. SignalComplete()
+   � No more API calls
+
+6. Release()
+   � Next cycle or HandleDeal can proceed
+```
+
+*Priority Consideration*::
+`ListBots()` could use priority slots to ensure it never blocks, allowing background discovery even when system is saturated. Decision deferred to implementation phase.
+
+=== HandleDeal
+
+*Workflow ID*: `"deal:<dealID>:<botID>"`
+
+*API Call Pattern*:
+1. `GetDealForID(dealId)` - 1 request
+2. Process events in-memory (no API calls)
+
+*Reservation Strategy*:
+
+```
+1. Reserve(2)
+   � Conservative: 1 for GetDealForID + 1 buffer for potential future calls
+   � Blocks until granted (FIFO with other HandleDeal workflows)
+
+2. Consume() � GetDealForID()
+   � Deal data retrieved
+
+3. AdjustDown(1)
+   � Only needed 1 slot, release the buffer
+   � OR skip AdjustDown if 1 slot difference is negligible
+
+4. SignalComplete()
+   � No more API calls
+
+5. Release()
+   � Next HandleDeal workflow in queue proceeds
+```
+
+== Tier-Specific Configuration
+
+=== Configuration Matrix
+
+[cols="1,1,1,1,1,1"]
+|===
+|Tier |Requests/Min |Priority Slots |Deal Workers |Produce Concurrency |Resync Interval
+
+|Starter
+|5
+|1 (20%)
+|1
+|1 (sequential)
+|60s
+
+|Pro
+|50
+|5 (10%)
+|5
+|10
+|30s
+
+|Expert
+|120
+|10 (8%)
+|25
+|32
+|15s
+|===
+
+=== Rationale
+
+*Starter Tier*::
+- 1 DealWorker ensures only 1 HandleDeal reservation at a time
+- Sequential ProduceActiveDeals (errgroup limit 1) prevents bot processing from racing
+- 60s polling reduces frequency of ProduceActiveDeals competing for quota
+- Priority slot(s) ensure critical operations can always proceed
+
+*Pro Tier*::
+- 5 DealWorkers allow some concurrency, but workflows still serialize through reservation
+- 10 concurrent bot fetches in ProduceActiveDeals
+- 30s polling balances discovery speed with quota consumption
+
+*Expert Tier*::
+- Current configuration (25 workers, 32 concurrent, 15s polling)
+- High quota (120 req/min) means reservations grant quickly
+- Less contention, more throughput
+
+=== Automatic Tier Detection
+
+On startup, after parsing `THREECOMMAS_PLAN_TIER` from vault:
+
+1. Determine tier: Starter, Pro, or Expert
+2. Override `cfg.DealWorkers`, `cfg.ResyncInterval` with tier-specific values
+3. Pass `ProduceConcurrency` to Engine via new option
+4. Initialize rate limiter with tier's `RequestsPerMinute` and `PrioritySlots`
+
+User can still override via environment variables if needed, but defaults scale with tier.
+
+== Logging Requirements
+
+Logging is *critical* for understanding rate limiting behavior and debugging issues.
+
+=== Log Events
+
+*Reserve Attempt*::
+```
+level=INFO msg="rate limit reserve attempt"
+  workflow_id="deal:2385544352:16567027"
+  requested_slots=2
+  window_consumed=3
+  window_limit=5
+  active_reservation="produce:all-bots"
+  queue_position=1
+```
+
+*Reserve Granted*::
+```
+level=INFO msg="rate limit reserve granted"
+  workflow_id="deal:2385544352:16567027"
+  slots_reserved=2
+  window_consumed=3
+  window_limit=5
+  wait_duration=1.234s
+```
+
+*Consume*::
+```
+level=DEBUG msg="rate limit consume"
+  workflow_id="produce:all-bots"
+  operation="ListBots"
+  slots_consumed=1
+  window_consumed=4
+  window_limit=5
+```
+
+*AdjustDown*::
+```
+level=INFO msg="rate limit adjust down"
+  workflow_id="produce:all-bots"
+  previous_reservation=5
+  new_reservation=3
+  slots_consumed=1
+  freed_capacity=2
+```
+
+*Extend Attempt*::
+```
+level=INFO msg="rate limit extend attempt"
+  workflow_id="produce:all-bots"
+  current_reservation=3
+  additional_slots=10
+  window_consumed=3
+  window_limit=5
+  will_wait_for_reset=true
+```
+
+*SignalComplete*::
+```
+level=INFO msg="rate limit workflow complete"
+  workflow_id="deal:2385544352:16567027"
+  slots_reserved=2
+  slots_consumed=1
+  slots_wasted=1
+```
+
+*Release*::
+```
+level=INFO msg="rate limit release"
+  workflow_id="produce:all-bots"
+  duration=2.456s
+  slots_reserved=3
+  slots_consumed=3
+  next_in_queue="deal:2385544352:16567027"
+```
+
+*Window Reset*::
+```
+level=INFO msg="rate limit window reset"
+  previous_window_consumed=5
+  previous_window_limit=5
+  utilization=100%
+  active_reservation="deal:2385544352:16567027"
+  queue_length=3
+```
+
+*Queue Wait Warning*::
+```
+level=WARN msg="rate limit queue wait exceeded threshold"
+  workflow_id="deal:2385553190:16567027"
+  wait_duration=30s
+  queue_position=5
+```
+
+=== Metrics to Track
+
+For observability and performance tuning:
+
+- Average reservation duration per workflow type
+- Slots reserved vs slots consumed (waste metric)
+- Queue depth over time
+- Window utilization percentage
+- Extend requests that required window reset (indicates under-reservation)
+
+== Concurrency Through Early Release
+
+=== Example: Starter Tier (5 req/min)
+
+Demonstrates how AdjustDown enables natural concurrency without multiple active reservations.
+
+```
+Time 0s:
+  ProduceActiveDeals: Reserve(5) � GRANTED
+  HandleDeal(AAA): Reserve(2) � QUEUED (position 1)
+  HandleDeal(BBB): Reserve(2) � QUEUED (position 2)
+
+Time 1s:
+  ProduceActiveDeals: Consume() � ListBots() (2 bots found)
+  ProduceActiveDeals: AdjustDown(3)
+  Window: consumed=1, reserved=3, available=2
+  HandleDeal(AAA): Reserve(2) � GRANTED
+  HandleDeal(BBB): Reserve(2) � QUEUED (not enough capacity)
+
+Time 2s:
+  ProduceActiveDeals: Consume() � GetListOfDeals(bot1)
+  HandleDeal(AAA): Consume() � GetDealForID()
+  Window: consumed=2, reserved=5, available=0
+
+Time 3s:
+  ProduceActiveDeals: Consume() � GetListOfDeals(bot2)
+  ProduceActiveDeals: SignalComplete()
+  HandleDeal(AAA): AdjustDown(1)
+  Window: consumed=3, reserved=4, available=1
+
+Time 4s:
+  ProduceActiveDeals: Release()
+  HandleDeal(AAA): SignalComplete()
+  HandleDeal(BBB): Reserve(2) � WAIT (only 1 slot available, need 2)
+
+Time 60s:
+  Window reset
+  Window: consumed=0, reserved=0, available=5
+  HandleDeal(BBB): Reserve(2) � GRANTED
+```
+
+*Key Insight*: AdjustDown at Time 1s allowed HandleDeal(AAA) to start while ProduceActiveDeals was still running. This is the mechanism for overlapping workflow execution without violating the single-reservation principle.
+
+== Priority System (Future Extension)
+
+=== Design
+
+Not all operations are equal. Some operations (e.g., critical system health checks) should never be blocked by regular workflow reservations.
+
+*Priority Slots*::
+Separate quota pool (e.g., 1 slot on Starter, 10 slots on Expert) reserved for priority operations.
+
+*Priority Reservation*::
+- Bypasses wait queue entirely
+- Granted immediately if priority pool has capacity
+- Does NOT block or get blocked by regular reservations
+- Does NOT count against main window quota
+
+*Use Cases* (To Be Determined)::
+- Background health monitoring
+- Critical configuration updates
+- User-initiated manual sync requests
+- Potentially `ListBots()` to ensure continuous discovery
+
+=== Open Questions
+
+1. Which operations qualify as priority?
+2. Should priority pool be fixed percentage of quota (e.g., 10-20%)?
+3. Can priority operations "borrow" from main quota if priority pool exhausted?
+4. Should priority operations have their own window/rate limit?
+
+Answers deferred to implementation phase after observing system behavior.
+
+== Implementation Phases
+
+=== Phase 1: Core Rate Limiter
+
+Deliverables:
+- Fixed-window rate limiter with reservation tracking
+- Reserve, Consume, AdjustDown, Extend, SignalComplete, Release operations
+- FIFO wait queue
+- Window reset logic
+- Comprehensive logging
+- Unit tests
+
+Location: `recomma/ratelimit/` package
+
+=== Phase 2: Tier Configuration
+
+Deliverables:
+- Extend `ThreeCommasPlanTier.RateLimitConfig()` method
+- Configuration struct with DealWorkers, ProduceConcurrency, ResyncInterval
+- Automatic tier detection and config override in `main.go`
+
+Location: `recomma/threecommas_plan.go`
+
+=== Phase 3: Engine Integration
+
+Deliverables:
+- Add rate limiter to Engine struct
+- Instrument ProduceActiveDeals with Reserve/AdjustDown/Release
+- Instrument HandleDeal with Reserve/Release
+- Add ProduceConcurrency option to Engine
+- Pass errgroup limit from config
+
+Location: `engine/engine.go`
+
+=== Phase 4: Client Wrapping
+
+Deliverables:
+- Wrapper around ThreeCommas client that calls Consume before each API call
+- Verify workflowID is passed through context
+- Ensure all ThreeCommasAPI interface methods are wrapped
+
+Location: `recomma/ratelimit/client.go` or inline in engine
+
+=== Phase 5: Testing & Validation
+
+Deliverables:
+- Integration test with mocked ThreeCommas API
+- Simulate Starter tier (5 req/min) workload
+- Verify no 429 errors
+- Verify fairness (all workflows complete)
+- Load test with Expert tier scale (1000 bots/deals)
+
+== Open Implementation Questions
+
+These questions cannot be answered during design phase and require implementation exploration:
+
+=== 1. SignalComplete vs Release Timing
+
+*Question*: Are SignalComplete and Release always called together, or can there be significant delay?
+
+*Context*: If a workflow processes in-memory data for 10 seconds after its last API call, should it SignalComplete immediately (freeing quota) or wait until processing is done?
+
+*Impact*: Affects reservation lifetime and system throughput.
+
+=== 2. AdjustDown Minimum Safety
+
+*Question*: Can AdjustDown only reduce to `consumed + minimum_remaining_needs`?
+
+*Context*: What if a workflow AdjustedDown(1) but then realizes it needs to Extend(2)? Should AdjustDown prevent this by enforcing a minimum?
+
+*Impact*: Affects workflow flexibility vs safety guarantees.
+
+=== 3. Window Capacity Calculation
+
+*Question*: When checking if next workflow can reserve, is the formula: `(consumed + all_active_reservations + requested) <= limit`?
+
+*Context*: How do we account for reservations vs actual consumption when deciding to grant?
+
+*Impact*: Core correctness of the rate limiter.
+
+=== 4. Extend Across Window Boundary
+
+*Question*: When Extend requires waiting for window reset, should we:
+- Keep reservation and wait (blocks queue)
+- Release and re-reserve in new window (loses priority)
+
+*Context*: ProduceActiveDeals on Expert with 1000 bots might need multiple windows. Should it hold the reservation across windows?
+
+*Impact*: Fairness vs throughput tradeoff for large workloads.
+
+=== 5. Workflow Context Propagation
+
+*Question*: How do we pass workflowID through the call stack to Consume?
+
+*Options*:
+- Context value
+- Thread-local storage
+- Explicit parameter passing
+- Token object passed through
+
+*Impact*: Code ergonomics and maintainability.
+
+=== 6. Priority Operation Selection
+
+*Question*: Which operations should use priority slots?
+
+*Context*: Need to observe production behavior to identify truly critical operations vs nice-to-have.
+
+*Impact*: Effectiveness of priority system.
+
+== Success Criteria
+
+The implementation is successful when:
+
+1. *No 429 Errors*: System operates on Starter tier (5 req/min) without rate limit violations
+2. *Fair Processing*: All bots and deals eventually get processed (no starvation)
+3. *Observable*: Logs clearly show reservation lifecycle and queue state
+4. *Scales*: Expert tier (120 req/min) maintains high throughput
+5. *Configurable*: Users can override defaults via environment variables if needed
+
+== References
+
+- ThreeCommas API rate limit documentation (public as of 2 weeks ago)
+- Current SDK implementation: `github.com/recomma/3commas-sdk-go` v0.4.0
+- Existing RateGate implementation for Hyperliquid: `emitter/rate_gate.go`
+- Production logs showing 429 errors (included in Problem Statement)

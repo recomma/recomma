@@ -108,20 +108,20 @@ func BuildAction(
 	case prev == nil && nextState == stateActive:
 		// New order we have never submitted → create
 		req := ToCreateOrderRequest(currency, next, oid)
-		return recomma.Action{Type: recomma.ActionCreate, Create: &req}
+		return recomma.Action{Type: recomma.ActionCreate, Create: req}
 	case prev == nil:
 		// Never saw it active; HL won’t have it either
 		return recomma.Action{Type: recomma.ActionNone, Reason: "skipped: no prior order submitted"}
 	case prevState == stateActive && nextState == stateCancelled:
 		cancel := ToCancelByCloidRequest(currency, oid)
-		return recomma.Action{Type: recomma.ActionCancel, Cancel: &cancel}
+		return recomma.Action{Type: recomma.ActionCancel, Cancel: cancel}
 	case prevState == stateActive && nextState == stateFilled:
 		// Nothing to do on Hyperliquid, but tell caller to persist updated snapshot
 		return recomma.Action{Type: recomma.ActionNone, Reason: "filled locally"}
 	case prevState == stateActive && nextState == stateActive:
 		if needsModify(prev, &next) {
 			modify := ToModifyOrderRequest(currency, next, oid)
-			return recomma.Action{Type: recomma.ActionModify, Modify: &modify}
+			return recomma.Action{Type: recomma.ActionModify, Modify: modify}
 		}
 		return recomma.Action{Type: recomma.ActionNone, Reason: "no material change"}
 	default:
@@ -139,7 +139,7 @@ func ToCancelByCloidRequest(currency string, oid orderid.OrderId) hyperliquid.Ca
 func ToModifyOrderRequest(currency string, next recomma.BotEvent, oid orderid.OrderId) hyperliquid.ModifyOrderRequest {
 	req := ToCreateOrderRequest(currency, next, oid)
 	return hyperliquid.ModifyOrderRequest{
-		Oid:   oid.Hex(),
+		Cloid: &hyperliquid.Cloid{Value: oid.Hex()},
 		Order: req,
 	}
 }

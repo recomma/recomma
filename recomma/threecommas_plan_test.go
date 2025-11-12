@@ -5,162 +5,59 @@ import (
 	"time"
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseThreeCommasPlanTier(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
-		name    string
-		input   string
-		want    ThreeCommasPlanTier
-		wantErr bool
+		name     string
+		input    string
+		expected ThreeCommasPlanTier
+		err      string
 	}{
-		{
-			name:    "starter lowercase",
-			input:   "starter",
-			want:    ThreeCommasPlanTierStarter,
-			wantErr: false,
-		},
-		{
-			name:    "starter uppercase",
-			input:   "STARTER",
-			want:    ThreeCommasPlanTierStarter,
-			wantErr: false,
-		},
-		{
-			name:    "starter mixed case",
-			input:   "StArTeR",
-			want:    ThreeCommasPlanTierStarter,
-			wantErr: false,
-		},
-		{
-			name:    "pro lowercase",
-			input:   "pro",
-			want:    ThreeCommasPlanTierPro,
-			wantErr: false,
-		},
-		{
-			name:    "expert lowercase",
-			input:   "expert",
-			want:    ThreeCommasPlanTierExpert,
-			wantErr: false,
-		},
-		{
-			name:    "empty string",
-			input:   "",
-			want:    "",
-			wantErr: true,
-		},
-		{
-			name:    "invalid tier",
-			input:   "premium",
-			want:    "",
-			wantErr: true,
-		},
-		{
-			name:    "whitespace trimmed",
-			input:   "  starter  ",
-			want:    ThreeCommasPlanTierStarter,
-			wantErr: false,
-		},
+		{name: "starter lowercase", input: "starter", expected: ThreeCommasPlanTierStarter},
+		{name: "pro mixed case", input: " Pro ", expected: ThreeCommasPlanTierPro},
+		{name: "expert uppercase", input: "EXPERT", expected: ThreeCommasPlanTierExpert},
+		{name: "missing", input: "   ", err: "required"},
+		{name: "invalid", input: "gold", err: "invalid"},
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got, err := ParseThreeCommasPlanTier(tt.input)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ParseThreeCommasPlanTier() error = %v, wantErr %v", err, tt.wantErr)
+			if tt.err != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.err)
 				return
 			}
-			if got != tt.want {
-				t.Errorf("ParseThreeCommasPlanTier() = %v, want %v", got, tt.want)
-			}
+			require.NoError(t, err)
+			require.Equal(t, tt.expected, got)
 		})
 	}
 }
 
 func TestParseThreeCommasPlanTierOrDefault(t *testing.T) {
-	tests := []struct {
-		name            string
-		input           string
-		want            ThreeCommasPlanTier
-		wantDefaulted   bool
-		wantErr         bool
-	}{
-		{
-			name:          "starter",
-			input:         "starter",
-			want:          ThreeCommasPlanTierStarter,
-			wantDefaulted: false,
-			wantErr:       false,
-		},
-		{
-			name:          "empty string defaults to expert",
-			input:         "",
-			want:          ThreeCommasPlanTierExpert,
-			wantDefaulted: true,
-			wantErr:       false,
-		},
-		{
-			name:          "invalid tier",
-			input:         "invalid",
-			want:          "",
-			wantDefaulted: false,
-			wantErr:       true,
-		},
-	}
+	tier, defaulted, err := ParseThreeCommasPlanTierOrDefault("")
+	require.NoError(t, err)
+	require.True(t, defaulted)
+	require.Equal(t, DefaultThreeCommasPlanTier(), tier)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, defaulted, err := ParseThreeCommasPlanTierOrDefault(tt.input)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ParseThreeCommasPlanTierOrDefault() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if got != tt.want {
-				t.Errorf("ParseThreeCommasPlanTierOrDefault() tier = %v, want %v", got, tt.want)
-			}
-			if defaulted != tt.wantDefaulted {
-				t.Errorf("ParseThreeCommasPlanTierOrDefault() defaulted = %v, want %v", defaulted, tt.wantDefaulted)
-			}
-		})
-	}
+	tier, defaulted, err = ParseThreeCommasPlanTierOrDefault("starter")
+	require.NoError(t, err)
+	require.False(t, defaulted)
+	require.Equal(t, ThreeCommasPlanTierStarter, tier)
 }
 
-func TestThreeCommasPlanTier_SDKTier(t *testing.T) {
-	tests := []struct {
-		name string
-		tier ThreeCommasPlanTier
-		want tc.PlanTier
-	}{
-		{
-			name: "starter",
-			tier: ThreeCommasPlanTierStarter,
-			want: tc.PlanStarter,
-		},
-		{
-			name: "pro",
-			tier: ThreeCommasPlanTierPro,
-			want: tc.PlanPro,
-		},
-		{
-			name: "expert",
-			tier: ThreeCommasPlanTierExpert,
-			want: tc.PlanExpert,
-		},
-		{
-			name: "unknown defaults to expert",
-			tier: ThreeCommasPlanTier("unknown"),
-			want: tc.PlanExpert,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.tier.SDKTier(); got != tt.want {
-				t.Errorf("SDKTier() = %v, want %v", got, tt.want)
-			}
-		})
-	}
+func TestSDKTier(t *testing.T) {
+	require.Equal(t, tc.PlanStarter, ThreeCommasPlanTierStarter.SDKTier())
+	require.Equal(t, tc.PlanPro, ThreeCommasPlanTierPro.SDKTier())
+	require.Equal(t, tc.PlanExpert, ThreeCommasPlanTierExpert.SDKTier())
+	require.Equal(t, tc.PlanExpert, ThreeCommasPlanTier("unknown").SDKTier())
 }
 
 func TestThreeCommasPlanTier_RateLimitConfig(t *testing.T) {

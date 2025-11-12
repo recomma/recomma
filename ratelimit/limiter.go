@@ -41,9 +41,9 @@ type Limiter struct {
 	windowStart time.Time
 	consumed    int
 
-	// Reservation state
-	activeReservation *reservation
-	waitQueue         []waitingWorkflow
+	// Reservation state - supports multiple concurrent reservations
+	activeReservations map[string]*reservation
+	waitQueue          []waitingWorkflow
 }
 
 type reservation struct {
@@ -71,12 +71,13 @@ func NewLimiter(cfg Config) *Limiter {
 	}
 
 	return &Limiter{
-		limit:         cfg.RequestsPerMinute,
-		window:        cfg.WindowDuration,
-		prioritySlots: cfg.PrioritySlots,
-		logger:        cfg.Logger.WithGroup("ratelimit"),
-		windowStart:   time.Now(),
-		consumed:      0,
+		limit:              cfg.RequestsPerMinute,
+		window:             cfg.WindowDuration,
+		prioritySlots:      cfg.PrioritySlots,
+		logger:             cfg.Logger.WithGroup("ratelimit"),
+		windowStart:        time.Now(),
+		consumed:           0,
+		activeReservations: make(map[string]*reservation),
 	}
 }
 
@@ -91,31 +92,33 @@ func (l *Limiter) Reserve(ctx context.Context, workflowID string, count int) err
 
 	l.mu.Lock()
 
-	// Check if this workflow already has the active reservation
-	if l.activeReservation != nil && l.activeReservation.workflowID == workflowID {
+	// Check if this workflow already has an active reservation
+	if _, exists := l.activeReservations[workflowID]; exists {
 		l.mu.Unlock()
 		return ErrAlreadyReserved
 	}
 
-	// If no active reservation and we have capacity, grant immediately
-	if l.activeReservation == nil {
-		l.resetWindowIfNeeded()
-		if l.consumed+count <= l.limit {
-			l.activeReservation = &reservation{
-				workflowID:    workflowID,
-				slotsReserved: count,
-				createdAt:     time.Now(),
-			}
-			l.logger.Info("rate limit reserve granted",
-				slog.String("workflow_id", workflowID),
-				slog.Int("slots_reserved", count),
-				slog.Int("window_consumed", l.consumed),
-				slog.Int("window_limit", l.limit),
-				slog.Duration("wait_duration", 0),
-			)
-			l.mu.Unlock()
-			return nil
+	// Calculate total reserved slots across all active reservations
+	totalReserved := l.calculateTotalReserved()
+
+	// Check if we have capacity, grant immediately
+	l.resetWindowIfNeeded()
+	if l.consumed+totalReserved+count <= l.limit {
+		l.activeReservations[workflowID] = &reservation{
+			workflowID:    workflowID,
+			slotsReserved: count,
+			createdAt:     time.Now(),
 		}
+		l.logger.Info("rate limit reserve granted",
+			slog.String("workflow_id", workflowID),
+			slog.Int("slots_reserved", count),
+			slog.Int("window_consumed", l.consumed),
+			slog.Int("total_reserved", totalReserved+count),
+			slog.Int("window_limit", l.limit),
+			slog.Duration("wait_duration", 0),
+		)
+		l.mu.Unlock()
+		return nil
 	}
 
 	// Need to wait - add to queue
@@ -128,17 +131,18 @@ func (l *Limiter) Reserve(ctx context.Context, workflowID string, count int) err
 		ready:          ready,
 	})
 
-	activeRes := "<none>"
-	if l.activeReservation != nil {
-		activeRes = l.activeReservation.workflowID
+	activeWorkflows := make([]string, 0, len(l.activeReservations))
+	for wf := range l.activeReservations {
+		activeWorkflows = append(activeWorkflows, wf)
 	}
 
 	l.logger.Info("rate limit reserve attempt",
 		slog.String("workflow_id", workflowID),
 		slog.Int("requested_slots", count),
 		slog.Int("window_consumed", l.consumed),
+		slog.Int("total_reserved", totalReserved),
 		slog.Int("window_limit", l.limit),
-		slog.String("active_reservation", activeRes),
+		slog.Any("active_workflows", activeWorkflows),
 		slog.Int("queue_position", queuePos),
 	)
 	l.mu.Unlock()
@@ -179,22 +183,23 @@ func (l *Limiter) ConsumeWithOperation(workflowID string, operation string) erro
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.activeReservation == nil || l.activeReservation.workflowID != workflowID {
+	res, exists := l.activeReservations[workflowID]
+	if !exists {
 		return ErrReservationNotHeld
 	}
 
-	if l.activeReservation.slotsConsumed >= l.activeReservation.slotsReserved {
+	if res.slotsConsumed >= res.slotsReserved {
 		return ErrConsumeExceedsLimit
 	}
 
 	l.resetWindowIfNeeded()
 
 	l.consumed++
-	l.activeReservation.slotsConsumed++
+	res.slotsConsumed++
 
 	attrs := []any{
 		slog.String("workflow_id", workflowID),
-		slog.Int("slots_consumed", l.activeReservation.slotsConsumed),
+		slog.Int("slots_consumed", res.slotsConsumed),
 		slog.Int("window_consumed", l.consumed),
 		slog.Int("window_limit", l.limit),
 	}
@@ -215,32 +220,33 @@ func (l *Limiter) AdjustDown(workflowID string, newTotal int) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.activeReservation == nil || l.activeReservation.workflowID != workflowID {
+	res, exists := l.activeReservations[workflowID]
+	if !exists {
 		return ErrReservationNotHeld
 	}
 
-	if newTotal < l.activeReservation.slotsConsumed {
+	if newTotal < res.slotsConsumed {
 		return ErrAdjustBelowConsumed
 	}
 
-	previousReservation := l.activeReservation.slotsReserved
+	previousReservation := res.slotsReserved
 	if newTotal >= previousReservation {
 		// No adjustment needed
 		return nil
 	}
 
 	freedCapacity := previousReservation - newTotal
-	l.activeReservation.slotsReserved = newTotal
+	res.slotsReserved = newTotal
 
 	l.logger.Info("rate limit adjust down",
 		slog.String("workflow_id", workflowID),
 		slog.Int("previous_reservation", previousReservation),
 		slog.Int("new_reservation", newTotal),
-		slog.Int("slots_consumed", l.activeReservation.slotsConsumed),
+		slog.Int("slots_consumed", res.slotsConsumed),
 		slog.Int("freed_capacity", freedCapacity),
 	)
 
-	// Try to grant waiting workflows
+	// Try to grant waiting workflows with the freed capacity
 	l.tryGrantWaiting()
 
 	return nil
@@ -260,18 +266,20 @@ func (l *Limiter) Extend(ctx context.Context, workflowID string, additional int)
 
 	l.mu.Lock()
 
-	if l.activeReservation == nil || l.activeReservation.workflowID != workflowID {
+	res, exists := l.activeReservations[workflowID]
+	if !exists {
 		l.mu.Unlock()
 		return ErrReservationNotHeld
 	}
 
-	currentReservation := l.activeReservation.slotsReserved
+	currentReservation := res.slotsReserved
 	newReservation := currentReservation + additional
 
 	// Check if we have capacity in current window
 	l.resetWindowIfNeeded()
-	if l.consumed+newReservation-l.activeReservation.slotsConsumed <= l.limit {
-		l.activeReservation.slotsReserved = newReservation
+	totalReserved := l.calculateTotalReserved()
+	if l.consumed+totalReserved-res.slotsReserved+newReservation <= l.limit {
+		res.slotsReserved = newReservation
 		l.logger.Info("rate limit extend granted",
 			slog.String("workflow_id", workflowID),
 			slog.Int("current_reservation", currentReservation),
@@ -308,8 +316,9 @@ func (l *Limiter) Extend(ctx context.Context, workflowID string, additional int)
 			defer l.mu.Unlock()
 
 			l.resetWindowIfNeeded()
-			if l.consumed+newReservation-l.activeReservation.slotsConsumed <= l.limit {
-				l.activeReservation.slotsReserved = newReservation
+			totalReserved := l.calculateTotalReserved()
+			if l.consumed+totalReserved-res.slotsReserved+newReservation <= l.limit {
+				res.slotsReserved = newReservation
 				return nil
 			}
 			return ErrInsufficientCapacity
@@ -325,8 +334,9 @@ func (l *Limiter) Extend(ctx context.Context, workflowID string, additional int)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.resetWindowIfNeeded()
-	if l.consumed+newReservation-l.activeReservation.slotsConsumed <= l.limit {
-		l.activeReservation.slotsReserved = newReservation
+	totalReserved := l.calculateTotalReserved()
+	if l.consumed+totalReserved-res.slotsReserved+newReservation <= l.limit {
+		res.slotsReserved = newReservation
 		return nil
 	}
 	return ErrInsufficientCapacity
@@ -341,17 +351,18 @@ func (l *Limiter) SignalComplete(workflowID string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.activeReservation == nil || l.activeReservation.workflowID != workflowID {
+	res, exists := l.activeReservations[workflowID]
+	if !exists {
 		return ErrReservationNotHeld
 	}
 
-	l.activeReservation.completed = true
+	res.completed = true
 
-	slotsWasted := l.activeReservation.slotsReserved - l.activeReservation.slotsConsumed
+	slotsWasted := res.slotsReserved - res.slotsConsumed
 	l.logger.Info("rate limit workflow complete",
 		slog.String("workflow_id", workflowID),
-		slog.Int("slots_reserved", l.activeReservation.slotsReserved),
-		slog.Int("slots_consumed", l.activeReservation.slotsConsumed),
+		slog.Int("slots_reserved", res.slotsReserved),
+		slog.Int("slots_consumed", res.slotsConsumed),
 		slog.Int("slots_wasted", slotsWasted),
 	)
 
@@ -370,13 +381,14 @@ func (l *Limiter) Release(workflowID string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.activeReservation == nil || l.activeReservation.workflowID != workflowID {
+	res, exists := l.activeReservations[workflowID]
+	if !exists {
 		return ErrReservationNotHeld
 	}
 
-	duration := time.Since(l.activeReservation.createdAt)
-	slotsReserved := l.activeReservation.slotsReserved
-	slotsConsumed := l.activeReservation.slotsConsumed
+	duration := time.Since(res.createdAt)
+	slotsReserved := res.slotsReserved
+	slotsConsumed := res.slotsConsumed
 
 	nextInQueue := "<none>"
 	if len(l.waitQueue) > 0 {
@@ -391,7 +403,7 @@ func (l *Limiter) Release(workflowID string) error {
 		slog.String("next_in_queue", nextInQueue),
 	)
 
-	l.activeReservation = nil
+	delete(l.activeReservations, workflowID)
 
 	// Try to grant next waiting workflow
 	l.tryGrantWaiting()
@@ -405,7 +417,7 @@ func (l *Limiter) Stats() (consumed, limit, queueLen int, hasReservation bool) {
 	defer l.mu.Unlock()
 
 	l.resetWindowIfNeeded()
-	return l.consumed, l.limit, len(l.waitQueue), l.activeReservation != nil
+	return l.consumed, l.limit, len(l.waitQueue), len(l.activeReservations) > 0
 }
 
 // resetWindowIfNeeded resets the window if we've passed the boundary (must be called with lock held)
@@ -418,23 +430,23 @@ func (l *Limiter) resetWindowIfNeeded() {
 			utilizationPct = (previousConsumed * 100) / l.limit
 		}
 
-		activeRes := "<none>"
-		if l.activeReservation != nil {
-			activeRes = l.activeReservation.workflowID
+		activeWorkflows := make([]string, 0, len(l.activeReservations))
+		for wf := range l.activeReservations {
+			activeWorkflows = append(activeWorkflows, wf)
 		}
 
 		l.logger.Info("rate limit window reset",
 			slog.Int("previous_window_consumed", previousConsumed),
 			slog.Int("previous_window_limit", l.limit),
 			slog.Int("utilization_pct", utilizationPct),
-			slog.String("active_reservation", activeRes),
+			slog.Any("active_workflows", activeWorkflows),
 			slog.Int("queue_length", len(l.waitQueue)),
 		)
 
 		l.windowStart = now
 		l.consumed = 0
 
-		// Active reservation is NOT cancelled, workflow continues
+		// Active reservations are NOT cancelled, workflows continue
 		// Try to grant waiting workflows now that window has reset
 		l.tryGrantWaiting()
 	}
@@ -442,43 +454,52 @@ func (l *Limiter) resetWindowIfNeeded() {
 
 // tryGrantWaiting attempts to grant reservations to waiting workflows (must be called with lock held)
 func (l *Limiter) tryGrantWaiting() {
-	if l.activeReservation != nil {
-		// Can only grant if no active reservation
-		return
-	}
-
+	// Process queue in FIFO order, granting as many as capacity allows
 	for len(l.waitQueue) > 0 {
 		next := l.waitQueue[0]
 
 		l.resetWindowIfNeeded()
 
+		// Calculate total reserved slots across all active reservations
+		totalReserved := l.calculateTotalReserved()
+
 		// Check if we have capacity for this workflow
-		if l.consumed+next.requestedSlots <= l.limit {
+		if l.consumed+totalReserved+next.requestedSlots <= l.limit {
 			// Grant the reservation
-			l.activeReservation = &reservation{
+			l.activeReservations[next.workflowID] = &reservation{
 				workflowID:    next.workflowID,
 				slotsReserved: next.requestedSlots,
 				createdAt:     time.Now(),
 			}
 
 			waitDuration := time.Since(next.createdAt)
-			l.logger.Info("rate limit reserve granted",
+			l.logger.Info("rate limit reserve granted from queue",
 				slog.String("workflow_id", next.workflowID),
 				slog.Int("slots_reserved", next.requestedSlots),
 				slog.Int("window_consumed", l.consumed),
+				slog.Int("total_reserved", totalReserved+next.requestedSlots),
 				slog.Int("window_limit", l.limit),
 				slog.Duration("wait_duration", waitDuration),
+				slog.Int("concurrent_workflows", len(l.activeReservations)),
 			)
 
 			// Remove from queue and signal
 			l.waitQueue = l.waitQueue[1:]
 			close(next.ready)
-			return
 		} else {
 			// Not enough capacity yet, stop trying
 			break
 		}
 	}
+}
+
+// calculateTotalReserved sums up all reserved slots across active reservations (must be called with lock held)
+func (l *Limiter) calculateTotalReserved() int {
+	total := 0
+	for _, res := range l.activeReservations {
+		total += res.slotsReserved
+	}
+	return total
 }
 
 // removeFromQueue removes a workflow from the wait queue (must be called with lock held)

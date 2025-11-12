@@ -19,6 +19,7 @@ const (
 	requestTimeout           = 15 * time.Second
 	websocketDeadlinePadding = 5 * time.Second
 	defaultWebsocketTimeout  = time.Minute
+	eventuallyTimeout        = 5 * time.Second
 )
 
 // TestWebSocketOrderUpdates verifies that the WebSocket client receives order
@@ -88,7 +89,7 @@ func TestWebSocketOrderUpdates(t *testing.T) {
 	require.Eventually(t, func() bool {
 		wsOrder, ok := wsClient.Get(context.Background(), oid1)
 		return ok && wsOrder.Order.LimitPx == "51000"
-	}, 15*time.Second, 100*time.Millisecond, "WebSocket should receive order modification update")
+	}, eventuallyTimeout, 100*time.Millisecond, "WebSocket should receive order modification update")
 
 	// Test 3: Cancel order and verify WebSocket receives update
 	cancelOrderByCloid(t, exchange, "BTC", cloid1)
@@ -96,7 +97,7 @@ func TestWebSocketOrderUpdates(t *testing.T) {
 	require.Eventually(t, func() bool {
 		wsOrder, ok := wsClient.Get(context.Background(), oid1)
 		return ok && wsOrder.Status == hyperliquid.OrderStatusValueCanceled
-	}, 15*time.Second, 100*time.Millisecond, "WebSocket should receive cancellation update")
+	}, eventuallyTimeout, 100*time.Millisecond, "WebSocket should receive cancellation update")
 }
 
 // TestWebSocketOrderFillUpdates verifies that the WebSocket client receives
@@ -150,7 +151,7 @@ func TestWebSocketOrderFillUpdates(t *testing.T) {
 		}
 		// Partial fill: status should still be "open" with reduced size
 		return wsOrder.Status == hyperliquid.OrderStatusValueOpen && wsOrder.Order.Sz != "10"
-	}, 15*time.Second, 100*time.Millisecond, "WebSocket should receive partial fill update")
+	}, eventuallyTimeout, 100*time.Millisecond, "WebSocket should receive partial fill update")
 
 	// Simulate complete fill
 	err = ts.FillOrder(cloid, 3000)
@@ -160,7 +161,7 @@ func TestWebSocketOrderFillUpdates(t *testing.T) {
 	require.Eventually(t, func() bool {
 		wsOrder, ok := wsClient.Get(context.Background(), oid)
 		return ok && wsOrder.Status == hyperliquid.OrderStatusValueFilled
-	}, 15*time.Second, 100*time.Millisecond, "WebSocket should receive full fill update")
+	}, eventuallyTimeout, 100*time.Millisecond, "WebSocket should receive full fill update")
 }
 
 // TestWebSocketWithFillTracker verifies that the WebSocket client properly
@@ -218,7 +219,7 @@ func TestWebSocketWithFillTracker(t *testing.T) {
 			return false
 		}
 		return wsOrder.Status == hyperliquid.OrderStatusValueFilled
-	}, 15*time.Second, 100*time.Millisecond)
+	}, eventuallyTimeout, 100*time.Millisecond)
 
 	// Verify the fill tracker was notified (UpdateStatus was called)
 	// The tracker integration is verified by the fact that no errors occurred
@@ -303,7 +304,7 @@ func TestWebSocketMultipleOrders(t *testing.T) {
 		require.Eventually(t, func() bool {
 			wsOrder, ok := wsClient.Get(context.Background(), oid)
 			return ok && wsOrder.Status == expectedStatus
-		}, 15*time.Second, 100*time.Millisecond)
+		}, eventuallyTimeout, 100*time.Millisecond)
 	}
 }
 
@@ -373,7 +374,7 @@ func TestWebSocketReconnection(t *testing.T) {
 	// Verify new order is received
 	require.Eventually(t, func() bool {
 		return wsClient.Exists(context.Background(), oid2)
-	}, 15*time.Second, 100*time.Millisecond, "Should receive orders after reconnection")
+	}, eventuallyTimeout, 100*time.Millisecond, "Should receive orders after reconnection")
 
 	// Verify old order is still in storage (persisted)
 	require.True(t, wsClient.Exists(context.Background(), oid1), "Old orders should persist in storage")
@@ -439,7 +440,7 @@ func requireOrderSeen(t *testing.T, wsClient *ws.Client, ts *mockserver.TestServ
 			_ = ts.FillOrder(cloid, price, mockserver.WithFillSize(0))
 		}
 		return false
-	}, 15*time.Second, 100*time.Millisecond, "WebSocket should receive order creation update")
+	}, eventuallyTimeout, 100*time.Millisecond, "WebSocket should receive order creation update")
 }
 
 // Helper function to create a test storage instance

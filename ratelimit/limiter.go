@@ -334,7 +334,7 @@ func (l *Limiter) Extend(ctx context.Context, workflowID string, additional int)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.resetWindowIfNeeded()
-	totalReserved := l.calculateTotalReserved()
+	totalReserved = l.calculateTotalReserved()
 	if l.consumed+totalReserved-res.slotsReserved+newReservation <= l.limit {
 		res.slotsReserved = newReservation
 		return nil

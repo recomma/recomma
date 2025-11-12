@@ -25,7 +25,7 @@ func (m *mockThreeCommasClient) ListBots(ctx context.Context, opts ...tc.ListBot
 	if m.listBotsErr != nil {
 		return nil, m.listBotsErr
 	}
-	return []tc.Bot{{Id: 1, Name: "Test Bot"}}, nil
+	return []tc.Bot{{Id: 1}}, nil
 }
 
 func (m *mockThreeCommasClient) GetListOfDeals(ctx context.Context, opts ...tc.ListDealsParamsOption) ([]tc.Deal, error) {
@@ -41,7 +41,7 @@ func (m *mockThreeCommasClient) GetDealForID(ctx context.Context, dealId tc.Deal
 	if m.getDealForIDErr != nil {
 		return nil, m.getDealForIDErr
 	}
-	return &tc.Deal{Id: int64(dealId), BotId: 1}, nil
+	return &tc.Deal{Id: int(dealId), BotId: 1}, nil
 }
 
 func TestWithWorkflowID(t *testing.T) {

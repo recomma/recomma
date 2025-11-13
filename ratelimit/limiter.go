@@ -27,7 +27,14 @@ type Config struct {
 	Logger            *slog.Logger  // Optional logger
 }
 
-// Limiter implements a fixed-window rate limiter with workflow reservation support
+// Limiter implements a fixed-window rate limiter with workflow reservation support.
+//
+// The limiter coordinates API calls across multiple concurrent workflows by managing
+// reservations and automatically waking queued workflows when capacity becomes available
+// (through releases, adjustments, or window resets).
+//
+// A background ticker periodically checks for window resets to ensure queued workflows
+// are woken even when no other operations occur.
 type Limiter struct {
 	mu sync.Mutex
 
@@ -44,6 +51,10 @@ type Limiter struct {
 	// Reservation state - supports multiple concurrent reservations
 	activeReservations map[string]*reservation
 	waitQueue          []waitingWorkflow
+
+	// Background ticker for window reset detection
+	ticker *time.Ticker
+	done   chan struct{}
 }
 
 type reservation struct {
@@ -61,7 +72,10 @@ type waitingWorkflow struct {
 	ready          chan struct{}
 }
 
-// NewLimiter creates a new rate limiter with the given configuration
+// NewLimiter creates a new rate limiter with the given configuration.
+//
+// A background goroutine is started to periodically check for window resets,
+// ensuring queued workflows are woken even when no other operations occur.
 func NewLimiter(cfg Config) *Limiter {
 	if cfg.WindowDuration <= 0 {
 		cfg.WindowDuration = 60 * time.Second
@@ -70,7 +84,13 @@ func NewLimiter(cfg Config) *Limiter {
 		cfg.Logger = slog.Default()
 	}
 
-	return &Limiter{
+	// Check for window resets frequently (every 1/10th of window duration)
+	tickInterval := cfg.WindowDuration / 10
+	if tickInterval < 100*time.Millisecond {
+		tickInterval = 100 * time.Millisecond
+	}
+
+	l := &Limiter{
 		limit:              cfg.RequestsPerMinute,
 		window:             cfg.WindowDuration,
 		prioritySlots:      cfg.PrioritySlots,
@@ -78,10 +98,27 @@ func NewLimiter(cfg Config) *Limiter {
 		windowStart:        time.Now(),
 		consumed:           0,
 		activeReservations: make(map[string]*reservation),
+		ticker:             time.NewTicker(tickInterval),
+		done:               make(chan struct{}),
 	}
+
+	// Start background goroutine to detect window resets
+	go l.windowResetWatcher()
+
+	return l
 }
 
-// Reserve requests N slots for a workflow. Blocks until granted or context cancelled.
+// Reserve requests N slots for a workflow.
+//
+// If capacity is immediately available, the reservation is granted and the function
+// returns immediately. If capacity is exhausted, the request is added to a FIFO queue
+// and blocks until:
+//   - Capacity becomes available through Release() or AdjustDown() of other workflows
+//   - The rate limit window resets (automatically detected by background ticker)
+//   - The context is cancelled
+//
+// Multiple workflows can hold concurrent reservations when total capacity allows.
+// Queued workflows are automatically woken in FIFO order when capacity becomes available.
 func (l *Limiter) Reserve(ctx context.Context, workflowID string, count int) error {
 	if workflowID == "" {
 		return ErrInvalidWorkflowID
@@ -211,7 +248,12 @@ func (l *Limiter) ConsumeWithOperation(workflowID string, operation string) erro
 	return nil
 }
 
-// AdjustDown reduces reservation size when actual needs are known
+// AdjustDown reduces reservation size when actual needs are known.
+//
+// This immediately frees capacity and attempts to wake queued workflows in FIFO order.
+// The calling workflow's reservation remains active and it can continue executing.
+// This enables the early release pattern where queued workflows can start while the
+// original workflow continues processing.
 func (l *Limiter) AdjustDown(workflowID string, newTotal int) error {
 	if workflowID == "" {
 		return ErrInvalidWorkflowID
@@ -340,7 +382,12 @@ func (l *Limiter) Extend(ctx context.Context, workflowID string, additional int)
 	return ErrInsufficientCapacity
 }
 
-// SignalComplete indicates no more API calls will be made
+// SignalComplete indicates no more API calls will be made.
+//
+// This marks the reservation as complete and attempts to wake queued workflows.
+// The reservation remains active until Release() is called. This is distinct from
+// Release - the workflow may still be processing in-memory data but has freed its
+// API quota claim.
 func (l *Limiter) SignalComplete(workflowID string) error {
 	if workflowID == "" {
 		return ErrInvalidWorkflowID
@@ -370,7 +417,11 @@ func (l *Limiter) SignalComplete(workflowID string) error {
 	return nil
 }
 
-// Release frees the reservation entirely
+// Release frees the reservation entirely.
+//
+// This removes the workflow from active reservations and immediately attempts to
+// wake queued workflows in FIFO order. Multiple queued workflows may be granted
+// if the freed capacity allows.
 func (l *Limiter) Release(workflowID string) error {
 	if workflowID == "" {
 		return ErrInvalidWorkflowID
@@ -418,7 +469,11 @@ func (l *Limiter) Stats() (consumed, limit, queueLen int, hasReservation bool) {
 	return l.consumed, l.limit, len(l.waitQueue), len(l.activeReservations) > 0
 }
 
-// resetWindowIfNeeded resets the window if we've passed the boundary (must be called with lock held)
+// resetWindowIfNeeded resets the window if we've passed the boundary and attempts to wake
+// queued workflows. Must be called with lock held.
+//
+// This is called both during normal operations (Reserve, Consume, etc.) and by the background
+// ticker to ensure queued workflows are woken even when no other operations occur.
 func (l *Limiter) resetWindowIfNeeded() {
 	now := time.Now()
 	if now.Sub(l.windowStart) >= l.window {
@@ -508,4 +563,29 @@ func (l *Limiter) removeFromQueue(workflowID string) {
 			return
 		}
 	}
+}
+
+// windowResetWatcher runs in the background to periodically check for window resets.
+// This ensures queued workflows are woken even when no other limiter operations occur.
+func (l *Limiter) windowResetWatcher() {
+	for {
+		select {
+		case <-l.ticker.C:
+			l.mu.Lock()
+			// Only check if there are queued workflows waiting
+			if len(l.waitQueue) > 0 {
+				l.resetWindowIfNeeded()
+			}
+			l.mu.Unlock()
+		case <-l.done:
+			return
+		}
+	}
+}
+
+// Stop stops the background window reset watcher and cleans up resources.
+// After calling Stop, the limiter should not be used.
+func (l *Limiter) Stop() {
+	l.ticker.Stop()
+	close(l.done)
 }

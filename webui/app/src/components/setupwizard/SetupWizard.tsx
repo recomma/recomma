@@ -9,6 +9,7 @@ import { StepIndicator } from './StepIndicator';
 import { CheckCircle2 } from 'lucide-react';
 import type {
   VaultEncryptedPayload,
+  VaultSecretsBundle,
   VaultSecretsBundleExtended,
   VaultSetupRequest,
   VaultVenueSecret,

@@ -447,7 +447,7 @@ func TestLimiter_ExtendRequiresWindowReset(t *testing.T) {
 	})
 }
 
-// Test window reset behavior
+// Test window reset behavior - queued workflow should automatically wake when window resets
 func TestLimiter_WindowReset(t *testing.T) {
 	runLimiterTest(t, func(t *testing.T) {
 		l := NewLimiter(Config{
@@ -471,14 +471,15 @@ func TestLimiter_WindowReset(t *testing.T) {
 			}
 		}
 
-		// Release
+		// Release - now there are NO active reservations
 		err = l.Release("workflow-1")
 		if err != nil {
 			t.Fatalf("Release failed: %v", err)
 		}
 
-		// Try to reserve again immediately (should wait until window resets)
+		// Try to reserve again immediately (should queue, then auto-wake when window resets)
 		reserveErr := make(chan error, 1)
+		reserveStart := time.Now()
 		go func() {
 			reserveErr <- l.Reserve(ctx, "workflow-2", 5)
 		}()
@@ -486,36 +487,98 @@ func TestLimiter_WindowReset(t *testing.T) {
 		// Ensure the second workflow is queued before advancing time
 		synctest.Wait()
 
-		// Wait for window reset
+		// Verify it's queued
+		_, _, queueLen, _ := l.Stats()
+		if queueLen != 1 {
+			t.Fatalf("Expected workflow-2 to be queued, got queue length %d", queueLen)
+		}
+
+		// Wait for window reset (window is 500ms, we wait 600ms)
 		time.Sleep(600 * time.Millisecond)
 
-		// Start third workflow which will trigger reset detection
-		reserveThird := make(chan error, 1)
-		go func() {
-			reserveThird <- l.Reserve(ctx, "workflow-3", 5)
-		}()
-
+		// workflow-2 should automatically wake up and be granted WITHOUT needing
+		// any other operation to trigger resetWindowIfNeeded()
 		select {
 		case err = <-reserveErr:
 			if err != nil {
-				t.Fatalf("Second reserve failed: %v", err)
+				t.Fatalf("workflow-2 reserve failed: %v", err)
+			}
+			elapsed := time.Since(reserveStart)
+			// Should have waited approximately the window duration
+			if elapsed < 400*time.Millisecond || elapsed > 800*time.Millisecond {
+				t.Errorf("Expected wait ~500ms, got %v", elapsed)
 			}
 			l.Release("workflow-2")
 		case <-time.After(1 * time.Second):
-			t.Fatal("workflow-2 reservation was not granted after window reset")
+			t.Fatal("workflow-2 was not automatically granted after window reset (BUG: no background ticker)")
+		}
+	})
+}
+
+// Test for deadlock bug: queued reservation should wake when window resets even without other operations
+// This reproduces the exact scenario from the bug report
+func TestLimiter_QueuedReservationDeadlock(t *testing.T) {
+	runLimiterTest(t, func(t *testing.T) {
+		l := NewLimiter(Config{
+			RequestsPerMinute: 10,
+			WindowDuration:    500 * time.Millisecond,
+			Logger:            slog.Default(),
+		})
+
+		ctx := t.Context()
+
+		// Scenario: Exhaust the quota with a burst
+		err := l.Reserve(ctx, "burst-workflow", 10)
+		if err != nil {
+			t.Fatalf("Reserve failed: %v", err)
 		}
 
-		select {
-		case err = <-reserveThird:
+		// Consume all slots
+		for i := 0; i < 10; i++ {
+			err = l.Consume("burst-workflow")
 			if err != nil {
-				t.Fatalf("Reserve after window reset failed: %v", err)
+				t.Fatalf("Consume failed: %v", err)
 			}
-		case <-time.After(1 * time.Second):
-			t.Fatal("workflow-3 reservation was not granted after window reset")
 		}
 
-		// Cleanup
-		l.Release("workflow-3")
+		// Release - no active reservations left
+		err = l.Release("burst-workflow")
+		if err != nil {
+			t.Fatalf("Release failed: %v", err)
+		}
+
+		// Now a single caller tries to reserve
+		// Since quota is exhausted and no reservations are active, it queues
+		reserveErr := make(chan error, 1)
+		go func() {
+			reserveErr <- l.Reserve(ctx, "waiting-workflow", 5)
+		}()
+
+		// Ensure it's queued
+		synctest.Wait()
+		_, _, queueLen, hasRes := l.Stats()
+		if queueLen != 1 {
+			t.Fatalf("Expected 1 queued workflow, got %d", queueLen)
+		}
+		if hasRes {
+			t.Fatal("Expected no active reservations")
+		}
+
+		// Wait for window to reset
+		time.Sleep(600 * time.Millisecond)
+
+		// The bug: waiting-workflow should automatically wake and be granted
+		// but it won't because no other operation calls resetWindowIfNeeded()
+		select {
+		case err = <-reserveErr:
+			if err != nil {
+				t.Fatalf("Reserve failed: %v", err)
+			}
+			// Success! The workflow was automatically woken
+			l.Release("waiting-workflow")
+		case <-time.After(1 * time.Second):
+			t.Fatal("DEADLOCK BUG: waiting workflow was never woken after window reset")
+		}
 	})
 }
 

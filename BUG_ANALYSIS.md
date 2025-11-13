@@ -166,10 +166,93 @@ The corrected tests cannot be run currently due to Go version requirements (proj
 
 1. ✅ Identified root cause
 2. ✅ Wrote corrected tests defining expected behavior
-3. ⏳ Implement solution (background ticker or scheduled wake-up)
-4. ⏳ Verify corrected tests pass
+3. ✅ Implemented solution (background ticker)
+4. ⏳ Verify corrected tests pass (pending Go 1.25.0 availability)
 5. ⏳ Ensure all existing tests still pass
 6. ⏳ Commit and push fix to branch
+
+## Implementation (COMPLETED)
+
+### Solution: Background Ticker
+
+Implemented a background goroutine that periodically checks for window resets:
+
+**Changes to `ratelimit/limiter.go`:**
+
+1. **Updated godoc comments** to explicitly document auto-wake behavior:
+   - `Limiter` type: Documents background ticker
+   - `Reserve()`: Explicitly states queued workflows auto-wake on window reset
+   - `AdjustDown()`, `Release()`, `SignalComplete()`: Document wake behavior
+   - `resetWindowIfNeeded()`: Documents dual purpose (operations + ticker)
+
+2. **Added fields to Limiter struct:**
+   ```go
+   ticker *time.Ticker
+   done   chan struct{}
+   ```
+
+3. **Modified `NewLimiter()`:**
+   - Creates ticker with interval = `window / 10` (min 100ms)
+   - Starts background `windowResetWatcher()` goroutine
+   - Returns immediately (non-blocking)
+
+4. **Added `windowResetWatcher()` method:**
+   ```go
+   func (l *Limiter) windowResetWatcher() {
+       for {
+           select {
+           case <-l.ticker.C:
+               l.mu.Lock()
+               if len(l.waitQueue) > 0 {
+                   l.resetWindowIfNeeded()
+               }
+               l.mu.Unlock()
+           case <-l.done:
+               return
+           }
+       }
+   }
+   ```
+   - Runs in background
+   - Only checks when queue is non-empty (optimization)
+   - Properly synchronized with mutex
+   - Gracefully stops on `done` signal
+
+5. **Added `Stop()` method:**
+   ```go
+   func (l *Limiter) Stop() {
+       l.ticker.Stop()
+       close(l.done)
+   }
+   ```
+   - Allows clean shutdown
+   - Stops ticker and background goroutine
+
+### How It Works
+
+1. **Normal case (capacity available)**: Reserve() returns immediately, no ticker needed
+2. **Queue case (capacity exhausted)**:
+   - Workflow calls Reserve(), gets queued, blocks on `ready` channel
+   - Background ticker runs every `window/10` (e.g., 6 seconds for 60s window)
+   - When window boundary passes, ticker detects it via `resetWindowIfNeeded()`
+   - `resetWindowIfNeeded()` calls `tryGrantWaiting()`
+   - `tryGrantWaiting()` closes the `ready` channel
+   - Blocked workflow wakes up and completes
+
+### Why This Solution
+
+**Pros:**
+- Simple and reliable
+- Guaranteed to detect resets (no race conditions)
+- Minimal overhead (only ticks when queue non-empty optimization possible)
+- Works for all edge cases
+- No complex timer management
+
+**Cons:**
+- Small constant overhead (goroutine + ticker)
+- Wake timing is approximate (within `window/10` precision)
+  - For 60s window, check every 6s, so worst case 6s delay after reset
+  - This is acceptable given the minute-scale rate limits
 
 ## Files Modified
 

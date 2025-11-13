@@ -22,6 +22,7 @@ func TestLimiter_BasicReserveRelease(t *testing.T) {
 		RequestsPerMinute: 10,
 		Logger:            slog.Default(),
 	})
+	defer l.Stop()
 
 	ctx := context.Background()
 	workflowID := "test-workflow-1"
@@ -69,6 +70,7 @@ func TestLimiter_Consume(t *testing.T) {
 		RequestsPerMinute: 10,
 		Logger:            slog.Default(),
 	})
+	defer l.Stop()
 
 	ctx := context.Background()
 	workflowID := "test-workflow-1"
@@ -122,6 +124,7 @@ func TestLimiter_AdjustDown(t *testing.T) {
 		RequestsPerMinute: 10,
 		Logger:            slog.Default(),
 	})
+	defer l.Stop()
 
 	ctx := context.Background()
 	workflowID := "test-workflow-1"
@@ -180,6 +183,7 @@ func TestLimiter_FIFOQueue(t *testing.T) {
 			RequestsPerMinute: 5,
 			Logger:            slog.Default(),
 		})
+		defer l.Stop()
 
 		ctx := t.Context()
 
@@ -246,6 +250,7 @@ func TestLimiter_AdjustDownEnablesWaiting(t *testing.T) {
 			RequestsPerMinute: 5,
 			Logger:            slog.Default(),
 		})
+		defer l.Stop()
 
 		ctx := t.Context()
 
@@ -310,6 +315,7 @@ func TestLimiter_SignalComplete(t *testing.T) {
 		RequestsPerMinute: 10,
 		Logger:            slog.Default(),
 	})
+	defer l.Stop()
 
 	ctx := context.Background()
 	workflowID := "test-workflow-1"
@@ -346,6 +352,7 @@ func TestLimiter_Extend(t *testing.T) {
 		RequestsPerMinute: 10,
 		Logger:            slog.Default(),
 	})
+	defer l.Stop()
 
 	ctx := context.Background()
 	workflowID := "test-workflow-1"
@@ -399,6 +406,7 @@ func TestLimiter_ExtendRequiresWindowReset(t *testing.T) {
 			WindowDuration:    500 * time.Millisecond, // Short window for testing
 			Logger:            slog.Default(),
 		})
+		defer l.Stop()
 
 		ctx := t.Context()
 		workflowID := "test-workflow-1"
@@ -455,6 +463,7 @@ func TestLimiter_WindowReset(t *testing.T) {
 			WindowDuration:    500 * time.Millisecond,
 			Logger:            slog.Default(),
 		})
+		defer l.Stop()
 
 		ctx := t.Context()
 
@@ -524,6 +533,7 @@ func TestLimiter_QueuedReservationDeadlock(t *testing.T) {
 			WindowDuration:    500 * time.Millisecond,
 			Logger:            slog.Default(),
 		})
+		defer l.Stop()
 
 		ctx := t.Context()
 
@@ -589,6 +599,7 @@ func TestLimiter_ReserveContextCancellation(t *testing.T) {
 			RequestsPerMinute: 5,
 			Logger:            slog.Default(),
 		})
+		defer l.Stop()
 
 		ctx := t.Context()
 
@@ -634,6 +645,7 @@ func TestLimiter_ErrorConditions(t *testing.T) {
 		RequestsPerMinute: 10,
 		Logger:            slog.Default(),
 	})
+	defer l.Stop()
 
 	ctx := context.Background()
 
@@ -708,6 +720,7 @@ func TestLimiter_Concurrent(t *testing.T) {
 			RequestsPerMinute: 20,
 			Logger:            slog.Default(),
 		})
+		defer l.Stop()
 
 		ctx := t.Context()
 		const numWorkflows = 10
@@ -766,6 +779,7 @@ func TestLimiter_ConsumeWithOperation(t *testing.T) {
 		RequestsPerMinute: 10,
 		Logger:            slog.Default(),
 	})
+	defer l.Stop()
 
 	ctx := context.Background()
 	workflowID := "test-workflow-1"
@@ -797,6 +811,7 @@ func BenchmarkLimiter_ReserveRelease(b *testing.B) {
 		RequestsPerMinute: 1000,
 		Logger:            slog.Default(),
 	})
+	defer l.Stop()
 
 	ctx := context.Background()
 

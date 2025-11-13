@@ -89,7 +89,7 @@ The solution must handle:
 
 *Coordinate at the application level, before requests reach the SDK.*
 
-The rate limiter operates as a gatekeeper that serializes workflow execution through a reservation mechanism. Only ONE workflow can hold an active reservation at any time.
+The rate limiter operates as a gatekeeper that coordinates workflow execution through a reservation mechanism. Each workflow reserves capacity upfront, guaranteeing it can complete its sequence of API calls without starvation or interruption from competing workflows. Multiple workflows can hold concurrent reservations when capacity allows.
 
 === Reservation Lifecycle
 
@@ -107,14 +107,20 @@ Release (free reservation)
 
 === Key Mechanisms
 
-*Single Active Reservation*::
-Only one workflow can hold a reservation at any given time. All other workflows wait in a FIFO queue.
+*Multiple Concurrent Reservations*::
+Multiple workflows can hold concurrent reservations. The total of all reserved slots across active workflows cannot exceed the window limit minus current consumption. Workflows waiting for capacity are queued in FIFO order.
+
+*Sequential Execution Guarantee*::
+Each workflow's API calls execute sequentially within its reservation, preventing race conditions and ensuring complete data retrieval for each workflow's operation sequence.
 
 *Pessimistic Initial Reservation*::
-Workflows reserve conservatively (more slots than likely needed) to ensure they can complete. Once actual requirements are known, they adjust downward.
+Workflows reserve conservatively (more slots than likely needed) to ensure they can complete their entire sequence of API calls. Once actual requirements are known, they adjust downward.
 
 *Early Release Through AdjustDown*::
-When a workflow determines it needs fewer slots than reserved, it immediately releases the excess. This allows queued workflows to start *while the original workflow is still executing*.
+When a workflow determines it needs fewer slots than reserved, it immediately releases the excess. This frees capacity for queued workflows to start *while the original workflow continues executing*.
+
+*Cross-Window Reservations*::
+Reservations can span multiple rate limit windows. A workflow reserves capacity based on remaining unconsumed slots, allowing large operations (e.g., 1000 bots) to complete sequentially across multiple 60-second windows.
 
 *SignalComplete*::
 Workflows signal when they will make no further API calls. This is distinct from Release - the workflow may still be processing in-memory data but has freed its API quota claim.
@@ -130,12 +136,13 @@ Workflows signal when they will make no further API calls. This is distinct from
 - `consumed`: Number of API calls actually made in current window
 
 *Reservation Tracking*::
-- `activeReservation`: Single active workflow reservation (can be nil)
+- `activeReservations`: Map of active workflow reservations by workflowID
   * `workflowID`: Unique identifier for workflow
   * `slotsReserved`: Number of slots claimed
-  * `slotsConsumed`: Number of API calls actually made
+  * `slotsConsumed`: Number of API calls actually made (persists across window resets)
   * `createdAt`: Timestamp for metrics
-- `waitQueue`: FIFO queue of workflow IDs waiting to reserve
+  * `completed`: Boolean indicating no more API calls will be made
+- `waitQueue`: FIFO queue of workflows waiting for capacity
 
 *Priority System* (Future)::
 - `prioritySlots`: Reserved quota for critical operations
@@ -147,10 +154,12 @@ Workflows signal when they will make no further API calls. This is distinct from
 Request N slots for a workflow. Blocks until granted or context cancelled.
 
 Behavior:
-1. If no active reservation and window has capacity � grant immediately
-2. If active reservation exists � add to wait queue and block
-3. When window resets, recalculate capacity before granting
-4. FIFO ordering ensures fairness
+1. Check if workflow already has an active reservation � error if duplicate
+2. Calculate total reserved slots across all active reservations
+3. If `consumed + totalReserved + count <= limit` � grant immediately
+4. Otherwise � add to wait queue and block
+5. When capacity becomes available (via Release, AdjustDown, or window reset), grant in FIFO order
+6. Multiple workflows can have concurrent active reservations when capacity allows
 
 *Consume(workflowID)*::
 Mark one slot as consumed (called immediately before each API call).
@@ -168,17 +177,20 @@ Behavior:
 1. Verify workflowID holds active reservation
 2. Verify newTotal >= slotsConsumed (can't adjust below what's already used)
 3. Update `slotsReserved` to newTotal
-4. Signal waiting workflows that capacity may be available
-5. Does NOT release the reservation - workflow continues
+4. Calculate freed capacity and immediately try to grant waiting workflows
+5. Does NOT release the reservation - workflow continues executing
+6. Enables early release pattern: queued workflows start while original continues
 
 *Extend(workflowID, additional)*::
 Request additional slots beyond current reservation.
 
 Behavior:
 1. Verify workflowID holds active reservation
-2. Calculate if current window has capacity
+2. Check if additional consumption fits: `consumed + newReservation - slotsConsumed <= limit`
+   * This allows reservations to span multiple windows by checking only *additional* consumption needed
 3. If yes � grant immediately, increase `slotsReserved`
-4. If no � block until next window reset (keep reservation, block queue)
+4. If no � wait for next window reset, then retry
+5. Enables large workflows (e.g., 1000 bots) to complete sequentially across multiple windows
 
 *SignalComplete(workflowID)*::
 Indicate no more API calls will be made.
@@ -193,9 +205,9 @@ Behavior:
 Free the reservation entirely.
 
 Behavior:
-1. Remove from activeReservation
-2. Signal next workflow in wait queue
-3. Next workflow attempts Reserve from step 1
+1. Remove workflow from activeReservations map
+2. Try to grant waiting workflows using freed capacity
+3. Multiple waiting workflows may be granted if capacity allows
 
 === Window Reset Logic
 
@@ -203,8 +215,10 @@ Every 60 seconds, the window resets:
 
 1. `windowStart` = current time
 2. `consumed` = 0
-3. Active reservation is NOT cancelled (workflow continues)
-4. Waiting workflows are NOT automatically granted (must re-check capacity)
+3. Active reservations are NOT cancelled (workflows continue)
+4. Each reservation's `slotsConsumed` persists (tracks total consumption across windows)
+5. Waiting workflows are immediately re-evaluated and granted if capacity now available
+6. This allows cross-window reservations while enforcing per-window rate limits
 
 If a workflow was blocked waiting for window reset (e.g., Extend needed 10 slots but only 3 available), it wakes up and retries.
 
@@ -479,7 +493,7 @@ Time 60s:
   HandleDeal(BBB): Reserve(2) � GRANTED
 ```
 
-*Key Insight*: AdjustDown at Time 1s allowed HandleDeal(AAA) to start while ProduceActiveDeals was still running. This is the mechanism for overlapping workflow execution without violating the single-reservation principle.
+*Key Insight*: AdjustDown at Time 1s freed capacity, allowing HandleDeal(AAA) to reserve and start while ProduceActiveDeals continued running. Both workflows hold concurrent active reservations (ProduceActiveDeals: 3 slots, HandleDeal(AAA): 2 slots = 5 total). This demonstrates how multiple concurrent reservations enable parallel workflow execution while ensuring each workflow completes its sequential API calls.
 
 == Priority System (Future Extension)
 
@@ -585,21 +599,24 @@ These questions cannot be answered during design phase and require implementatio
 
 === 3. Window Capacity Calculation
 
-*Question*: When checking if next workflow can reserve, is the formula: `(consumed + all_active_reservations + requested) <= limit`?
+*Answer*: The formula is: `(consumed + totalReserved + requested) <= limit`
 
-*Context*: How do we account for reservations vs actual consumption when deciding to grant?
+Where `totalReserved` is the sum of `slotsReserved` across all active reservations.
 
-*Impact*: Core correctness of the rate limiter.
+*Rationale*: Reservations represent committed capacity. Even if not yet consumed, reserved slots cannot be double-allocated. This ensures workflows can complete their sequences without exhausting quota mid-execution.
 
 === 4. Extend Across Window Boundary
 
-*Question*: When Extend requires waiting for window reset, should we:
-- Keep reservation and wait (blocks queue)
-- Release and re-reserve in new window (loses priority)
+*Answer*: Keep reservation and wait for window reset.
 
-*Context*: ProduceActiveDeals on Expert with 1000 bots might need multiple windows. Should it hold the reservation across windows?
+*Implementation*: The capacity check is: `consumed + newReservation - slotsConsumed <= limit`
 
-*Impact*: Fairness vs throughput tradeoff for large workloads.
+This formula checks if the *additional* consumption fits in the current window, allowing reservations to span multiple windows. Example (limit=10):
+- Window 1: Reserve 8, consume all 8
+- Window 2: Extend to 13 → check `0 + 13 - 8 = 5 <= 10` ✓
+- Only needs 5 additional slots in new window
+
+*Rationale*: Preserves sequential execution guarantee for large workflows. ProduceActiveDeals on Expert with 1000 bots can reserve across 9+ windows, ensuring complete data retrieval without interruption.
 
 === 5. Workflow Context Propagation
 

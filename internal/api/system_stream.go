@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	defaultSystemStreamBuffer  = 100
-	defaultSystemEventHistory  = 50           // Keep last 50 events
-	defaultSystemEventMaxAge   = 5 * time.Minute // Keep events for 5 minutes
+	defaultSystemStreamBuffer = 100
+	defaultSystemEventHistory = 50              // Keep last 50 events
+	defaultSystemEventMaxAge  = 5 * time.Minute // Keep events for 5 minutes
 )
 
 // SystemEventLevel represents the severity of a system event
@@ -34,9 +34,39 @@ type SystemEvent struct {
 }
 
 type systemSubscriber struct {
-	id  int64
-	ch  chan SystemEvent
-	ctx context.Context
+	id     int64
+	ch     chan SystemEvent
+	ctx    context.Context
+	mu     sync.RWMutex
+	closed bool
+}
+
+func (s *systemSubscriber) trySend(evt SystemEvent) (sent bool, closed bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.closed {
+		return false, true
+	}
+
+	select {
+	case s.ch <- evt:
+		return true, false
+	default:
+		return false, false
+	}
+}
+
+func (s *systemSubscriber) close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		return
+	}
+
+	close(s.ch)
+	s.closed = true
 }
 
 // SystemStreamController coordinates system event subscribers and event fan-out
@@ -50,21 +80,21 @@ type SystemStreamController struct {
 	minLevel    SystemEventLevel // Only publish events >= this level
 
 	// Message history for late joiners
-	eventHistory    []SystemEvent
-	maxHistorySize  int
-	maxHistoryAge   time.Duration
+	eventHistory   []SystemEvent
+	maxHistorySize int
+	maxHistoryAge  time.Duration
 }
 
 // NewSystemStreamController constructs a controller with the specified minimum log level
 func NewSystemStreamController(minLevel SystemEventLevel) *SystemStreamController {
 	return &SystemStreamController{
-		subscribers:     make(map[int64]*systemSubscriber),
-		bufferSize:      defaultSystemStreamBuffer,
-		minLevel:        minLevel,
-		logger:          slog.Default().WithGroup("system_stream"),
-		eventHistory:    make([]SystemEvent, 0, defaultSystemEventHistory),
-		maxHistorySize:  defaultSystemEventHistory,
-		maxHistoryAge:   defaultSystemEventMaxAge,
+		subscribers:    make(map[int64]*systemSubscriber),
+		bufferSize:     defaultSystemStreamBuffer,
+		minLevel:       minLevel,
+		logger:         slog.Default().WithGroup("system_stream"),
+		eventHistory:   make([]SystemEvent, 0, defaultSystemEventHistory),
+		maxHistorySize: defaultSystemEventHistory,
+		maxHistoryAge:  defaultSystemEventMaxAge,
 	}
 }
 
@@ -88,21 +118,26 @@ func (c *SystemStreamController) Subscribe(ctx context.Context) (<-chan SystemEv
 	c.mu.Unlock()
 
 	// Send history events in a goroutine to avoid blocking
-	go func() {
+	go func(sub *systemSubscriber, history []SystemEvent) {
 		for _, evt := range history {
-			select {
-			case ch <- evt:
-			case <-ctx.Done():
+			if ctx.Err() != nil {
 				c.logger.Warn("Subscriber context cancelled while sending history",
 					slog.Int64("subscriber_id", sub.id))
 				return
-			default:
+			}
+
+			sent, closed := sub.trySend(evt)
+			if closed {
+				return
+			}
+
+			if !sent {
 				// Skip if buffer full (shouldn't happen with fresh subscriber)
 				c.logger.Warn("Skipping history event, buffer full",
 					slog.Int64("subscriber_id", sub.id))
 			}
 		}
-	}()
+	}(sub, history)
 
 	go c.awaitCancellation(sub)
 	return ch, nil
@@ -126,12 +161,17 @@ func (c *SystemStreamController) getRecentHistory() []SystemEvent {
 func (c *SystemStreamController) awaitCancellation(sub *systemSubscriber) {
 	<-sub.ctx.Done()
 
+	shouldClose := false
 	c.mu.Lock()
 	if _, ok := c.subscribers[sub.id]; ok {
 		delete(c.subscribers, sub.id)
-		close(sub.ch)
+		shouldClose = true
 	}
 	c.mu.Unlock()
+
+	if shouldClose {
+		sub.close()
+	}
 }
 
 // Publish fan-outs the event to all matching subscribers. Events are delivered
@@ -156,9 +196,12 @@ func (c *SystemStreamController) Publish(evt SystemEvent) {
 
 	// Fan out to subscribers without holding lock
 	for _, sub := range subscribers {
-		select {
-		case sub.ch <- evt:
-		default:
+		sent, closed := sub.trySend(evt)
+		if closed {
+			continue
+		}
+
+		if !sent {
 			if c.logger != nil {
 				c.logger.Warn("dropping system event; subscriber buffer full",
 					slog.Int64("subscriber", sub.id),
@@ -207,7 +250,7 @@ func (c *SystemStreamController) Flush() {
 	defer c.mu.Unlock()
 
 	for id, sub := range c.subscribers {
-		close(sub.ch)
+		sub.close()
 		delete(c.subscribers, id)
 	}
 }

@@ -3,6 +3,7 @@ package recomma
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 )
@@ -15,6 +16,15 @@ const (
 	ThreeCommasPlanTierPro     ThreeCommasPlanTier = "pro"
 	ThreeCommasPlanTierExpert  ThreeCommasPlanTier = "expert"
 )
+
+// RateLimitConfig holds tier-specific rate limiting configuration
+type RateLimitConfig struct {
+	RequestsPerMinute   int
+	PrioritySlots       int
+	DealWorkers         int
+	ProduceConcurrency  int
+	ResyncInterval      time.Duration
+}
 
 // DefaultThreeCommasPlanTier returns the tier assumed when secrets pre-date the tier field.
 func DefaultThreeCommasPlanTier() ThreeCommasPlanTier {
@@ -61,6 +71,38 @@ func (t ThreeCommasPlanTier) SDKTier() tc.PlanTier {
 		return tc.PlanPro
 	default:
 		return tc.PlanExpert
+	}
+}
+
+// RateLimitConfig returns the rate limiting configuration for this tier
+func (t ThreeCommasPlanTier) RateLimitConfig() RateLimitConfig {
+	switch t {
+	case ThreeCommasPlanTierStarter:
+		return RateLimitConfig{
+			RequestsPerMinute:  5,
+			PrioritySlots:      1, // 20%
+			DealWorkers:        1,
+			ProduceConcurrency: 1, // Sequential bot processing
+			ResyncInterval:     60 * time.Second,
+		}
+	case ThreeCommasPlanTierPro:
+		return RateLimitConfig{
+			RequestsPerMinute:  50,
+			PrioritySlots:      5, // 10%
+			DealWorkers:        5,
+			ProduceConcurrency: 10,
+			ResyncInterval:     30 * time.Second,
+		}
+	case ThreeCommasPlanTierExpert:
+		fallthrough
+	default:
+		return RateLimitConfig{
+			RequestsPerMinute:  120,
+			PrioritySlots:      10, // 8%
+			DealWorkers:        25,
+			ProduceConcurrency: 32,
+			ResyncInterval:     15 * time.Second,
+		}
 	}
 }
 

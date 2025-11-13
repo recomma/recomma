@@ -1368,32 +1368,9 @@ components:
         - secrets
       properties:
         not_secret:
-          type: object
-          required:
-            - username
-          properties:
-            username:
-              type: string
-              description: Logical username mirrored inside the plaintext payload.
+          $ref: '#/components/schemas/VaultSecretsBundleNotSecret'
         secrets:
-          type: object
-          required:
-            - THREECOMMAS_API_KEY
-            - THREECOMMAS_PRIVATE_KEY
-            - venues
-          properties:
-            THREECOMMAS_API_KEY:
-              type: string
-              description: Public API key for the 3Commas integration.
-            THREECOMMAS_PRIVATE_KEY:
-              type: string
-              description: Private API key for the 3Commas integration.
-            venues:
-              type: array
-              description: Collection of venue credentials encrypted within the vault.
-              minItems: 1
-              items:
-                $ref: '#/components/schemas/VaultVenueSecret'
+          $ref: '#/components/schemas/VaultSecretsBundleSecrets'
 
     VaultVenueSecret:
       type: object
@@ -2463,3 +2440,39 @@ components:
           additionalProperties: true
           nullable: true
           description: Structured context (optional)
+    VaultSecretsBundleNotSecret:
+      type: object
+      required:
+        - username
+      properties:
+        username:
+          type: string
+          description: Logical username mirrored inside the plaintext payload.
+
+    VaultSecretsBundleSecrets:
+      type: object
+      required:
+        - THREECOMMAS_API_KEY
+        - THREECOMMAS_PRIVATE_KEY
+        - THREECOMMAS_PLAN_TIER
+        - venues
+      properties:
+        THREECOMMAS_API_KEY:
+          type: string
+          description: Public API key for the 3Commas integration.
+        THREECOMMAS_PRIVATE_KEY:
+          type: string
+          description: Private API key for the 3Commas integration.
+        THREECOMMAS_PLAN_TIER:
+          type: string
+          description: Subscription tier for the 3Commas client rate limits.
+          enum:
+            - starter
+            - pro
+            - expert
+        venues:
+          type: array
+          description: Collection of venue credentials encrypted within the vault.
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/VaultVenueSecret'

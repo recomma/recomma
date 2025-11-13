@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/recomma/recomma/recomma"
 )
 
 // State represents the lifecycle state of the vault controller.
@@ -79,6 +81,9 @@ type Data struct {
 	// THREECOMMASPRIVATEKEY Private API key for the 3Commas integration.
 	THREECOMMASPRIVATEKEY string
 
+	// THREECOMMASPLANTIER Subscription tier governing 3Commas rate limits.
+	THREECOMMASPLANTIER string
+
 	Venues []VenueSecret
 }
 
@@ -95,9 +100,10 @@ type VenueSecret struct {
 }
 
 type wireData struct {
-	ThreeCommasAPIKey  string          `json:"THREECOMMAS_API_KEY"`
-	ThreeCommasPrivate string          `json:"THREECOMMAS_PRIVATE_KEY"`
-	Venues             json.RawMessage `json:"venues"`
+	ThreeCommasAPIKey   string          `json:"THREECOMMAS_API_KEY"`
+	ThreeCommasPrivate  string          `json:"THREECOMMAS_PRIVATE_KEY"`
+	ThreeCommasPlanTier string          `json:"THREECOMMAS_PLAN_TIER"`
+	Venues              json.RawMessage `json:"venues"`
 }
 
 type wireVenue struct {
@@ -125,6 +131,7 @@ func (d *Data) UnmarshalJSON(raw []byte) error {
 
 	d.THREECOMMASAPIKEY = payload.ThreeCommasAPIKey
 	d.THREECOMMASPRIVATEKEY = payload.ThreeCommasPrivate
+	d.THREECOMMASPLANTIER = strings.ToLower(strings.TrimSpace(payload.ThreeCommasPlanTier))
 	d.Venues = venues
 	return nil
 }
@@ -201,6 +208,7 @@ func (d Data) Clone() Data {
 	cloned := Data{
 		THREECOMMASAPIKEY:     d.THREECOMMASAPIKEY,
 		THREECOMMASPRIVATEKEY: d.THREECOMMASPRIVATEKEY,
+		THREECOMMASPLANTIER:   d.THREECOMMASPLANTIER,
 	}
 
 	if len(d.Venues) > 0 {
@@ -251,6 +259,13 @@ func (d Data) Validate() error {
 
 	if strings.TrimSpace(d.THREECOMMASPRIVATEKEY) == "" {
 		return errors.New("invalid payload: missing required field 'secrets.THREECOMMAS_PRIVATE_KEY'")
+	}
+
+	if strings.TrimSpace(d.THREECOMMASPLANTIER) == "" {
+		return errors.New("invalid payload: missing required field 'secrets.THREECOMMAS_PLAN_TIER'")
+	}
+	if _, err := recomma.ParseThreeCommasPlanTier(d.THREECOMMASPLANTIER); err != nil {
+		return fmt.Errorf("invalid payload: %w", err)
 	}
 
 	// Venues are optional - if present, validate them

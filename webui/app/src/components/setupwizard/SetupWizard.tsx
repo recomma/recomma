@@ -9,6 +9,7 @@ import { StepIndicator } from './StepIndicator';
 import { CheckCircle2 } from 'lucide-react';
 import type {
   VaultEncryptedPayload,
+  VaultSecretsBundle,
   VaultSecretsBundleExtended,
   VaultSetupRequest,
   VaultVenueSecret,
@@ -21,6 +22,7 @@ interface SetupData {
   threeCommas: {
     apiKey: string;
     privateKeyFile: string;
+    planTier: VaultSecretsBundle['secrets']['THREECOMMAS_PLAN_TIER'];
   };
   venues: VaultVenueSecret[];
 }
@@ -39,6 +41,7 @@ export function SetupWizard({ onSetupComplete }: SetupWizardProps) {
     threeCommas: {
       apiKey: '',
       privateKeyFile: '',
+      planTier: 'expert',
     },
     venues: [],
   });
@@ -73,6 +76,7 @@ export function SetupWizard({ onSetupComplete }: SetupWizardProps) {
       secrets: {
         THREECOMMAS_API_KEY: data.threeCommas.apiKey.trim(),
         THREECOMMAS_PRIVATE_KEY: data.threeCommas.privateKeyFile.trim(),
+        THREECOMMAS_PLAN_TIER: data.threeCommas.planTier,
         venues: data.venues,
       },
     };
@@ -136,7 +140,7 @@ export function SetupWizard({ onSetupComplete }: SetupWizardProps) {
     setCurrentStep(2);
   };
 
-  const handleThreeCommasComplete = (data: { apiKey: string; privateKeyFile: string }) => {
+  const handleThreeCommasComplete = (data: { apiKey: string; privateKeyFile: string; planTier: SetupData['threeCommas']['planTier'] }) => {
     setSetupData((prev) => ({
       ...prev,
       threeCommas: data,

@@ -189,6 +189,7 @@ func TestUpdateVaultPayload_Success(t *testing.T) {
 		Secrets: vault.Data{
 			THREECOMMASAPIKEY:     "test-key",
 			THREECOMMASPRIVATEKEY: "test-secret",
+			THREECOMMASPLANTIER:   string(recomma.ThreeCommasPlanTierExpert),
 			Venues: []vault.VenueSecret{
 				{
 					ID:         "hyperliquid:main",
@@ -214,16 +215,11 @@ func TestUpdateVaultPayload_Success(t *testing.T) {
 				Nonce:      []byte("new-nonce"),
 			},
 			DecryptedPayload: VaultSecretsBundle{
-				NotSecret: struct {
-					Username string `json:"username"`
-				}{Username: "testuser"},
-				Secrets: struct {
-					THREECOMMASAPIKEY     string             `json:"THREECOMMAS_API_KEY"`
-					THREECOMMASPRIVATEKEY string             `json:"THREECOMMAS_PRIVATE_KEY"`
-					Venues                []VaultVenueSecret `json:"venues"`
-				}{
+				NotSecret: VaultSecretsBundleNotSecret{Username: "testuser"},
+				Secrets: VaultSecretsBundleSecrets{
 					THREECOMMASAPIKEY:     "test-key",
 					THREECOMMASPRIVATEKEY: "test-secret",
+					THREECOMMASPLANTIER:   VaultSecretsBundleSecretsTHREECOMMASPLANTIER(recomma.ThreeCommasPlanTierExpert),
 					Venues: []VaultVenueSecret{
 						{
 							Id:         "hyperliquid:main",
@@ -276,6 +272,7 @@ func TestUpdateVaultPayload_MissingSession(t *testing.T) {
 		Secrets: vault.Data{
 			THREECOMMASAPIKEY:     "test-key",
 			THREECOMMASPRIVATEKEY: "test-secret",
+			THREECOMMASPLANTIER:   string(recomma.ThreeCommasPlanTierExpert),
 			Venues: []vault.VenueSecret{
 				{ID: "test", Type: "hyperliquid", Wallet: "0x1234567890123456789012345678901234567890",
 					PrivateKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", Primary: true},
@@ -339,6 +336,7 @@ func TestUpdateVaultPayload_NoPrimaryVenue(t *testing.T) {
 		Secrets: vault.Data{
 			THREECOMMASAPIKEY:     "test-key",
 			THREECOMMASPRIVATEKEY: "test-secret",
+			THREECOMMASPLANTIER:   string(recomma.ThreeCommasPlanTierExpert),
 			Venues: []vault.VenueSecret{
 				{ID: "test", Type: "hyperliquid", Wallet: "0x1234567890123456789012345678901234567890",
 					PrivateKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", Primary: true},
@@ -358,16 +356,11 @@ func TestUpdateVaultPayload_NoPrimaryVenue(t *testing.T) {
 				Nonce:      []byte("nonce"),
 			},
 			DecryptedPayload: VaultSecretsBundle{
-				NotSecret: struct {
-					Username string `json:"username"`
-				}{Username: "testuser"},
-				Secrets: struct {
-					THREECOMMASAPIKEY     string             `json:"THREECOMMAS_API_KEY"`
-					THREECOMMASPRIVATEKEY string             `json:"THREECOMMAS_PRIVATE_KEY"`
-					Venues                []VaultVenueSecret `json:"venues"`
-				}{
+				NotSecret: VaultSecretsBundleNotSecret{Username: "testuser"},
+				Secrets: VaultSecretsBundleSecrets{
 					THREECOMMASAPIKEY:     "test-key",
 					THREECOMMASPRIVATEKEY: "test-secret",
+					THREECOMMASPLANTIER:   VaultSecretsBundleSecretsTHREECOMMASPLANTIER(recomma.ThreeCommasPlanTierExpert),
 					Venues: []VaultVenueSecret{
 						{
 							Id:         "hyperliquid:main",
@@ -397,6 +390,134 @@ func TestUpdateVaultPayload_NoPrimaryVenue(t *testing.T) {
 	require.Equal(t, 0, store.upsertCallCount)
 }
 
+func TestUpdateVaultPayload_MissingThreeCommasPlanTier(t *testing.T) {
+	stream := NewStreamController()
+	store := newVaultUpdateStubStore(stream)
+
+	user := vault.User{ID: 1, Username: "testuser"}
+	store.user = &user
+
+	vaultCtrl := vault.NewController(vault.StateSealed)
+	vaultCtrl.SetUser(&user)
+	secrets := vault.Secrets{
+		Secrets: vault.Data{
+			THREECOMMASAPIKEY:     "test-key",
+			THREECOMMASPRIVATEKEY: "test-secret",
+			THREECOMMASPLANTIER:   string(recomma.ThreeCommasPlanTierExpert),
+			Venues: []vault.VenueSecret{
+				{ID: "test", Type: "hyperliquid", Wallet: "0x1234567890123456789012345678901234567890",
+					PrivateKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", Primary: true, APIURL: "https://api.hyperliquid.xyz"},
+			},
+		},
+	}
+	expiry := time.Now().Add(30 * time.Minute)
+	require.NoError(t, vaultCtrl.Unseal(secrets, &expiry))
+
+	handler := NewHandler(store, stream, WithVaultController(vaultCtrl), WithDebugMode(true))
+
+	req := UpdateVaultPayloadRequestObject{
+		Body: &UpdateVaultPayloadJSONRequestBody{
+			EncryptedPayload: VaultEncryptedPayload{
+				Version:    "v1",
+				Ciphertext: []byte("ciphertext"),
+				Nonce:      []byte("nonce"),
+			},
+			DecryptedPayload: VaultSecretsBundle{
+				NotSecret: VaultSecretsBundleNotSecret{Username: "testuser"},
+				Secrets: VaultSecretsBundleSecrets{
+					THREECOMMASAPIKEY:     "test-key",
+					THREECOMMASPRIVATEKEY: "test-secret",
+					THREECOMMASPLANTIER:   "",
+					Venues: []VaultVenueSecret{
+						{
+							Id:         "hyperliquid:main",
+							Type:       "hyperliquid",
+							Wallet:     "0x1234567890123456789012345678901234567890",
+							PrivateKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+							IsPrimary:  true,
+							ApiUrl:     stringPtr("https://api.hyperliquid.xyz"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	httpReq := httptest.NewRequest(http.MethodPut, "/vault/payload", nil)
+	issueSessionCookie(t, handler, httpReq)
+	ctx := context.WithValue(context.Background(), httpRequestContextKey, httpReq)
+
+	resp, err := handler.UpdateVaultPayload(ctx, req)
+	require.NoError(t, err)
+
+	_, ok := resp.(UpdateVaultPayload400Response)
+	require.True(t, ok, "expected 400 response for missing plan tier")
+}
+
+func TestUpdateVaultPayload_InvalidThreeCommasPlanTier(t *testing.T) {
+	stream := NewStreamController()
+	store := newVaultUpdateStubStore(stream)
+
+	user := vault.User{ID: 1, Username: "testuser"}
+	store.user = &user
+
+	vaultCtrl := vault.NewController(vault.StateSealed)
+	vaultCtrl.SetUser(&user)
+	secrets := vault.Secrets{
+		Secrets: vault.Data{
+			THREECOMMASAPIKEY:     "test-key",
+			THREECOMMASPRIVATEKEY: "test-secret",
+			THREECOMMASPLANTIER:   string(recomma.ThreeCommasPlanTierExpert),
+			Venues: []vault.VenueSecret{
+				{ID: "test", Type: "hyperliquid", Wallet: "0x1234567890123456789012345678901234567890",
+					PrivateKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", Primary: true, APIURL: "https://api.hyperliquid.xyz"},
+			},
+		},
+	}
+	expiry := time.Now().Add(30 * time.Minute)
+	require.NoError(t, vaultCtrl.Unseal(secrets, &expiry))
+
+	handler := NewHandler(store, stream, WithVaultController(vaultCtrl), WithDebugMode(true))
+
+	req := UpdateVaultPayloadRequestObject{
+		Body: &UpdateVaultPayloadJSONRequestBody{
+			EncryptedPayload: VaultEncryptedPayload{
+				Version:    "v1",
+				Ciphertext: []byte("ciphertext"),
+				Nonce:      []byte("nonce"),
+			},
+			DecryptedPayload: VaultSecretsBundle{
+				NotSecret: VaultSecretsBundleNotSecret{Username: "testuser"},
+				Secrets: VaultSecretsBundleSecrets{
+					THREECOMMASAPIKEY:     "test-key",
+					THREECOMMASPRIVATEKEY: "test-secret",
+					THREECOMMASPLANTIER:   VaultSecretsBundleSecretsTHREECOMMASPLANTIER("enterprise"),
+					Venues: []VaultVenueSecret{
+						{
+							Id:         "hyperliquid:main",
+							Type:       "hyperliquid",
+							Wallet:     "0x1234567890123456789012345678901234567890",
+							PrivateKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+							IsPrimary:  true,
+							ApiUrl:     stringPtr("https://api.hyperliquid.xyz"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	httpReq := httptest.NewRequest(http.MethodPut, "/vault/payload", nil)
+	issueSessionCookie(t, handler, httpReq)
+	ctx := context.WithValue(context.Background(), httpRequestContextKey, httpReq)
+
+	resp, err := handler.UpdateVaultPayload(ctx, req)
+	require.NoError(t, err)
+
+	_, ok := resp.(UpdateVaultPayload400Response)
+	require.True(t, ok, "expected 400 response for invalid plan tier")
+}
+
 func TestUpdateVaultPayload_MultiplePrimaryVenues(t *testing.T) {
 	stream := NewStreamController()
 	store := newVaultUpdateStubStore(stream)
@@ -410,6 +531,7 @@ func TestUpdateVaultPayload_MultiplePrimaryVenues(t *testing.T) {
 		Secrets: vault.Data{
 			THREECOMMASAPIKEY:     "test-key",
 			THREECOMMASPRIVATEKEY: "test-secret",
+			THREECOMMASPLANTIER:   string(recomma.ThreeCommasPlanTierExpert),
 			Venues: []vault.VenueSecret{
 				{ID: "test", Type: "hyperliquid", Wallet: "0x1234567890123456789012345678901234567890",
 					PrivateKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", Primary: true},
@@ -429,16 +551,11 @@ func TestUpdateVaultPayload_MultiplePrimaryVenues(t *testing.T) {
 				Nonce:      []byte("nonce"),
 			},
 			DecryptedPayload: VaultSecretsBundle{
-				NotSecret: struct {
-					Username string `json:"username"`
-				}{Username: "testuser"},
-				Secrets: struct {
-					THREECOMMASAPIKEY     string             `json:"THREECOMMAS_API_KEY"`
-					THREECOMMASPRIVATEKEY string             `json:"THREECOMMAS_PRIVATE_KEY"`
-					Venues                []VaultVenueSecret `json:"venues"`
-				}{
+				NotSecret: VaultSecretsBundleNotSecret{Username: "testuser"},
+				Secrets: VaultSecretsBundleSecrets{
 					THREECOMMASAPIKEY:     "test-key",
 					THREECOMMASPRIVATEKEY: "test-secret",
+					THREECOMMASPLANTIER:   VaultSecretsBundleSecretsTHREECOMMASPLANTIER(recomma.ThreeCommasPlanTierExpert),
 					Venues: []VaultVenueSecret{
 						{
 							Id:         "hyperliquid:main",
@@ -489,6 +606,7 @@ func TestUpdateVaultPayload_DuplicateVenueIDs(t *testing.T) {
 		Secrets: vault.Data{
 			THREECOMMASAPIKEY:     "test-key",
 			THREECOMMASPRIVATEKEY: "test-secret",
+			THREECOMMASPLANTIER:   string(recomma.ThreeCommasPlanTierExpert),
 			Venues: []vault.VenueSecret{
 				{ID: "test", Type: "hyperliquid", Wallet: "0x1234567890123456789012345678901234567890",
 					PrivateKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", Primary: true},
@@ -508,16 +626,11 @@ func TestUpdateVaultPayload_DuplicateVenueIDs(t *testing.T) {
 				Nonce:      []byte("nonce"),
 			},
 			DecryptedPayload: VaultSecretsBundle{
-				NotSecret: struct {
-					Username string `json:"username"`
-				}{Username: "testuser"},
-				Secrets: struct {
-					THREECOMMASAPIKEY     string             `json:"THREECOMMAS_API_KEY"`
-					THREECOMMASPRIVATEKEY string             `json:"THREECOMMAS_PRIVATE_KEY"`
-					Venues                []VaultVenueSecret `json:"venues"`
-				}{
+				NotSecret: VaultSecretsBundleNotSecret{Username: "testuser"},
+				Secrets: VaultSecretsBundleSecrets{
 					THREECOMMASAPIKEY:     "test-key",
 					THREECOMMASPRIVATEKEY: "test-secret",
+					THREECOMMASPLANTIER:   VaultSecretsBundleSecretsTHREECOMMASPLANTIER(recomma.ThreeCommasPlanTierExpert),
 					Venues: []VaultVenueSecret{
 						{
 							Id:         "hyperliquid:main",
@@ -586,16 +699,11 @@ func TestUpdateVaultPayload_InvalidWalletAddress(t *testing.T) {
 				Nonce:      []byte("nonce"),
 			},
 			DecryptedPayload: VaultSecretsBundle{
-				NotSecret: struct {
-					Username string `json:"username"`
-				}{Username: "testuser"},
-				Secrets: struct {
-					THREECOMMASAPIKEY     string             `json:"THREECOMMAS_API_KEY"`
-					THREECOMMASPRIVATEKEY string             `json:"THREECOMMAS_PRIVATE_KEY"`
-					Venues                []VaultVenueSecret `json:"venues"`
-				}{
+				NotSecret: VaultSecretsBundleNotSecret{Username: "testuser"},
+				Secrets: VaultSecretsBundleSecrets{
 					THREECOMMASAPIKEY:     "test-key",
 					THREECOMMASPRIVATEKEY: "test-secret",
+					THREECOMMASPLANTIER:   VaultSecretsBundleSecretsTHREECOMMASPLANTIER(recomma.ThreeCommasPlanTierExpert),
 					Venues: []VaultVenueSecret{
 						{
 							Id:         "hyperliquid:main",
@@ -657,16 +765,11 @@ func TestUpdateVaultPayload_InvalidPrivateKey(t *testing.T) {
 				Nonce:      []byte("nonce"),
 			},
 			DecryptedPayload: VaultSecretsBundle{
-				NotSecret: struct {
-					Username string `json:"username"`
-				}{Username: "testuser"},
-				Secrets: struct {
-					THREECOMMASAPIKEY     string             `json:"THREECOMMAS_API_KEY"`
-					THREECOMMASPRIVATEKEY string             `json:"THREECOMMAS_PRIVATE_KEY"`
-					Venues                []VaultVenueSecret `json:"venues"`
-				}{
+				NotSecret: VaultSecretsBundleNotSecret{Username: "testuser"},
+				Secrets: VaultSecretsBundleSecrets{
 					THREECOMMASAPIKEY:     "test-key",
 					THREECOMMASPRIVATEKEY: "test-secret",
+					THREECOMMASPLANTIER:   VaultSecretsBundleSecretsTHREECOMMASPLANTIER(recomma.ThreeCommasPlanTierExpert),
 					Venues: []VaultVenueSecret{
 						{
 							Id:         "hyperliquid:main",
@@ -729,16 +832,11 @@ func TestUpdateVaultPayload_DatabaseError(t *testing.T) {
 				Nonce:      []byte("nonce"),
 			},
 			DecryptedPayload: VaultSecretsBundle{
-				NotSecret: struct {
-					Username string `json:"username"`
-				}{Username: "testuser"},
-				Secrets: struct {
-					THREECOMMASAPIKEY     string             `json:"THREECOMMAS_API_KEY"`
-					THREECOMMASPRIVATEKEY string             `json:"THREECOMMAS_PRIVATE_KEY"`
-					Venues                []VaultVenueSecret `json:"venues"`
-				}{
+				NotSecret: VaultSecretsBundleNotSecret{Username: "testuser"},
+				Secrets: VaultSecretsBundleSecrets{
 					THREECOMMASAPIKEY:     "test-key",
 					THREECOMMASPRIVATEKEY: "test-secret",
+					THREECOMMASPLANTIER:   VaultSecretsBundleSecretsTHREECOMMASPLANTIER(recomma.ThreeCommasPlanTierExpert),
 					Venues: []VaultVenueSecret{
 						{
 							Id:         "hyperliquid:main",

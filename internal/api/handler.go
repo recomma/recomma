@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -1104,49 +1105,71 @@ func (h *ApiHandler) GetSystemStatus(ctx context.Context, req GetSystemStatusReq
 
 // StreamSystemEvents satisfies StrictServerInterface.
 func (h *ApiHandler) StreamSystemEvents(ctx context.Context, req StreamSystemEventsRequestObject) (StreamSystemEventsResponseObject, error) {
-	h.logger.InfoContext(ctx, "StreamSystemEvents called")
-
 	if h.systemStream == nil {
 		h.logger.ErrorContext(ctx, "systemStream is nil")
 		return StreamSystemEvents500Response{}, nil
 	}
 
-	h.logger.InfoContext(ctx, "Subscribing to system stream")
 	eventCh, err := h.systemStream.Subscribe(ctx)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "Failed to subscribe to system stream", slog.String("error", err.Error()))
 		return StreamSystemEvents500Response{}, nil
 	}
 
-	h.logger.InfoContext(ctx, "Subscription successful, starting SSE stream")
-	pr, pw := io.Pipe()
+	// Use custom SSE response that flushes after each write
+	return streamSystemEventsSSEResponse{
+		ctx:     ctx,
+		eventCh: eventCh,
+		handler: h,
+	}, nil
+}
 
-	go func() {
-		defer pw.Close()
+// streamSystemEventsSSEResponse implements custom SSE streaming with explicit flushing
+type streamSystemEventsSSEResponse struct {
+	ctx     context.Context
+	eventCh <-chan SystemEvent
+	handler *ApiHandler
+}
 
-		for {
-			select {
-			case <-ctx.Done():
-				h.logger.InfoContext(ctx, "SSE context cancelled")
-				return
-			case evt, ok := <-eventCh:
-				if !ok {
-					h.logger.InfoContext(ctx, "Event channel closed")
-					return
-				}
-				h.logger.InfoContext(ctx, "Writing system event to SSE",
-					slog.String("level", string(evt.Level)),
-					slog.String("source", evt.Source))
-				if err := h.writeSystemSSEFrame(pw, evt); err != nil {
-					h.logger.WarnContext(ctx, "write system event frame",
-						slog.String("error", err.Error()))
-					return
-				}
+func (r streamSystemEventsSSEResponse) VisitStreamSystemEventsResponse(w http.ResponseWriter) error {
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(200)
+
+	// Get flusher
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		r.handler.logger.Error("ResponseWriter does not support flushing")
+		return fmt.Errorf("streaming not supported")
+	}
+
+	// CRITICAL: Write initial SSE comment and flush immediately to complete handshake
+	if _, err := w.Write([]byte(": connected\n\n")); err != nil {
+		r.handler.logger.WarnContext(r.ctx, "failed to write initial SSE comment", slog.String("error", err.Error()))
+		return err
+	}
+	flusher.Flush()
+
+	// Stream events
+	for {
+		select {
+		case <-r.ctx.Done():
+			return nil
+		case evt, ok := <-r.eventCh:
+			if !ok {
+				return nil
 			}
-		}
-	}()
 
-	return StreamSystemEvents200TexteventStreamResponse{Body: pr}, nil
+			if err := r.handler.writeSystemSSEFrame(w, evt); err != nil {
+				r.handler.logger.WarnContext(r.ctx, "write system event frame",
+					slog.String("error", err.Error()))
+				return err
+			}
+			flusher.Flush()
+		}
+	}
 }
 
 func (h *ApiHandler) writeSystemSSEFrame(w io.Writer, evt SystemEvent) error {

@@ -33,6 +33,7 @@ import (
 	"github.com/recomma/recomma/internal/vault"
 	rlog "github.com/recomma/recomma/log"
 	"github.com/recomma/recomma/orderid"
+	"github.com/recomma/recomma/ratelimit"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
 	"github.com/recomma/recomma/webui"
@@ -257,17 +258,53 @@ func main() {
 		fatal("vault secrets unavailable", errors.New("vault secrets unavailable"))
 	}
 
-	client, err := tc.New3CommasClient(tc.ClientConfig{
-		APIKey:     secrets.Secrets.THREECOMMASAPIKEY,
-		PrivatePEM: []byte(secrets.Secrets.THREECOMMASPRIVATEKEY),
-	},
-		tc.WithRequestEditorFn(func(ctx context.Context, r *http.Request) error {
-			slog.Default().WithGroup("threecommas").Debug("sending", "method", r.Method, "url", r.URL.String())
+	// Parse ThreeCommas plan tier for rate limiting configuration
+	planTier, defaulted, err := recomma.ParseThreeCommasPlanTierOrDefault(secrets.Secrets.THREECOMMASPLANTIER)
+	if err != nil {
+		fatal("parse threecommas plan tier", err)
+	}
+	if defaulted {
+		logger.Warn("THREECOMMAS_PLAN_TIER missing from vault; defaulting to expert rate limits")
+	}
+
+	// Get tier-specific rate limit configuration
+	rateLimitCfg := planTier.RateLimitConfig()
+
+	// Override configuration with tier-specific values (unless explicitly set by user)
+	cfg.DealWorkers = rateLimitCfg.DealWorkers
+	cfg.ResyncInterval = rateLimitCfg.ResyncInterval
+
+	logger.Info("Rate limiting configured",
+		slog.String("tier", string(planTier)),
+		slog.Int("requests_per_minute", rateLimitCfg.RequestsPerMinute),
+		slog.Int("deal_workers", cfg.DealWorkers),
+		slog.Duration("resync_interval", cfg.ResyncInterval),
+	)
+
+	// Create rate limiter
+	limiter := ratelimit.NewLimiter(ratelimit.Config{
+		RequestsPerMinute: rateLimitCfg.RequestsPerMinute,
+		PrioritySlots:     rateLimitCfg.PrioritySlots,
+		Logger:            logger,
+	})
+
+	// Create ThreeCommas client
+	baseClient, err := tc.New3CommasClient(
+		tc.WithAPIKey(secrets.Secrets.THREECOMMASAPIKEY),
+		tc.WithPrivatePEM([]byte(secrets.Secrets.THREECOMMASPRIVATEKEY)),
+		tc.WithPlanTier(planTier.SDKTier()),
+
+		tc.WithClientOption(tc.WithRequestEditorFn(func(ctx context.Context, r *http.Request) error {
+			slog.Default().WithGroup("threecommas").Debug("requesting", "method", r.Method, "url", r.URL.String())
 			return nil
-		}))
+		})),
+	)
 	if err != nil {
 		fatal("3commas client init failed", err)
 	}
+
+	// Wrap client with rate limiter
+	client := ratelimit.NewClient(baseClient, limiter)
 
 	fillTracker := filltracker.New(store, logger)
 
@@ -515,7 +552,9 @@ func main() {
 	// Queue + workers
 	// Q creation (typed)
 	rl := workqueue.NewTypedMaxOfRateLimiter(
-		workqueue.NewTypedItemExponentialFailureRateLimiter[engine.WorkKey](1*time.Second, 30*time.Second), // backoff on failures
+		// Exponential backoff for retries. Max duration is 2 hours to accommodate
+		// 3Commas rate limit windows, which can be up to an hour or more when quota limits are hit.
+		workqueue.NewTypedItemExponentialFailureRateLimiter[engine.WorkKey](1*time.Second, 2*time.Hour),
 	)
 
 	config := workqueue.TypedRateLimitingQueueConfig[engine.WorkKey]{
@@ -530,6 +569,8 @@ func main() {
 		engine.WithEmitter(engineEmitter),
 		engine.WithFillTracker(fillTracker),
 		engine.WithOrderScaler(scaler),
+		engine.WithRateLimiter(limiter),
+		engine.WithProduceConcurrency(rateLimitCfg.ProduceConcurrency),
 	)
 
 	var wg sync.WaitGroup
@@ -827,7 +868,10 @@ func runWorker(ctx context.Context, wg *sync.WaitGroup, q workqueue.TypedRateLim
 		if shutdown {
 			return
 		}
-		reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		// Use a longer timeout to accommodate 3Commas rate limiting.
+		// The SDK's internal rate limiter may need to wait for rate limit windows,
+		// which can be up to an hour or more when limits are exceeded.
+		reqCtx, cancel := context.WithTimeout(ctx, 2*time.Hour)
 		processWorkItem(reqCtx, q, e, wi)
 		cancel()
 	}

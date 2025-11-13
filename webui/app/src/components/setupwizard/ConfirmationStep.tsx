@@ -4,7 +4,16 @@ import { Badge } from '../ui/badge';
 import { Separator } from '../ui/separator';
 import { Shield, Key, CheckCircle2, Eye, EyeOff, Wallet } from 'lucide-react';
 import { useState } from 'react';
-import type { VaultVenueSecret } from '../../types/api';
+import type { VaultSecretsBundle, VaultVenueSecret } from '../../types/api';
+
+const planTierSummaries: Record<
+  VaultSecretsBundle['secrets']['THREECOMMAS_PLAN_TIER'],
+  string
+> = {
+  starter: 'Starter · 5 req/min (read-only)',
+  pro: 'Pro · 50 req/min (read-only)',
+  expert: 'Expert · 120 req/min (read & write)',
+};
 
 interface ConfirmationStepProps {
   data: {
@@ -13,6 +22,7 @@ interface ConfirmationStepProps {
     threeCommas: {
       apiKey: string;
       privateKeyFile: string;
+      planTier: VaultSecretsBundle['secrets']['THREECOMMAS_PLAN_TIER'];
     };
     venues: VaultVenueSecret[];
   };
@@ -77,6 +87,12 @@ export function ConfirmationStep({ data, onBack, onConfirm, isSubmitting, error 
             <div className="text-slate-600 text-sm mb-1">API Key</div>
             <div className="font-mono text-sm text-slate-900 bg-white rounded px-3 py-2 border border-slate-200">
               {showSensitive ? data.threeCommas.apiKey : maskSecret(data.threeCommas.apiKey)}
+            </div>
+          </div>
+          <div>
+            <div className="text-slate-600 text-sm mb-1">Plan Tier</div>
+            <div className="text-sm text-slate-900 bg-white rounded px-3 py-2 border border-slate-200">
+              {planTierSummaries[data.threeCommas.planTier] ?? data.threeCommas.planTier}
             </div>
           </div>
           <div>

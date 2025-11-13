@@ -238,6 +238,8 @@ func (e *HyperLiquidEmitter) applyCooldown(d time.Duration) {
 
 func (e *HyperLiquidEmitter) setMarketPrice(ctx context.Context, wsClient *ws.Client, order hyperliquid.CreateOrderRequest) hyperliquid.CreateOrderRequest {
 	if wsClient == nil {
+		order.Price = RoundHalfEven(order.Price)
+		order.Size = RoundHalfEven(order.Size)
 		return order
 	}
 
@@ -254,6 +256,11 @@ func (e *HyperLiquidEmitter) setMarketPrice(ctx context.Context, wsClient *ws.Cl
 			}
 		}
 	}
+
+	// to prevent triggering an error in the SDK converting the float to 8 decimals
+	// we round it up ourselves.
+	order.Price = RoundHalfEven(order.Price)
+	order.Size = RoundHalfEven(order.Size)
 
 	return order
 }
@@ -288,6 +295,8 @@ func (e *HyperLiquidEmitter) applyIOCOffset(order hyperliquid.CreateOrderRequest
 		}
 		order.Price = order.Price * adjusted
 	}
+
+	order.Price = RoundHalfEven(order.Price)
 
 	return order
 }
@@ -644,5 +653,33 @@ func orderTypesMatch(existing, desired hyperliquid.OrderType) bool {
 		return true
 	default:
 		return true
+	}
+}
+
+// RoundHalfEven rounds a float ties-to-even to 8 decimals, required for
+// Hyperliquid wire format that expects a float to not be more precise.
+func RoundHalfEven(x float64) float64 {
+	p := math.Pow(10, float64(8))
+	y := x * p
+	f, frac := math.Modf(y)
+	absFrac := math.Abs(frac)
+
+	switch {
+	case absFrac < 0.5:
+		return f / p
+	case absFrac > 0.5:
+		if y > 0 {
+			return (f + 1) / p
+		}
+		return (f - 1) / p
+	default: // exactly .5 or -.5
+		// round to make the last kept digit even
+		if int64(math.Abs(f))%2 == 0 {
+			return f / p
+		}
+		if y > 0 {
+			return (f + 1) / p
+		}
+		return (f - 1) / p
 	}
 }

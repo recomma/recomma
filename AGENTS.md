@@ -71,6 +71,89 @@
 - Unit tests across `engine`, `filltracker`, `storage`, and `internal/api` validate diffing logic, fill tracking, and API contracts.
 - `internal/testutil` hosts builders for 3Commas bot events.
 
+### Testing Philosophy: Validate Contracts, Not Implementation
+
+**Tests must validate the documented contract (spec + godoc), never the implementation.**
+
+When writing tests:
+1. **Read the godoc first** - the godoc defines the expected behavior
+2. **If godoc is unclear, fix it first** - vague godoc leads to tests that follow buggy implementation
+3. **Tests prove the contract holds** - they should fail when behavior doesn't match documentation
+
+**Anti-pattern:** Reading implementation code to understand what to test
+- This creates tests that validate bugs instead of catching them
+- Example: A test that "works around" a deadlock instead of failing on it
+
+**Correct pattern:** Reading godoc/spec to understand expected behavior
+- Write tests that verify the documented contract
+- If implementation doesn't match, the test fails (exposing the bug)
+
+#### Case Study: Rate Limiter Deadlock
+
+The `ratelimit` package had a deadlock bug that went undetected because:
+
+1. **Spec** (`specs/rate_limit.adoc`): Correctly stated "waiting workflows are immediately re-evaluated when window resets" ✅
+2. **Godoc** (`ratelimit/limiter.go`): Too vague - "Blocks until granted or context cancelled" ❌
+3. **Implementation**: Didn't auto-wake on window resets (bug) ❌
+4. **Tests**: Followed buggy implementation instead of spec/godoc ❌
+
+The test `TestLimiter_WindowReset` originally required a 3rd workflow to "poke" the limiter:
+```go
+// workflow-1 exhausts capacity and releases
+// workflow-2 tries to reserve and queues
+time.Sleep(600 * time.Millisecond) // Window resets
+// workflow-3 starts - THIS IS THE WORKAROUND ❌
+// workflow-3's Reserve() triggers reset detection
+// This wakes up workflow-2
+```
+
+**The test validated the bug instead of exposing it.**
+
+The fix required:
+1. **Update godoc** to be explicit: "automatically detected by background ticker"
+2. **Fix implementation** to match spec and godoc
+3. **Rewrite test** to validate the contract (auto-wake without 3rd workflow)
+
+### Godoc as Contract
+
+**Godoc is the bridge between specification and implementation.**
+
+When godoc is clear:
+- Developers know what behavior to implement
+- Test authors know what behavior to verify
+- Users know what behavior to expect
+
+When godoc is vague:
+- Implementation may diverge from spec
+- Tests follow implementation bugs
+- Users face surprising behavior
+
+**Writing good godoc:**
+- Be **explicit** about timing ("blocks until", "immediately", "automatically")
+- Document **all conditions** that trigger state changes
+- Specify **exactly when** async operations complete
+- Include **edge cases** (empty queues, window resets, context cancellation)
+
+**Example of vague godoc:**
+```go
+// Reserve requests slots. Blocks until granted or cancelled.
+```
+
+**Example of clear godoc:**
+```go
+// Reserve requests N slots for a workflow.
+//
+// If capacity is immediately available, the reservation is granted and returns.
+// If exhausted, the request queues and blocks until:
+//   - Capacity becomes available through Release() or AdjustDown()
+//   - The rate limit window resets (automatically detected by background ticker)
+//   - The context is cancelled
+//
+// Queued workflows are woken in FIFO order.
+```
+
+The second version makes it **impossible** to write a test that ignores auto-wake behavior.
+
 ## Documentation
 - Keep docs-as-code: place updates in AsciiDoc under `docs/modules/ROOT/pages/`.
 - Add new topics as separate pages, then wire them into `docs/modules/ROOT/nav.adoc` so Antora exposes them.

@@ -38,7 +38,7 @@ import (
 // App represents the entire Recomma application with all its components
 type App struct {
 	// Configuration
-	Config config.Config
+	Config config.AppConfig
 
 	// Core components
 	Store           *storage.Storage
@@ -46,10 +46,10 @@ type App struct {
 	Logger          *slog.Logger
 
 	// API
-	APIHandler      *api.ApiHandler
+	APIHandler       *api.ApiHandler
 	StreamController *api.StreamController
-	SystemStream    *api.SystemStreamController
-	SystemStatus    *api.SystemStatusTracker
+	SystemStream     *api.SystemStreamController
+	SystemStatus     *api.SystemStatusTracker
 
 	// 3Commas integration
 	ThreeCommasClient engine.ThreeCommasAPI
@@ -61,27 +61,27 @@ type App struct {
 	PrimaryVenue  recomma.VenueID
 
 	// Workers and queues
-	Engine        *engine.Engine
-	DealQueue     workqueue.TypedRateLimitingInterface[engine.WorkKey]
-	OrderQueue    workqueue.TypedRateLimitingInterface[recomma.OrderWork]
-	OrderEmitter  *emitter.QueueEmitter
-	FillTracker   *filltracker.Service
-	OrderScaler   *orderscaler.Service
+	Engine       *engine.Engine
+	DealQueue    workqueue.TypedRateLimitingInterface[engine.WorkKey]
+	OrderQueue   workqueue.TypedRateLimitingInterface[recomma.OrderWork]
+	OrderEmitter *emitter.QueueEmitter
+	FillTracker  *filltracker.Service
+	OrderScaler  *orderscaler.Service
 
 	// HTTP Server
-	Server         *http.Server
-	serverErrCh    chan error
-	serverStarted  bool
+	Server          *http.Server
+	serverErrCh     chan error
+	serverStarted   bool
 	serverStartedMu sync.Mutex
 
 	// Lifecycle management
-	ctx            context.Context
-	cancelFunc     context.CancelFunc
-	workerCtx      context.Context
-	cancelWorkers  context.CancelFunc
-	wg             sync.WaitGroup
-	shutdownOnce   sync.Once
-	venueClosers   []func()
+	ctx           context.Context
+	cancelFunc    context.CancelFunc
+	workerCtx     context.Context
+	cancelWorkers context.CancelFunc
+	wg            sync.WaitGroup
+	shutdownOnce  sync.Once
+	venueClosers  []func()
 
 	// Runtime configuration
 	debugEnabled   bool
@@ -95,12 +95,12 @@ type App struct {
 
 // AppOptions configures application creation
 type AppOptions struct {
-	Config config.Config
+	Config config.AppConfig
 
 	// Optional overrides for testing
 	ThreeCommasClient engine.ThreeCommasAPI
 	VaultSecrets      *vault.Secrets // Bypass vault unsealing
-	StoragePath       string          // Override storage path
+	StoragePath       string         // Override storage path
 }
 
 // NewApp creates and initializes the application (but doesn't start workers/server)

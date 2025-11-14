@@ -183,6 +183,9 @@ func (s *Storage) upsertDefaultVenueLocked(ctx context.Context, wallet string) e
 		Type:   defaultHyperliquidVenueType,
 		Wallet: wallet,
 	})
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	hasConflictingVenue := err == nil && existingVenue.ID != string(defaultHyperliquidVenueID)
 
 	currentWallet := defaultHyperliquidWallet

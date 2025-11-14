@@ -7,7 +7,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/spf13/pflag"
 )
@@ -97,16 +96,6 @@ func ApplyEnvDefaults(fs *pflag.FlagSet, cfg *AppConfig) error {
 		}
 		if v, ok := os.LookupEnv(envKey); ok {
 			if parsed, err := strconv.ParseFloat(v, 64); err == nil {
-				*target = parsed
-			}
-		}
-	}
-	setDuration := func(name, envKey string, target *time.Duration) {
-		if _, ok := flagSet[name]; ok {
-			return
-		}
-		if v, ok := os.LookupEnv(envKey); ok {
-			if parsed, err := time.ParseDuration(v); err == nil {
 				*target = parsed
 			}
 		}

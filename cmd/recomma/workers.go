@@ -26,17 +26,16 @@ func runWorker(ctx context.Context, wg *sync.WaitGroup, q workqueue.TypedRateLim
 	defer wg.Done()
 
 	for {
-		select {
-		case <-ctx.Done():
+		wi, shutdown := q.Get()
+		if shutdown {
 			return
-		default:
-			wi, shutdown := q.Get()
-			if shutdown {
-				return
-			}
-
-			processWorkItem(ctx, q, e, wi)
 		}
+		// Use a longer timeout to accommodate 3Commas rate limiting.
+		// The SDK's internal rate limiter may need to wait for rate limit windows,
+		// which can be up to an hour or more when limits are exceeded.
+		reqCtx, cancel := context.WithTimeout(ctx, 2*time.Hour)
+		processWorkItem(reqCtx, q, e, wi)
+		cancel()
 	}
 }
 

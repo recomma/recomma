@@ -17,19 +17,32 @@ type BotOrderScaler struct {
 	UpdatedBy        string   `json:"updated_by"`
 }
 
+type BotVenueAssignment struct {
+	BotID         int64  `json:"bot_id"`
+	VenueID       string `json:"venue_id"`
+	IsPrimary     int64  `json:"is_primary"`
+	AssignedAtUtc int64  `json:"assigned_at_utc"`
+}
+
 type HyperliquidStatusHistory struct {
-	ID            int64  `json:"id"`
+	VenueID       string `json:"venue_id"`
+	Wallet        string `json:"wallet"`
 	OrderID       string `json:"order_id"`
-	Status        []byte `json:"status"`
+	PayloadType   string `json:"payload_type"`
+	PayloadBlob   []byte `json:"payload_blob"`
 	RecordedAtUtc int64  `json:"recorded_at_utc"`
 }
 
 type HyperliquidSubmission struct {
+	VenueID        string          `json:"venue_id"`
+	Wallet         string          `json:"wallet"`
 	OrderID        string          `json:"order_id"`
 	ActionKind     string          `json:"action_kind"`
 	CreatePayload  json.RawMessage `json:"create_payload"`
 	ModifyPayloads json.RawMessage `json:"modify_payloads"`
 	CancelPayload  json.RawMessage `json:"cancel_payload"`
+	PayloadType    string          `json:"payload_type"`
+	PayloadBlob    []byte          `json:"payload_blob"`
 	UpdatedAtUtc   int64           `json:"updated_at_utc"`
 	BoteventRowID  int64           `json:"botevent_row_id"`
 }
@@ -43,7 +56,8 @@ type OrderScaler struct {
 }
 
 type ScaledOrder struct {
-	ID                  int64   `json:"id"`
+	VenueID             string  `json:"venue_id"`
+	Wallet              string  `json:"wallet"`
 	OrderID             string  `json:"order_id"`
 	DealID              int64   `json:"deal_id"`
 	BotID               int64   `json:"bot_id"`
@@ -55,9 +69,10 @@ type ScaledOrder struct {
 	OrderSide           string  `json:"order_side"`
 	MultiplierUpdatedBy string  `json:"multiplier_updated_by"`
 	CreatedAtUtc        int64   `json:"created_at_utc"`
-	SubmittedOrderID    *string `json:"submitted_order_id"`
 	Skipped             int64   `json:"skipped"`
 	SkipReason          *string `json:"skip_reason"`
+	PayloadType         *string `json:"payload_type"`
+	PayloadBlob         []byte  `json:"payload_blob"`
 }
 
 type ThreecommasBot struct {
@@ -112,6 +127,14 @@ type VaultUser struct {
 	ID           int64  `json:"id"`
 	Username     string `json:"username"`
 	CreatedAtUtc int64  `json:"created_at_utc"`
+}
+
+type Venue struct {
+	ID          string          `json:"id"`
+	Type        string          `json:"type"`
+	DisplayName string          `json:"display_name"`
+	Wallet      string          `json:"wallet"`
+	Flags       json.RawMessage `json:"flags"`
 }
 
 type WebauthnCredential struct {

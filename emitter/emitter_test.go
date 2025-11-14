@@ -7,11 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
@@ -46,6 +47,40 @@ func (s *stubExchange) CancelByCloid(ctx context.Context, coin, cloid string) (*
 
 func (s *stubExchange) ModifyOrder(ctx context.Context, req hyperliquid.ModifyOrderRequest) (hyperliquid.OrderStatus, error) {
 	return hyperliquid.OrderStatus{}, nil
+}
+
+type recordingRateGate struct {
+	mu        sync.Mutex
+	waitCalls int
+	cooldowns []time.Duration
+	waitErr   error
+}
+
+func (g *recordingRateGate) Wait(context.Context) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.waitCalls++
+	return g.waitErr
+}
+
+func (g *recordingRateGate) Cooldown(d time.Duration) {
+	g.mu.Lock()
+	g.cooldowns = append(g.cooldowns, d)
+	g.mu.Unlock()
+}
+
+func (g *recordingRateGate) waits() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.waitCalls
+}
+
+func (g *recordingRateGate) cooldownSnapshot() []time.Duration {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	out := make([]time.Duration, len(g.cooldowns))
+	copy(out, g.cooldowns)
+	return out
 }
 
 func NewMockExchange(t *testing.T, logger *slog.Logger) *hyperliquid.Exchange {
@@ -100,7 +135,7 @@ func TestHyperLiquidEmitterIOCRetriesLogSuccess(t *testing.T) {
 
 	store := newTestStore(t)
 
-	emitter := NewHyperLiquidEmitter(exchange, nil, store,
+	emitter := NewHyperLiquidEmitter(exchange, "", nil, store,
 		WithHyperLiquidEmitterLogger(logger),
 		WithHyperLiquidEmitterConfig(HyperLiquidEmitterConfig{MaxIOCRetries: 3}),
 	)
@@ -118,9 +153,10 @@ func TestHyperLiquidEmitterIOCRetriesLogSuccess(t *testing.T) {
 		},
 	}
 	work := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionCreate, Create: &order},
-		BotEvent: recomma.BotEvent{RowID: 1},
+		Identifier: storage.DefaultHyperliquidIdentifier(oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent:   recomma.BotEvent{RowID: 1},
 	}
 
 	err := emitter.Emit(context.Background(), work)
@@ -172,7 +208,7 @@ func TestHyperLiquidEmitterIOCRetriesWarnOnFailure(t *testing.T) {
 
 	store := newTestStore(t)
 
-	emitter := NewHyperLiquidEmitter(exchange, nil, store,
+	emitter := NewHyperLiquidEmitter(exchange, "", nil, store,
 		WithHyperLiquidEmitterLogger(logger),
 		WithHyperLiquidEmitterConfig(HyperLiquidEmitterConfig{MaxIOCRetries: 3}),
 	)
@@ -190,9 +226,10 @@ func TestHyperLiquidEmitterIOCRetriesWarnOnFailure(t *testing.T) {
 		},
 	}
 	work := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionCreate, Create: &order},
-		BotEvent: recomma.BotEvent{RowID: 2},
+		Identifier: storage.DefaultHyperliquidIdentifier(oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent:   recomma.BotEvent{RowID: 2},
 	}
 
 	err := emitter.Emit(context.Background(), work)
@@ -210,6 +247,76 @@ func TestHyperLiquidEmitterIOCRetriesWarnOnFailure(t *testing.T) {
 	require.Equal(t, 1, warnCount, "expected a single warning when retries exhaust")
 }
 
+func TestHyperLiquidEmitterUsesInjectedRateGate(t *testing.T) {
+	t.Parallel()
+
+	gate := &recordingRateGate{}
+	emitter := NewHyperLiquidEmitter(&stubExchange{}, "", nil, newTestStore(t),
+		WithHyperLiquidRateGate(gate),
+	)
+
+	oid := orderid.OrderId{BotID: 10, DealID: 20, BotEventID: 30}
+	cloid := oid.Hex()
+	order := hyperliquid.CreateOrderRequest{
+		Coin:          "ATOM",
+		IsBuy:         true,
+		Price:         11,
+		Size:          1,
+		ClientOrderID: &cloid,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifIoc},
+		},
+	}
+	work := recomma.OrderWork{
+		Identifier: storage.DefaultHyperliquidIdentifier(oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent:   recomma.BotEvent{RowID: 3},
+	}
+
+	err := emitter.Emit(context.Background(), work)
+	require.NoError(t, err)
+	require.Equal(t, 1, gate.waits(), "expected the rate gate to be used for pacing")
+}
+
+func TestHyperLiquidEmitterPropagatesCooldownToRateGate(t *testing.T) {
+	t.Parallel()
+
+	gate := &recordingRateGate{}
+	exchange := &stubExchange{orderErrors: []error{fmt.Errorf("429 rate limit")}}
+	emitter := NewHyperLiquidEmitter(exchange, "", nil, newTestStore(t),
+		WithHyperLiquidRateGate(gate),
+		WithHyperLiquidEmitterConfig(HyperLiquidEmitterConfig{MaxIOCRetries: 1}),
+	)
+
+	oid := orderid.OrderId{BotID: 11, DealID: 21, BotEventID: 31}
+	cloid := oid.Hex()
+	order := hyperliquid.CreateOrderRequest{
+		Coin:          "SOL",
+		IsBuy:         true,
+		Price:         22,
+		Size:          1,
+		ClientOrderID: &cloid,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifIoc},
+		},
+	}
+	work := recomma.OrderWork{
+		Identifier: storage.DefaultHyperliquidIdentifier(oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent:   recomma.BotEvent{RowID: 4},
+	}
+
+	err := emitter.Emit(context.Background(), work)
+	require.Error(t, err)
+	require.Equal(t, 1, gate.waits(), "expected a single pacing attempt")
+
+	cooldowns := gate.cooldownSnapshot()
+	require.Len(t, cooldowns, 1, "expected a cooldown when rate limits are hit")
+	require.Equal(t, 10*time.Second, cooldowns[0])
+}
+
 func TestHyperLiquidEmitterMockExchangeCancelOrder(t *testing.T) {
 	t.Parallel()
 
@@ -218,7 +325,7 @@ func TestHyperLiquidEmitterMockExchangeCancelOrder(t *testing.T) {
 	exchange, ts := newMockExchangeWithServer(t, nil)
 	store := newTestStore(t)
 
-	emitter := NewHyperLiquidEmitter(exchange, nil, store,
+	emitter := NewHyperLiquidEmitter(exchange, "hyperliquid:default", nil, store,
 		WithHyperLiquidEmitterConfig(HyperLiquidEmitterConfig{MaxIOCRetries: 1}),
 	)
 
@@ -236,9 +343,10 @@ func TestHyperLiquidEmitterMockExchangeCancelOrder(t *testing.T) {
 	}
 
 	createWork := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionCreate, Create: &order},
-		BotEvent: recomma.BotEvent{RowID: 1},
+		Identifier: recomma.NewOrderIdentifier("hyperliquid:default", "default", oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent:   recomma.BotEvent{RowID: 1},
 	}
 
 	require.NoError(t, emitter.Emit(ctx, createWork))
@@ -252,14 +360,16 @@ func TestHyperLiquidEmitterMockExchangeCancelOrder(t *testing.T) {
 		Cloid: cloid,
 	}
 	cancelWork := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionCancel, Cancel: &cancelReq},
-		BotEvent: recomma.BotEvent{RowID: 2},
+		Identifier: recomma.NewOrderIdentifier("hyperliquid:default", "default", oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCancel, Cancel: cancelReq},
+		BotEvent:   recomma.BotEvent{RowID: 2},
 	}
 
 	require.NoError(t, emitter.Emit(ctx, cancelWork))
 
-	action, found, err := store.LoadHyperliquidSubmission(ctx, oid)
+	ident := recomma.NewOrderIdentifier("hyperliquid:default", "default", oid)
+	action, found, err := store.LoadHyperliquidSubmission(ctx, ident)
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, recomma.ActionCancel, action.Type)
@@ -274,7 +384,7 @@ func TestHyperLiquidEmitterMockExchangeCancelOrder(t *testing.T) {
 func TestApplyIOCOffsetIgnoresNonIOCOrders(t *testing.T) {
 	t.Parallel()
 
-	emitter := NewHyperLiquidEmitter(&stubExchange{}, nil, newTestStore(t),
+	emitter := NewHyperLiquidEmitter(&stubExchange{}, "", nil, newTestStore(t),
 		WithHyperLiquidEmitterConfig(HyperLiquidEmitterConfig{
 			InitialIOCOffsetBps: 25,
 		}),
@@ -340,11 +450,11 @@ func TestHyperLiquidEmitterMockExchangeIOCRetrySuccess(t *testing.T) {
 	exchange := NewMockExchange(t, nil)
 	store := newTestStore(t)
 
-	emitter := NewHyperLiquidEmitter(exchange, nil, store,
+	emitter := NewHyperLiquidEmitter(exchange, "", nil, store,
 		WithHyperLiquidEmitterLogger(logger),
 		WithHyperLiquidEmitterConfig(HyperLiquidEmitterConfig{MaxIOCRetries: 2}),
+		WithHyperLiquidRateGate(NewRateGate(0)),
 	)
-	emitter.minSpacing = 0
 
 	oid := orderid.OrderId{BotID: 9001, DealID: 42, BotEventID: 7}
 	cloid := oid.Hex()
@@ -361,15 +471,17 @@ func TestHyperLiquidEmitterMockExchangeIOCRetrySuccess(t *testing.T) {
 	}
 
 	work := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionCreate, Create: &order},
-		BotEvent: recomma.BotEvent{RowID: 1001},
+		Identifier: recomma.NewOrderIdentifier("hyperliquid:default", "default", oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent:   recomma.BotEvent{RowID: 1001},
 	}
 
 	err := emitter.Emit(ctx, work)
 	require.NoError(t, err)
 
-	storedReq, found, err := store.LoadHyperliquidRequest(ctx, oid)
+	ident := recomma.NewOrderIdentifier("hyperliquid:default", "default", oid)
+	storedReq, found, err := store.LoadHyperliquidRequest(ctx, ident)
 	require.NoError(t, err)
 	require.True(t, found, "expected create request persisted after success")
 	require.NotNil(t, storedReq)
@@ -415,11 +527,11 @@ func TestHyperLiquidEmitterMockExchangeIOCRetriesExhausted(t *testing.T) {
 	exchange := NewMockExchange(t, nil)
 	store := newTestStore(t)
 
-	emitter := NewHyperLiquidEmitter(exchange, nil, store,
+	emitter := NewHyperLiquidEmitter(exchange, "hyperliquid:default", nil, store,
 		WithHyperLiquidEmitterLogger(logger),
 		WithHyperLiquidEmitterConfig(HyperLiquidEmitterConfig{MaxIOCRetries: 3}),
+		WithHyperLiquidRateGate(NewRateGate(0)),
 	)
-	emitter.minSpacing = 0
 
 	oid := orderid.OrderId{BotID: 9002, DealID: 43, BotEventID: 8}
 	cloid := oid.Hex()
@@ -435,16 +547,18 @@ func TestHyperLiquidEmitterMockExchangeIOCRetriesExhausted(t *testing.T) {
 	}
 
 	work := recomma.OrderWork{
-		OrderId:  oid,
-		Action:   recomma.Action{Type: recomma.ActionCreate, Create: &order},
-		BotEvent: recomma.BotEvent{RowID: 2002},
+		Identifier: recomma.NewOrderIdentifier("hyperliquid:default", "default", oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent:   recomma.BotEvent{RowID: 2002},
 	}
 
 	err := emitter.Emit(ctx, work)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "could not place order")
 
-	storedReq, found, err := store.LoadHyperliquidRequest(ctx, oid)
+	ident := recomma.NewOrderIdentifier("hyperliquid:default", "default", oid)
+	storedReq, found, err := store.LoadHyperliquidRequest(ctx, ident)
 	require.NoError(t, err)
 	require.False(t, found, "failed IOC retries must not persist the request")
 	require.Nil(t, storedReq)
@@ -467,9 +581,86 @@ func TestHyperLiquidEmitterMockExchangeIOCRetriesExhausted(t *testing.T) {
 
 func newTestStore(t *testing.T) *storage.Storage {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "emitter.db")
-	store, err := storage.New(path)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = store.Close() })
+	store, err := storage.New(":memory:")
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
 	return store
+}
+
+func TestHyperLiquidEmitterRoundsHalfEven(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	exchange := NewMockExchange(t, nil) // uses real SDK + mock HTTP server
+	store := newTestStore(t)
+
+	emitter := NewHyperLiquidEmitter(exchange, "", nil, store)
+
+	oid := orderid.OrderId{BotID: 16567027, DealID: 2385553190, BotEventID: 1917367905}
+	cloid := oid.Hex()
+
+	order := hyperliquid.CreateOrderRequest{
+		Coin:          "DOGE",
+		IsBuy:         true,
+		Price:         0.172556235, // ninth decimal triggers floatToWire failure
+		Size:          86,
+		ClientOrderID: &cloid,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifIoc},
+		},
+	}
+
+	work := recomma.OrderWork{
+		Identifier: recomma.NewOrderIdentifier("hyperliquid:main", "0xfeed", oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent: recomma.BotEvent{
+			RowID: 13,
+			BotEvent: tc.BotEvent{
+				Action: "Placing",
+				Coin:   "DOGE",
+			},
+		},
+	}
+
+	err := emitter.Emit(ctx, work)
+	require.NotContains(t, err.Error(), "float_to_wire causes rounding")
+}
+
+func TestRoundHalfEven(t *testing.T) {
+	tests := []struct {
+		name string // description of this test case
+		// Named input parameters for target function.
+		x    float64
+		want float64
+	}{
+		{
+			x:    0.172556235,
+			want: 0.17255624,
+		},
+		{
+			x:    0.172556236,
+			want: 0.17255624,
+		},
+		{
+			x:    0.172556234,
+			want: 0.17255623,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := RoundHalfEven(tt.x)
+
+			gotS := fmt.Sprintf("%.8f", got)
+			wantS := fmt.Sprintf("%.8f", tt.want)
+
+			if gotS != wantS {
+				t.Errorf("RoundHalfEven() = %s, want %s", gotS, wantS)
+			}
+		})
+	}
 }

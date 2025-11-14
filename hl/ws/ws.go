@@ -12,6 +12,7 @@ import (
 	"github.com/recomma/recomma/filltracker"
 	"github.com/recomma/recomma/hl"
 	"github.com/recomma/recomma/orderid"
+	"github.com/recomma/recomma/recomma"
 	storage "github.com/recomma/recomma/storage"
 	"github.com/sonirico/go-hyperliquid"
 )
@@ -25,6 +26,8 @@ type Client struct {
 	logger  *slog.Logger
 	store   *storage.Storage
 	tracker *filltracker.Service
+	venueID recomma.VenueID
+	wallet  string
 }
 
 type bboTopic struct {
@@ -67,7 +70,7 @@ func (t *bboTopic) broadcast(bbo hl.BestBidOffer) {
 
 // New opens a websocket and subscribes to order updates for userAddr.
 // Pass "" for apiURL to use SDK default (mainnet).
-func New(ctx context.Context, store *storage.Storage, tracker *filltracker.Service, userAddr, apiURL string, opts ...hyperliquid.WsOpt) (*Client, error) {
+func New(ctx context.Context, store *storage.Storage, tracker *filltracker.Service, venue recomma.VenueID, userAddr, apiURL string, opts ...hyperliquid.WsOpt) (*Client, error) {
 	ws := hyperliquid.NewWebsocketClient(apiURL, opts...)
 	if err := ws.Connect(ctx); err != nil {
 		return nil, err
@@ -78,6 +81,8 @@ func New(ctx context.Context, store *storage.Storage, tracker *filltracker.Servi
 		logger:  slog.Default().WithGroup("hyperliquid").WithGroup("ws"),
 		store:   store,
 		tracker: tracker,
+		venueID: venue,
+		wallet:  userAddr,
 	}
 
 	orderUpdatesSub, err := ws.OrderUpdates(
@@ -94,12 +99,13 @@ func New(ctx context.Context, store *storage.Storage, tracker *filltracker.Servi
 						c.logger.Warn("could not get orderid from cloid", slog.String("cloid", *o.Order.Cloid), slog.String("error", err.Error()))
 						continue
 					}
+					ident := recomma.NewOrderIdentifier(c.venueID, c.wallet, *oid)
 					if c.tracker != nil {
-						if err := c.tracker.UpdateStatus(context.Background(), *oid, o); err != nil {
+						if err := c.tracker.UpdateStatus(context.Background(), ident, o); err != nil {
 							c.logger.Warn("could not update fill tracker", slog.String("error", err.Error()))
 						}
 					}
-					if err := c.store.RecordHyperliquidStatus(context.Background(), *oid, o); err != nil {
+					if err := c.store.RecordHyperliquidStatus(context.Background(), ident, o); err != nil {
 						c.logger.Warn("could not store status", slog.String("error", err.Error()))
 						continue
 					}
@@ -236,7 +242,8 @@ func (c *Client) Close() error {
 
 // Exists returns true if we've seen this CLOID via OrderUpdates.
 func (c *Client) Exists(ctx context.Context, oid orderid.OrderId) bool {
-	_, ok, err := c.store.LoadHyperliquidStatus(ctx, oid)
+	ident := recomma.NewOrderIdentifier(c.venueID, c.wallet, oid)
+	_, ok, err := c.store.LoadHyperliquidStatus(ctx, ident)
 	if err != nil {
 		return false
 	}
@@ -246,7 +253,8 @@ func (c *Client) Exists(ctx context.Context, oid orderid.OrderId) bool {
 
 // Get returns the full WsOrder for a CLOID, if we have it.
 func (c *Client) Get(ctx context.Context, oid orderid.OrderId) (*hyperliquid.WsOrder, bool) {
-	status, ok, err := c.store.LoadHyperliquidStatus(ctx, oid)
+	ident := recomma.NewOrderIdentifier(c.venueID, c.wallet, oid)
+	status, ok, err := c.store.LoadHyperliquidStatus(ctx, ident)
 	if err != nil {
 		return nil, false
 	}

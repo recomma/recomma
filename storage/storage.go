@@ -176,23 +176,14 @@ func (s *Storage) upsertDefaultVenueLocked(ctx context.Context, wallet string) e
 		wallet = defaultHyperliquidWallet
 	}
 
-	// Check if a venue with this (type, wallet) already exists (possibly with a different ID)
+	// Check if a venue with this (type, wallet) already exists with a different ID.
+	// This can happen if a user created a custom venue before the default was established.
+	// We'll attempt the upsert and handle any constraint violations gracefully.
 	existingVenue, err := s.queries.GetVenueByTypeAndWallet(ctx, sqlcgen.GetVenueByTypeAndWalletParams{
 		Type:   defaultHyperliquidVenueType,
 		Wallet: wallet,
 	})
-	if err == nil {
-		// A venue with this (type, wallet) already exists.
-		// If it has a different ID than the default, we should use it instead of trying to create a duplicate.
-		if existingVenue.ID != string(defaultHyperliquidVenueID) {
-			// There's already a user-defined venue with this type and wallet.
-			// No need to create a separate default venue - just return success.
-			return nil
-		}
-		// The existing venue has the default ID, so we can proceed with the upsert.
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
+	hasConflictingVenue := err == nil && existingVenue.ID != string(defaultHyperliquidVenueID)
 
 	currentWallet := defaultHyperliquidWallet
 	row, err := s.queries.GetVenue(ctx, string(defaultHyperliquidVenueID))
@@ -231,6 +222,15 @@ func (s *Storage) upsertDefaultVenueLocked(ctx context.Context, wallet string) e
 	qtx := s.queries.WithTx(tx)
 
 	if err := qtx.UpsertVenue(ctx, params); err != nil {
+		// If we have a conflicting venue and hit a unique constraint on (type, wallet),
+		// this is expected. The existing venue serves the same purpose.
+		if hasConflictingVenue && strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			slog.Info("default venue not created: wallet already assigned to different venue",
+				slog.String("existing_venue_id", existingVenue.ID),
+				slog.String("wallet", wallet),
+			)
+			return nil
+		}
 		return err
 	}
 

@@ -270,15 +270,16 @@ func main() {
 	// Get tier-specific rate limit configuration
 	rateLimitCfg := planTier.RateLimitConfig()
 
-	// Override configuration with tier-specific values (unless explicitly set by user)
-	cfg.DealWorkers = rateLimitCfg.DealWorkers
-	cfg.ResyncInterval = rateLimitCfg.ResyncInterval
+	// Use tier-specific values for deal workers and resync interval
+	// These are not user-configurable to avoid rate limit violations
+	dealWorkers := rateLimitCfg.DealWorkers
+	resyncInterval := rateLimitCfg.ResyncInterval
 
 	logger.Info("Rate limiting configured",
 		slog.String("tier", string(planTier)),
 		slog.Int("requests_per_minute", rateLimitCfg.RequestsPerMinute),
-		slog.Int("deal_workers", cfg.DealWorkers),
-		slog.Duration("resync_interval", cfg.ResyncInterval),
+		slog.Int("deal_workers", dealWorkers),
+		slog.Duration("resync_interval", resyncInterval),
 	)
 
 	// Create rate limiter
@@ -579,7 +580,7 @@ func main() {
 		go runOrderWorker(workerCtx, &wg, oq, engineEmitter)
 	}
 
-	for i := 0; i < cfg.DealWorkers; i++ {
+	for i := 0; i < dealWorkers; i++ {
 		wg.Add(1)
 		go runWorker(workerCtx, &wg, q, e)
 	}
@@ -617,9 +618,8 @@ func main() {
 	reconcileTakeProfits(appCtx)
 
 	// Periodic resync; stops automatically when ctx is cancelled
-	resync := cfg.ResyncInterval
 	go func() {
-		ticker := time.NewTicker(resync)
+		ticker := time.NewTicker(resyncInterval)
 		defer ticker.Stop()
 		cleanupTicker := time.NewTicker(10 * time.Minute)
 		defer cleanupTicker.Stop()

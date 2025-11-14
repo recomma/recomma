@@ -14,9 +14,7 @@ import (
 
 type AppConfig struct {
 	StoragePath                    string
-	DealWorkers                    int
 	OrderWorkers                   int
-	ResyncInterval                 time.Duration
 	HTTPListen                     string
 	PublicOrigin                   string
 	LogLevel                       string
@@ -30,9 +28,7 @@ type AppConfig struct {
 func DefaultConfig() AppConfig {
 	return AppConfig{
 		StoragePath:                    "db.sqlite3",
-		DealWorkers:                    25,
 		OrderWorkers:                   5,
-		ResyncInterval:                 15 * time.Second,
 		HTTPListen:                     ":8080",
 		LogLevel:                       "info",
 		LogFormatJSON:                  false,
@@ -49,9 +45,7 @@ func NewConfigFlagSet(cfg *AppConfig) *pflag.FlagSet {
 	fs.SortFlags = false
 
 	fs.StringVar(&cfg.StoragePath, "storage-path", cfg.StoragePath, "SQLite3 storage path (env: RECOMMA_STORAGE_PATH)")
-	fs.IntVar(&cfg.DealWorkers, "deal-workers", cfg.DealWorkers, "Number of deal-processing workers (env: RECOMMA_DEAL_WORKERS)")
 	fs.IntVar(&cfg.OrderWorkers, "order-workers", cfg.OrderWorkers, "Number of order emit workers (env: RECOMMA_ORDER_WORKERS)")
-	fs.DurationVar(&cfg.ResyncInterval, "resync-interval", cfg.ResyncInterval, "Interval between deal resyncs (env: RECOMMA_RESYNC_INTERVAL)")
 	fs.StringVar(&cfg.HTTPListen, "http-listen", cfg.HTTPListen, "HTTP listen address (env: RECOMMA_HTTP_LISTEN)")
 	fs.StringVar(&cfg.PublicOrigin, "public-origin", cfg.PublicOrigin, "Public origin served to clients (env: RECOMMA_PUBLIC_ORIGIN)")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "Log level (env: RECOMMA_LOG_LEVEL)")
@@ -119,9 +113,7 @@ func ApplyEnvDefaults(fs *pflag.FlagSet, cfg *AppConfig) error {
 	}
 
 	setString("storage-path", "RECOMMA_STORAGE_PATH", &cfg.StoragePath)
-	setInt("deal-workers", "RECOMMA_DEAL_WORKERS", &cfg.DealWorkers)
 	setInt("order-workers", "RECOMMA_ORDER_WORKERS", &cfg.OrderWorkers)
-	setDuration("resync-interval", "RECOMMA_RESYNC_INTERVAL", &cfg.ResyncInterval)
 	setString("http-listen", "RECOMMA_HTTP_LISTEN", &cfg.HTTPListen)
 	setString("public-origin", "RECOMMA_PUBLIC_ORIGIN", &cfg.PublicOrigin)
 	setString("log-level", "RECOMMA_LOG_LEVEL", &cfg.LogLevel)

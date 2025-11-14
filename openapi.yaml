@@ -308,6 +308,41 @@ paths:
           description: Vault is sealed or session expired
         '500':
           description: Internal server error
+
+  /system/status:
+    get:
+      operationId: getSystemStatus
+      summary: Get current system health and status
+      description: |
+        Polling endpoint for system health. Returns current status of 3commas API,
+        Hyperliquid venues, and engine state. Suitable for container health checks.
+      responses:
+        '200':
+          description: Current system status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemStatus'
+        '500':
+          description: Internal server error
+
+  /stream/system:
+    get:
+      operationId: streamSystemEvents
+      summary: Server-sent events for system notifications
+      description: |
+        Real-time stream of system events (errors, warnings, info, logs).
+        Events are filtered by server-side log level configuration.
+      responses:
+        '200':
+          description: SSE stream of system events
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '500':
+          description: Internal server error
+
   /api/bots:
     get:
       operationId: listBots
@@ -1333,32 +1368,9 @@ components:
         - secrets
       properties:
         not_secret:
-          type: object
-          required:
-            - username
-          properties:
-            username:
-              type: string
-              description: Logical username mirrored inside the plaintext payload.
+          $ref: '#/components/schemas/VaultSecretsBundleNotSecret'
         secrets:
-          type: object
-          required:
-            - THREECOMMAS_API_KEY
-            - THREECOMMAS_PRIVATE_KEY
-            - venues
-          properties:
-            THREECOMMAS_API_KEY:
-              type: string
-              description: Public API key for the 3Commas integration.
-            THREECOMMAS_PRIVATE_KEY:
-              type: string
-              description: Private API key for the 3Commas integration.
-            venues:
-              type: array
-              description: Collection of venue credentials encrypted within the vault.
-              minItems: 1
-              items:
-                $ref: '#/components/schemas/VaultVenueSecret'
+          $ref: '#/components/schemas/VaultSecretsBundleSecrets'
 
     VaultVenueSecret:
       type: object
@@ -2334,3 +2346,133 @@ components:
           properties:
             status:
               $ref: '#/components/schemas/HyperliquidWsOrder'
+
+    SystemStatus:
+      type: object
+      required:
+        - timestamp
+        - engine
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: When this status snapshot was captured
+        threecommas_api:
+          type: object
+          nullable: true
+          properties:
+            available:
+              type: boolean
+              description: Whether 3commas API is currently reachable
+            last_error:
+              type: string
+              nullable: true
+              description: Most recent error from 3commas API, if any
+            last_successful_call:
+              type: string
+              format: date-time
+              nullable: true
+              description: Timestamp of last successful 3commas API call
+        hyperliquid_venues:
+          type: array
+          items:
+            type: object
+            required:
+              - venue_id
+              - wallet
+              - connected
+            properties:
+              venue_id:
+                type: string
+                description: Venue identifier
+              wallet:
+                type: string
+                description: Wallet address for this venue
+              connected:
+                type: boolean
+                description: Whether venue websocket/client is connected
+              last_error:
+                type: string
+                nullable: true
+                description: Most recent error for this venue
+        engine:
+          type: object
+          required:
+            - running
+            - active_deals
+          properties:
+            running:
+              type: boolean
+              description: Whether the order engine is running
+            active_deals:
+              type: integer
+              description: Number of active deals being tracked
+            last_sync:
+              type: string
+              format: date-time
+              nullable: true
+              description: Timestamp of last deal sync with 3commas
+
+    SystemEvent:
+      type: object
+      required:
+        - level
+        - timestamp
+        - source
+        - message
+      properties:
+        level:
+          type: string
+          enum: [debug, info, warn, error]
+          description: Log level matching slog levels
+        timestamp:
+          type: string
+          format: date-time
+          description: When this event occurred
+        source:
+          type: string
+          description: Component that emitted the event (e.g., "3commas", "hyperliquid", "engine", "storage")
+        message:
+          type: string
+          description: Human-readable error/info message
+        details:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Structured context (optional)
+    VaultSecretsBundleNotSecret:
+      type: object
+      required:
+        - username
+      properties:
+        username:
+          type: string
+          description: Logical username mirrored inside the plaintext payload.
+
+    VaultSecretsBundleSecrets:
+      type: object
+      required:
+        - THREECOMMAS_API_KEY
+        - THREECOMMAS_PRIVATE_KEY
+        - THREECOMMAS_PLAN_TIER
+        - venues
+      properties:
+        THREECOMMAS_API_KEY:
+          type: string
+          description: Public API key for the 3Commas integration.
+        THREECOMMAS_PRIVATE_KEY:
+          type: string
+          description: Private API key for the 3Commas integration.
+        THREECOMMAS_PLAN_TIER:
+          type: string
+          description: Subscription tier for the 3Commas client rate limits.
+          enum:
+            - starter
+            - pro
+            - expert
+        venues:
+          type: array
+          description: Collection of venue credentials encrypted within the vault.
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/VaultVenueSecret'

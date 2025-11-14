@@ -34,6 +34,7 @@ Provide the same secrets you would normally store through the vault, but via env
 | Variable | Purpose
 | `RECOMMA_DEBUG_THREECOMMAS_API_KEY` | Public API key for 3Commas requests.
 | `RECOMMA_DEBUG_THREECOMMAS_PRIVATE_KEY` | PEM-encoded private key that signs 3Commas requests.
+| `RECOMMA_DEBUG_THREECOMMAS_PLAN_TIER` | 3Commas subscription tier (`starter`, `pro`, or `expert`) used to configure client rate limits. Defaults to `expert` when omitted.
 | `RECOMMA_DEBUG_HYPERLIQUID_WALLET` | Hyperliquid wallet address used for submissions and subscriptions.
 | `RECOMMA_DEBUG_HYPERLIQUID_PRIVATE_KEY` | Hyperliquid signing key corresponding to the debug wallet.
 | `RECOMMA_DEBUG_HYPERLIQUID_URL` | Base URL for the Hyperliquid endpoint (for example `https://api.hyperliquid.xyz`). Must be a valid URL.
@@ -58,6 +59,7 @@ go run -tags debugmode ./cmd/recomma --help
 RECOMMA_DEBUG=true \
 RECOMMA_DEBUG_THREECOMMAS_API_KEY=... \
 RECOMMA_DEBUG_THREECOMMAS_PRIVATE_KEY="$(cat private.pem)" \
+RECOMMA_DEBUG_THREECOMMAS_PLAN_TIER=expert \
 RECOMMA_DEBUG_HYPERLIQUID_WALLET=... \
 RECOMMA_DEBUG_HYPERLIQUID_PRIVATE_KEY=... \
 RECOMMA_DEBUG_HYPERLIQUID_URL=https://example.hyperliquid.dev \

@@ -176,6 +176,24 @@ func (s *Storage) upsertDefaultVenueLocked(ctx context.Context, wallet string) e
 		wallet = defaultHyperliquidWallet
 	}
 
+	// Check if a venue with this (type, wallet) already exists (possibly with a different ID)
+	existingVenue, err := s.queries.GetVenueByTypeAndWallet(ctx, sqlcgen.GetVenueByTypeAndWalletParams{
+		Type:   defaultHyperliquidVenueType,
+		Wallet: wallet,
+	})
+	if err == nil {
+		// A venue with this (type, wallet) already exists.
+		// If it has a different ID than the default, we should use it instead of trying to create a duplicate.
+		if existingVenue.ID != string(defaultHyperliquidVenueID) {
+			// There's already a user-defined venue with this type and wallet.
+			// No need to create a separate default venue - just return success.
+			return nil
+		}
+		// The existing venue has the default ID, so we can proceed with the upsert.
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+
 	currentWallet := defaultHyperliquidWallet
 	row, err := s.queries.GetVenue(ctx, string(defaultHyperliquidVenueID))
 	switch {

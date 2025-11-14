@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -59,14 +60,16 @@ type StreamSource interface {
 
 // ApiHandler implements api.StrictServerInterface.
 type ApiHandler struct {
-	store    Store
-	stream   StreamSource
-	logger   *slog.Logger
-	now      func() time.Time
-	webauthn *WebAuthnService
-	vault    *vault.Controller
-	session  *vaultSessionManager
-	debug    bool
+	store        Store
+	stream       StreamSource
+	systemStream *SystemStreamController
+	systemStatus *SystemStatusTracker
+	logger       *slog.Logger
+	now          func() time.Time
+	webauthn     *WebAuthnService
+	vault        *vault.Controller
+	session      *vaultSessionManager
+	debug        bool
 
 	orderScalerMaxMultiplier float64
 	orders                   recomma.Emitter
@@ -171,6 +174,18 @@ func WithVaultController(controller *vault.Controller) HandlerOption {
 func WithLogger(logger *slog.Logger) HandlerOption {
 	return func(h *ApiHandler) {
 		h.logger = logger
+	}
+}
+
+func WithSystemStream(stream *SystemStreamController) HandlerOption {
+	return func(h *ApiHandler) {
+		h.systemStream = stream
+	}
+}
+
+func WithSystemStatus(status *SystemStatusTracker) HandlerOption {
+	return func(h *ApiHandler) {
+		h.systemStatus = status
 	}
 }
 
@@ -1076,6 +1091,102 @@ func (h *ApiHandler) StreamOrders(ctx context.Context, req StreamOrdersRequestOb
 	return StreamOrders200TexteventStreamResponse{
 		Body: pr,
 	}, nil
+}
+
+// GetSystemStatus satisfies StrictServerInterface.
+func (h *ApiHandler) GetSystemStatus(ctx context.Context, req GetSystemStatusRequestObject) (GetSystemStatusResponseObject, error) {
+	if h.systemStatus == nil {
+		return GetSystemStatus500Response{}, nil
+	}
+
+	snapshot := h.systemStatus.Snapshot()
+	return GetSystemStatus200JSONResponse(snapshot), nil
+}
+
+// StreamSystemEvents satisfies StrictServerInterface.
+func (h *ApiHandler) StreamSystemEvents(ctx context.Context, req StreamSystemEventsRequestObject) (StreamSystemEventsResponseObject, error) {
+	if h.systemStream == nil {
+		h.logger.ErrorContext(ctx, "systemStream is nil")
+		return StreamSystemEvents500Response{}, nil
+	}
+
+	eventCh, err := h.systemStream.Subscribe(ctx)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "Failed to subscribe to system stream", slog.String("error", err.Error()))
+		return StreamSystemEvents500Response{}, nil
+	}
+
+	// Use custom SSE response that flushes after each write
+	return streamSystemEventsSSEResponse{
+		ctx:     ctx,
+		eventCh: eventCh,
+		handler: h,
+	}, nil
+}
+
+// streamSystemEventsSSEResponse implements custom SSE streaming with explicit flushing
+type streamSystemEventsSSEResponse struct {
+	ctx     context.Context
+	eventCh <-chan SystemEvent
+	handler *ApiHandler
+}
+
+func (r streamSystemEventsSSEResponse) VisitStreamSystemEventsResponse(w http.ResponseWriter) error {
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(200)
+
+	// Get flusher
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		r.handler.logger.Error("ResponseWriter does not support flushing")
+		return fmt.Errorf("streaming not supported")
+	}
+
+	// CRITICAL: Write initial SSE comment and flush immediately to complete handshake
+	if _, err := w.Write([]byte(": connected\n\n")); err != nil {
+		r.handler.logger.WarnContext(r.ctx, "failed to write initial SSE comment", slog.String("error", err.Error()))
+		return err
+	}
+	flusher.Flush()
+
+	// Stream events
+	for {
+		select {
+		case <-r.ctx.Done():
+			return nil
+		case evt, ok := <-r.eventCh:
+			if !ok {
+				return nil
+			}
+
+			if err := r.handler.writeSystemSSEFrame(w, evt); err != nil {
+				r.handler.logger.WarnContext(r.ctx, "write system event frame",
+					slog.String("error", err.Error()))
+				return err
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+func (h *ApiHandler) writeSystemSSEFrame(w io.Writer, evt SystemEvent) error {
+	data, err := json.Marshal(evt)
+	if err != nil {
+		return fmt.Errorf("marshal system event: %w", err)
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString("event: system_")
+	buf.WriteString(string(evt.Level))
+	buf.WriteString("\ndata: ")
+	buf.Write(data)
+	buf.WriteString("\n\n")
+
+	_, err = w.Write(buf.Bytes())
+	return err
 }
 
 // StreamHyperliquidPrices satisfies StrictServerInterface.

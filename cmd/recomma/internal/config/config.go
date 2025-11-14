@@ -24,6 +24,7 @@ type AppConfig struct {
 	Debug                          bool
 	HyperliquidIOCInitialOffsetBps float64
 	OrderScalerMaxMultiplier       float64
+	SystemStreamMinLevel           string // Minimum log level for system stream events (debug, info, warn, error)
 }
 
 func DefaultConfig() AppConfig {
@@ -38,6 +39,7 @@ func DefaultConfig() AppConfig {
 		Debug:                          false,
 		HyperliquidIOCInitialOffsetBps: 0,
 		OrderScalerMaxMultiplier:       5,
+		SystemStreamMinLevel:           "info",
 	}
 }
 
@@ -57,6 +59,7 @@ func NewConfigFlagSet(cfg *AppConfig) *pflag.FlagSet {
 	registerDebugFlag(fs, cfg)
 	fs.Float64Var(&cfg.HyperliquidIOCInitialOffsetBps, "hyperliquid-ioc-offset-bps", cfg.HyperliquidIOCInitialOffsetBps, "Basis points to widen the first IOC price check (env: RECOMMA_HYPERLIQUID_IOC_OFFSET_BPS)")
 	fs.Float64Var(&cfg.OrderScalerMaxMultiplier, "order-scaler-max-multiplier", cfg.OrderScalerMaxMultiplier, "Maximum allowed order scaler multiplier (env: RECOMMA_ORDER_SCALER_MAX_MULTIPLIER)")
+	fs.StringVar(&cfg.SystemStreamMinLevel, "system-stream-min-level", cfg.SystemStreamMinLevel, "Minimum log level for system stream events: debug, info, warn, error (env: RECOMMA_SYSTEM_STREAM_MIN_LEVEL)")
 
 	return fs
 }
@@ -125,6 +128,7 @@ func ApplyEnvDefaults(fs *pflag.FlagSet, cfg *AppConfig) error {
 	setBool("log-json", "RECOMMA_LOG_JSON", &cfg.LogFormatJSON)
 	setFloat("hyperliquid-ioc-offset-bps", "RECOMMA_HYPERLIQUID_IOC_OFFSET_BPS", &cfg.HyperliquidIOCInitialOffsetBps)
 	setFloat("order-scaler-max-multiplier", "RECOMMA_ORDER_SCALER_MAX_MULTIPLIER", &cfg.OrderScalerMaxMultiplier)
+	setString("system-stream-min-level", "RECOMMA_SYSTEM_STREAM_MIN_LEVEL", &cfg.SystemStreamMinLevel)
 
 	if err := applyDebugEnvDefaults(flagSet, cfg); err != nil {
 		return err

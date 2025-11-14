@@ -233,6 +233,14 @@ github.com/prometheus/procfs v0.17.0 h1:FuLQ+05u4ZI+SS/w9+BWEM2TXiHKsUQ9TADiRH7D
 github.com/prometheus/procfs v0.17.0/go.mod h1:oPQLaDAMRbA+u8H5Pbfq+dl3VDAvHxMUOVhe0wYB2zw=
 github.com/recomma/3commas-sdk-go v0.1.0 h1:Oozn8/3HyU1mz1mxPt1IKT+1Pj3P72310BGIvY+ky9w=
 github.com/recomma/3commas-sdk-go v0.1.0/go.mod h1:gRdQ8KeyIuTCTqS+Ue0LftnPeMSUGo/AbHX7Msa/X9U=
+github.com/recomma/3commas-sdk-go v0.1.1 h1:ktNQGQOqMBtoIKIyzg3d3loq8ma8PyDzHJbVViAyuwM=
+github.com/recomma/3commas-sdk-go v0.1.1/go.mod h1:gRdQ8KeyIuTCTqS+Ue0LftnPeMSUGo/AbHX7Msa/X9U=
+github.com/recomma/3commas-sdk-go v0.2.0 h1:X2Cv02ime8ronOT0BZTDrp/X1gPuywJQq1Bz2k2AKl8=
+github.com/recomma/3commas-sdk-go v0.2.0/go.mod h1:gRdQ8KeyIuTCTqS+Ue0LftnPeMSUGo/AbHX7Msa/X9U=
+github.com/recomma/3commas-sdk-go v0.3.0 h1:q7PU/+9Jzm1EIfBW7c4yG3sRyVNs7Qm5eGT5DPHugks=
+github.com/recomma/3commas-sdk-go v0.3.0/go.mod h1:gRdQ8KeyIuTCTqS+Ue0LftnPeMSUGo/AbHX7Msa/X9U=
+github.com/recomma/3commas-sdk-go v0.4.0 h1:kdhIwhlQJG3yj7b8TeU8Sl4cza24dKhXZm13TqM05pw=
+github.com/recomma/3commas-sdk-go v0.4.0/go.mod h1:gRdQ8KeyIuTCTqS+Ue0LftnPeMSUGo/AbHX7Msa/X9U=
 github.com/recomma/hyperliquid-mock v0.1.1 h1:90Q3rLs9dAITr1OepXAdxCWWfJmmU04bc9Yih+3c6l4=
 github.com/recomma/hyperliquid-mock v0.1.1/go.mod h1:AfLvbKJEiwObrLX1qnlsi3VjFevXT4oa0HCFdtfcM2g=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=

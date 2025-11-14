@@ -191,6 +191,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/system/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get current system health and status
+         * @description Polling endpoint for system health. Returns current status of 3commas API,
+         *     Hyperliquid venues, and engine state. Suitable for container health checks.
+         */
+        get: operations["getSystemStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stream/system": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Server-sent events for system notifications
+         * @description Real-time stream of system events (errors, warnings, info, logs).
+         *     Events are filtered by server-side log level configuration.
+         */
+        get: operations["streamSystemEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/bots": {
         parameters: {
             query?: never;
@@ -600,18 +642,8 @@ export interface components {
         };
         /** @description JSON structure encrypted during setup and supplied in plaintext when unsealing the vault. */
         VaultSecretsBundle: {
-            not_secret: {
-                /** @description Logical username mirrored inside the plaintext payload. */
-                username: string;
-            };
-            secrets: {
-                /** @description Public API key for the 3Commas integration. */
-                THREECOMMAS_API_KEY: string;
-                /** @description Private API key for the 3Commas integration. */
-                THREECOMMAS_PRIVATE_KEY: string;
-                /** @description Collection of venue credentials encrypted within the vault. */
-                venues: components["schemas"]["VaultVenueSecret"][];
-            };
+            not_secret: components["schemas"]["VaultSecretsBundleNotSecret"];
+            secrets: components["schemas"]["VaultSecretsBundleSecrets"];
         };
         VaultVenueSecret: {
             /** @description Unique identifier for the venue. */
@@ -1082,6 +1114,82 @@ export interface components {
              * @enum {string}
              */
             type: "hyperliquid_status";
+        };
+        SystemStatus: {
+            /**
+             * Format: date-time
+             * @description When this status snapshot was captured
+             */
+            timestamp: string;
+            threecommas_api?: {
+                /** @description Whether 3commas API is currently reachable */
+                available?: boolean;
+                /** @description Most recent error from 3commas API, if any */
+                last_error?: string | null;
+                /**
+                 * Format: date-time
+                 * @description Timestamp of last successful 3commas API call
+                 */
+                last_successful_call?: string | null;
+            } | null;
+            hyperliquid_venues?: {
+                /** @description Venue identifier */
+                venue_id: string;
+                /** @description Wallet address for this venue */
+                wallet: string;
+                /** @description Whether venue websocket/client is connected */
+                connected: boolean;
+                /** @description Most recent error for this venue */
+                last_error?: string | null;
+            }[];
+            engine: {
+                /** @description Whether the order engine is running */
+                running: boolean;
+                /** @description Number of active deals being tracked */
+                active_deals: number;
+                /**
+                 * Format: date-time
+                 * @description Timestamp of last deal sync with 3commas
+                 */
+                last_sync?: string | null;
+            };
+        };
+        SystemEvent: {
+            /**
+             * @description Log level matching slog levels
+             * @enum {string}
+             */
+            level: "debug" | "info" | "warn" | "error";
+            /**
+             * Format: date-time
+             * @description When this event occurred
+             */
+            timestamp: string;
+            /** @description Component that emitted the event (e.g., "3commas", "hyperliquid", "engine", "storage") */
+            source: string;
+            /** @description Human-readable error/info message */
+            message: string;
+            /** @description Structured context (optional) */
+            details?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        VaultSecretsBundleNotSecret: {
+            /** @description Logical username mirrored inside the plaintext payload. */
+            username: string;
+        };
+        VaultSecretsBundleSecrets: {
+            /** @description Public API key for the 3Commas integration. */
+            THREECOMMAS_API_KEY: string;
+            /** @description Private API key for the 3Commas integration. */
+            THREECOMMAS_PRIVATE_KEY: string;
+            /**
+             * @description Subscription tier for the 3Commas client rate limits.
+             * @enum {string}
+             */
+            THREECOMMAS_PLAN_TIER: "starter" | "pro" | "expert";
+            /** @description Collection of venue credentials encrypted within the vault. */
+            venues: components["schemas"]["VaultVenueSecret"][];
         };
         /**
          * @description Trading pair(s) in 3Commas format.
@@ -1989,6 +2097,60 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getSystemStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current system status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemStatus"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    streamSystemEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE stream of system events */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
             };
             /** @description Internal server error */
             500: {

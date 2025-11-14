@@ -450,6 +450,17 @@ SELECT
 FROM venues
 WHERE id = sqlc.arg(id);
 
+-- name: GetVenueByTypeAndWallet :one
+SELECT
+    id,
+    type,
+    display_name,
+    wallet,
+    CAST(flags AS BLOB) AS flags
+FROM venues
+WHERE type = sqlc.arg(type)
+  AND wallet = sqlc.arg(wallet);
+
 -- name: ListVenues :many
 SELECT
     id,

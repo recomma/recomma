@@ -757,6 +757,44 @@ func (q *Queries) GetVenue(ctx context.Context, id string) (GetVenueRow, error) 
 	return i, err
 }
 
+const getVenueByTypeAndWallet = `-- name: GetVenueByTypeAndWallet :one
+SELECT
+    id,
+    type,
+    display_name,
+    wallet,
+    CAST(flags AS BLOB) AS flags
+FROM venues
+WHERE type = ?1
+  AND wallet = ?2
+`
+
+type GetVenueByTypeAndWalletParams struct {
+	Type   string `json:"type"`
+	Wallet string `json:"wallet"`
+}
+
+type GetVenueByTypeAndWalletRow struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	DisplayName string `json:"display_name"`
+	Wallet      string `json:"wallet"`
+	Flags       []byte `json:"flags"`
+}
+
+func (q *Queries) GetVenueByTypeAndWallet(ctx context.Context, arg GetVenueByTypeAndWalletParams) (GetVenueByTypeAndWalletRow, error) {
+	row := q.db.QueryRowContext(ctx, getVenueByTypeAndWallet, arg.Type, arg.Wallet)
+	var i GetVenueByTypeAndWalletRow
+	err := row.Scan(
+		&i.ID,
+		&i.Type,
+		&i.DisplayName,
+		&i.Wallet,
+		&i.Flags,
+	)
+	return i, err
+}
+
 const getWebauthnCredentialByID = `-- name: GetWebauthnCredentialByID :one
 SELECT
     id,

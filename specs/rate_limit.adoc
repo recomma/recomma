@@ -55,12 +55,12 @@ NOTE: `GetMarketOrdersForDeal` is commented out and not currently used.
 
 === Concurrency Configuration
 
-*Current defaults* (`cmd/recomma/internal/config/config.go:33-35`):
+*Tier-based defaults* (determined by ThreeCommas plan tier):
 
-- `DealWorkers`: 25 concurrent goroutines processing deals
-- `OrderWorkers`: 5 concurrent goroutines for order emission
-- `ResyncInterval`: 15 seconds between ProduceActiveDeals cycles
-- `errgroup limit`: 32 concurrent bot processors in ProduceActiveDeals
+- `DealWorkers`: Tier-specific concurrent goroutines processing deals (NOT user-configurable)
+- `OrderWorkers`: 5 concurrent goroutines for order emission (user-configurable)
+- `ResyncInterval`: Tier-specific interval between ProduceActiveDeals cycles (NOT user-configurable)
+- `errgroup limit`: Tier-specific concurrent bot processors in ProduceActiveDeals
 
 *Why SDK Rate Limiter Fails*::
 The SDK rate limiter blocks individual requests when quota is exhausted, but all 25 workers start simultaneously and race to the API. The first 5 requests succeed, then 20+ workers queue behind the SDK's internal limiter. When the window resets, potential thundering herd effect causes another rate limit breach.
@@ -341,11 +341,11 @@ If a workflow was blocked waiting for window reset (e.g., Extend needed 10 slots
 On startup, after parsing `THREECOMMAS_PLAN_TIER` from vault:
 
 1. Determine tier: Starter, Pro, or Expert
-2. Override `cfg.DealWorkers`, `cfg.ResyncInterval` with tier-specific values
+2. Apply tier-specific values for `DealWorkers` and `ResyncInterval`
 3. Pass `ProduceConcurrency` to Engine via new option
 4. Initialize rate limiter with tier's `RequestsPerMinute` and `PrioritySlots`
 
-User can still override via environment variables if needed, but defaults scale with tier.
+**Note**: `DealWorkers` and `ResyncInterval` are NOT user-configurable to prevent rate limit violations from misconfiguration. These values are determined solely by the plan tier to ensure safe operation within API quota limits.
 
 == Logging Requirements
 
@@ -544,7 +544,8 @@ Location: `recomma/ratelimit/` package
 Deliverables:
 - Extend `ThreeCommasPlanTier.RateLimitConfig()` method
 - Configuration struct with DealWorkers, ProduceConcurrency, ResyncInterval
-- Automatic tier detection and config override in `main.go`
+- Automatic tier detection and tier-based value assignment in `main.go`
+- Ensure DealWorkers and ResyncInterval are NOT exposed as user-configurable flags
 
 Location: `recomma/threecommas_plan.go`
 

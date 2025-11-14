@@ -42,62 +42,83 @@ func newPriceSourceMultiplexer(logger *slog.Logger, primary recomma.VenueID, ord
 
 // SubscribeBBO attempts to subscribe to best bid/offer from venues in priority order
 func (m *priceSourceMultiplexer) SubscribeBBO(ctx context.Context, coin string) (<-chan hl.BestBidOffer, error) {
-	var lastErr error
+	if len(m.sources) == 0 {
+		return nil, errors.New("no hyperliquid price sources configured")
+	}
 
-	for _, venueID := range m.order {
-		client, ok := m.sources[venueID]
-		if !ok {
-			continue
+	var errs []error
+	try := func(id recomma.VenueID) (<-chan hl.BestBidOffer, bool) {
+		client, ok := m.sources[id]
+		if !ok || client == nil {
+			return nil, false
 		}
-
 		ch, err := client.SubscribeBBO(ctx, coin)
-		if err == nil {
-			if venueID != m.primary {
-				m.logger.Warn("using fallback price source",
+		if err != nil {
+			if m.logger != nil {
+				m.logger.Warn("price subscription failed",
+					slog.String("venue", string(id)),
 					slog.String("coin", coin),
-					slog.String("venue", string(venueID)),
-					slog.String("primary", string(m.primary)))
+					slog.String("error", err.Error()),
+				)
 			}
+			errs = append(errs, fmt.Errorf("%s: %w", id, err))
+			return nil, false
+		}
+		if m.logger != nil {
+			m.logger.Debug("price subscription registered",
+				slog.String("venue", string(id)),
+				slog.String("coin", coin),
+			)
+		}
+		return ch, true
+	}
+
+	if m.primary != "" {
+		if ch, ok := try(m.primary); ok {
 			return ch, nil
 		}
-
-		lastErr = err
-		m.logger.Debug("price source unavailable",
-			slog.String("coin", coin),
-			slog.String("venue", string(venueID)),
-			slog.String("error", err.Error()))
 	}
 
-	if lastErr != nil {
-		return nil, fmt.Errorf("all price sources failed: %w", lastErr)
+	for _, id := range m.order {
+		if id == m.primary {
+			continue
+		}
+		if ch, ok := try(id); ok {
+			return ch, nil
+		}
 	}
 
-	return nil, errors.New("no price sources configured")
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
+	return nil, errors.New("no hyperliquid price source available")
 }
 
 // decorateVenueFlags adds venue-specific flags to the configuration
 func decorateVenueFlags(src map[string]interface{}, isPrimary bool) map[string]interface{} {
-	if src == nil {
-		src = make(map[string]interface{})
+	flags := cloneVenueFlags(src)
+	if flags == nil && !isPrimary {
+		return nil
 	}
-
-	dst := cloneVenueFlags(src)
-	dst["is_primary"] = isPrimary
-
-	return dst
+	if flags == nil {
+		flags = make(map[string]interface{}, 1)
+	}
+	flags["is_primary"] = isPrimary
+	return flags
 }
 
 // cloneVenueFlags creates a shallow copy of venue flags
 func cloneVenueFlags(src map[string]interface{}) map[string]interface{} {
-	if src == nil {
-		return make(map[string]interface{})
+	if len(src) == 0 {
+		if src == nil {
+			return nil
+		}
+		return map[string]interface{}{}
 	}
-
 	dst := make(map[string]interface{}, len(src))
 	for k, v := range src {
 		dst[k] = v
 	}
-
 	return dst
 }
 

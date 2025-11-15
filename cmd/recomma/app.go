@@ -818,7 +818,17 @@ func (a *App) Shutdown(ctx context.Context) error {
 			a.cleanupTicker.Stop()
 		}
 
-		// Drain queues
+		// Shutdown HTTP server first to prevent new requests from being accepted
+		// This must happen before draining queues to avoid panics when API handlers
+		// try to enqueue work on a shutdown queue
+		if a.Server != nil {
+			if err := drainHTTPServer(a.Server, a.serverErrCh); err != nil {
+				a.Logger.Warn("HTTP server shutdown error", slog.String("error", err.Error()))
+				shutdownErr = err
+			}
+		}
+
+		// Drain queues (safe now that HTTP server is shut down)
 		if a.DealQueue != nil {
 			a.Logger.Debug("draining deal queue")
 			a.DealQueue.ShutDownWithDrain()
@@ -847,14 +857,6 @@ func (a *App) Shutdown(ctx context.Context) error {
 		// Close websocket connections
 		for _, closeFn := range a.venueClosers {
 			closeFn()
-		}
-
-		// Shutdown HTTP server
-		if a.Server != nil {
-			if err := drainHTTPServer(a.Server, a.serverErrCh); err != nil {
-				a.Logger.Warn("HTTP server shutdown error", slog.String("error", err.Error()))
-				shutdownErr = err
-			}
 		}
 
 		// Close storage

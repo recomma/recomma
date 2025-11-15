@@ -11,6 +11,7 @@ import (
 	"time"
 
 	threecommasmock "github.com/recomma/3commas-mock/server"
+	"github.com/recomma/recomma/internal/api"
 	"github.com/stretchr/testify/require"
 )
 

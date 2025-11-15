@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -70,6 +71,7 @@ type App struct {
 
 	// HTTP Server
 	Server          *http.Server
+	serverAddr      string // Actual bound address (for random ports)
 	serverErrCh     chan error
 	serverStarted   bool
 	serverStartedMu sync.Mutex
@@ -332,9 +334,19 @@ func (a *App) StartHTTPServer() {
 		return
 	}
 
+	// Create listener to get the actual bound address (important for random ports)
+	listener, err := net.Listen("tcp", a.Server.Addr)
+	if err != nil {
+		a.serverErrCh <- err
+		return
+	}
+
+	// Store the actual bound address
+	a.serverAddr = listener.Addr().String()
+
 	go func() {
-		a.Logger.Info("HTTP API listening", slog.String("addr", a.Server.Addr), slog.String("public_origin", a.Config.PublicOrigin))
-		if err := a.Server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		a.Logger.Info("HTTP API listening", slog.String("addr", a.serverAddr), slog.String("public_origin", a.Config.PublicOrigin))
+		if err := a.Server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			a.serverErrCh <- err
 		}
 	}()
@@ -388,6 +400,15 @@ func (a *App) WaitForVaultUnseal(ctx context.Context) error {
 
 // HTTPAddr returns the HTTP server address
 func (a *App) HTTPAddr() string {
+	a.serverStartedMu.Lock()
+	defer a.serverStartedMu.Unlock()
+
+	// Return actual bound address if server has started (handles random ports)
+	if a.serverStarted && a.serverAddr != "" {
+		return a.serverAddr
+	}
+
+	// Fallback to configured address
 	if a.Server == nil {
 		return ""
 	}

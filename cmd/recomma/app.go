@@ -98,11 +98,11 @@ type App struct {
 // AppOptions configures application creation
 type AppOptions struct {
 	Config config.AppConfig
+	Store  *storage.Storage // Optional: inject storage (if nil, created from Config.StoragePath)
 
-	// Optional overrides for testing
+	// Optional test overrides
 	ThreeCommasClient engine.ThreeCommasAPI
-	VaultSecrets      *vault.Secrets // Bypass vault unsealing
-	StoragePath       string         // Override storage path
+	VaultSecrets      *vault.Secrets // Optional: bypass vault unsealing for tests
 }
 
 // NewApp creates and initializes the application (but doesn't start workers/server)
@@ -111,11 +111,6 @@ type AppOptions struct {
 // Call WaitForVaultUnseal() then Start() to begin operation.
 func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 	cfg := opts.Config
-
-	// Apply storage path override if provided
-	if opts.StoragePath != "" {
-		cfg.StoragePath = opts.StoragePath
-	}
 
 	debugEnabled := cfg.Debug && debugmode.Available()
 
@@ -155,10 +150,16 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 	systemStream := api.NewSystemStreamController(systemLevel)
 	systemStatus := api.NewSystemStatusTracker()
 
-	// Initialize storage
-	store, err := storage.New(cfg.StoragePath, storage.WithStreamPublisher(streamController))
-	if err != nil {
-		return nil, fmt.Errorf("storage init failed: %w", err)
+	// Initialize storage (use provided store or create new one)
+	var store *storage.Storage
+	var err error
+	if opts.Store != nil {
+		store = opts.Store
+	} else {
+		store, err = storage.New(cfg.StoragePath, storage.WithStreamPublisher(streamController))
+		if err != nil {
+			return nil, fmt.Errorf("storage init failed: %w", err)
+		}
 	}
 
 	// Initialize WebAuthn
@@ -168,7 +169,6 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 		RPOrigins:     allowedOrigins,
 	})
 	if err != nil {
-		store.Close()
 		return nil, fmt.Errorf("webauth init failed: %w", err)
 	}
 
@@ -176,52 +176,47 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 	initialVaultState := vault.StateSetupRequired
 	var controllerOpts []vault.ControllerOption
 
-	// Check if vault secrets provided (for testing - works in both debug and non-debug builds)
-	if opts.VaultSecrets != nil {
-		now := opts.VaultSecrets.ReceivedAt
-		if now.IsZero() {
-			now = time.Now().UTC()
-		}
-		// Create a test user without depending on debugmode package (which panics in non-debug builds)
-		testUser := &vault.User{
-			ID:        0,
-			Username:  "test",
-			CreatedAt: now,
-		}
-		controllerOpts = append(controllerOpts,
-			vault.WithInitialSecrets(opts.VaultSecrets),
-			vault.WithInitialUser(testUser),
-			vault.WithInitialTimestamps(nil, &now, nil),
-		)
-		initialVaultState = vault.StateUnsealed
-	} else if debugEnabled {
+	// Determine vault initialization based on mode and configuration
+	var vaultSecrets *vault.Secrets
+	var vaultUser *vault.User
+
+	if debugEnabled {
+		// Debug mode: load secrets from environment
 		secrets, err := debugmode.LoadSecretsFromEnv()
 		if err != nil {
-			store.Close()
 			return nil, fmt.Errorf("load debug secrets: %w", err)
 		}
+		vaultSecrets = secrets
 		now := secrets.ReceivedAt
 		if now.IsZero() {
 			now = time.Now().UTC()
 		}
-		controllerOpts = append(controllerOpts,
-			vault.WithInitialSecrets(secrets),
-			vault.WithInitialUser(debugmode.DebugUser(now)),
-			vault.WithInitialTimestamps(nil, &now, nil),
-		)
+		vaultUser = debugmode.DebugUser(now)
+		initialVaultState = vault.StateUnsealed
+	} else if opts.VaultSecrets != nil {
+		// Test mode: use injected secrets
+		vaultSecrets = opts.VaultSecrets
+		now := vaultSecrets.ReceivedAt
+		if now.IsZero() {
+			now = time.Now().UTC()
+		}
+		vaultUser = &vault.User{
+			ID:        0,
+			Username:  "test",
+			CreatedAt: now,
+		}
 		initialVaultState = vault.StateUnsealed
 	} else {
+		// Production mode: check database
 		existingUser, err := store.GetVaultUser(appCtx)
 		if err != nil {
-			store.Close()
 			return nil, fmt.Errorf("load vault user: %w", err)
 		}
 		if existingUser != nil {
-			controllerOpts = append(controllerOpts, vault.WithInitialUser(existingUser))
+			vaultUser = existingUser
 
 			payload, err := store.GetVaultPayloadForUser(appCtx, existingUser.ID)
 			if err != nil {
-				store.Close()
 				return nil, fmt.Errorf("load vault payload: %w", err)
 			}
 			if payload != nil {
@@ -230,6 +225,21 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 				controllerOpts = append(controllerOpts, vault.WithInitialTimestamps(&sealedAt, nil, nil))
 			}
 		}
+	}
+
+	// Apply vault configuration
+	if vaultUser != nil {
+		controllerOpts = append(controllerOpts, vault.WithInitialUser(vaultUser))
+	}
+	if vaultSecrets != nil {
+		now := vaultSecrets.ReceivedAt
+		if now.IsZero() {
+			now = time.Now().UTC()
+		}
+		controllerOpts = append(controllerOpts,
+			vault.WithInitialSecrets(vaultSecrets),
+			vault.WithInitialTimestamps(nil, &now, nil),
+		)
 	}
 
 	vaultController := vault.NewController(initialVaultState, controllerOpts...)

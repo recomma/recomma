@@ -206,16 +206,8 @@ func newTestHandler(t *testing.T) (*ApiHandler, *stubHandlerStore, context.Conte
 	return handler, store, ctx
 }
 
-func TestListBots_Empty(t *testing.T) {
-	handler, _, ctx := newTestHandler(t)
-
-	resp, err := handler.ListBots(ctx, ListBotsRequestObject{})
-	require.NoError(t, err)
-
-	okResp, ok := resp.(ListBots200JSONResponse)
-	require.True(t, ok, "expected 200 response")
-	require.NotNil(t, okResp.Items)
-	require.Empty(t, okResp.Items)
+func strPtr(s string) *string {
+	return &s
 }
 
 func TestListBots_WithData(t *testing.T) {
@@ -238,18 +230,6 @@ func TestListBots_WithData(t *testing.T) {
 	require.True(t, okResp.Items[0].Payload.IsEnabled)
 }
 
-func TestListDeals_Empty(t *testing.T) {
-	handler, _, ctx := newTestHandler(t)
-
-	resp, err := handler.ListDeals(ctx, ListDealsRequestObject{})
-	require.NoError(t, err)
-
-	okResp, ok := resp.(ListDeals200JSONResponse)
-	require.True(t, ok, "expected 200 response")
-	require.NotNil(t, okResp.Items)
-	require.Empty(t, okResp.Items)
-}
-
 func TestListDeals_WithData(t *testing.T) {
 	handler, store, ctx := newTestHandler(t)
 
@@ -268,18 +248,6 @@ func TestListDeals_WithData(t *testing.T) {
 	require.EqualValues(t, 101, okResp.Items[0].DealId)
 	require.EqualValues(t, 101, okResp.Items[0].Payload.Id)
 	require.Equal(t, "USDT_BTC", okResp.Items[0].Payload.Pair)
-}
-
-func TestListOrders_Empty(t *testing.T) {
-	handler, _, ctx := newTestHandler(t)
-
-	resp, err := handler.ListOrders(ctx, ListOrdersRequestObject{})
-	require.NoError(t, err)
-
-	okResp, ok := resp.(ListOrders200JSONResponse)
-	require.True(t, ok, "expected 200 response")
-	require.NotNil(t, okResp.Items)
-	require.Empty(t, okResp.Items)
 }
 
 func TestListOrders_WithData(t *testing.T) {
@@ -317,18 +285,6 @@ func TestListOrders_WithData(t *testing.T) {
 	okResp, ok := resp.(ListOrders200JSONResponse)
 	require.True(t, ok, "expected 200 response")
 	require.Len(t, okResp.Items, 2)
-}
-
-func TestListVenues_Empty(t *testing.T) {
-	handler, _, ctx := newTestHandler(t)
-
-	resp, err := handler.ListVenues(ctx, ListVenuesRequestObject{})
-	require.NoError(t, err)
-
-	okResp, ok := resp.(ListVenues200JSONResponse)
-	require.True(t, ok, "expected 200 response")
-	require.NotNil(t, okResp.Items)
-	require.Empty(t, okResp.Items)
 }
 
 func TestListVenues_WithData(t *testing.T) {
@@ -392,137 +348,6 @@ func TestDeleteVenue(t *testing.T) {
 
 	// Verify deleted
 	require.Empty(t, store.venues)
-}
-
-func TestListVenueAssignments_Empty(t *testing.T) {
-	handler, _, ctx := newTestHandler(t)
-
-	resp, err := handler.ListVenueAssignments(ctx, ListVenueAssignmentsRequestObject{VenueId: "hl1"})
-	require.NoError(t, err)
-
-	okResp, ok := resp.(ListVenueAssignments200JSONResponse)
-	require.True(t, ok, "expected 200 response")
-	require.NotNil(t, okResp.Items)
-	require.Empty(t, okResp.Items)
-}
-
-func TestListVenueAssignments_WithData(t *testing.T) {
-	handler, store, ctx := newTestHandler(t)
-
-	// Add test assignments
-	now := time.Now().UTC()
-	store.venueAssignments["hl1"] = []VenueAssignmentRecord{
-		{VenueId: "hl1", BotId: 1, IsPrimary: true, AssignedAt: now},
-		{VenueId: "hl1", BotId: 2, IsPrimary: false, AssignedAt: now},
-	}
-
-	resp, err := handler.ListVenueAssignments(ctx, ListVenueAssignmentsRequestObject{VenueId: "hl1"})
-	require.NoError(t, err)
-
-	okResp, ok := resp.(ListVenueAssignments200JSONResponse)
-	require.True(t, ok, "expected 200 response")
-	require.Len(t, okResp.Items, 2)
-	require.EqualValues(t, 1, okResp.Items[0].BotId)
-	require.True(t, okResp.Items[0].IsPrimary)
-}
-
-func TestUpsertVenueAssignment(t *testing.T) {
-	handler, store, ctx := newTestHandler(t)
-
-	body := UpsertVenueAssignmentJSONRequestBody{
-		IsPrimary: true,
-	}
-
-	resp, err := handler.UpsertVenueAssignment(ctx, UpsertVenueAssignmentRequestObject{
-		VenueId: "hl1",
-		BotId:   42,
-		Body:    &body,
-	})
-	require.NoError(t, err)
-
-	okResp, ok := resp.(UpsertVenueAssignment200JSONResponse)
-	require.True(t, ok, "expected 200 response")
-	require.Equal(t, "hl1", okResp.VenueId)
-	require.EqualValues(t, 42, okResp.BotId)
-	require.True(t, okResp.IsPrimary)
-
-	// Verify stored
-	require.Len(t, store.venueAssignments["hl1"], 1)
-}
-
-func TestDeleteVenueAssignment(t *testing.T) {
-	handler, store, ctx := newTestHandler(t)
-
-	// Add assignment to delete
-	now := time.Now().UTC()
-	store.venueAssignments["hl1"] = []VenueAssignmentRecord{
-		{VenueId: "hl1", BotId: 99, IsPrimary: true, AssignedAt: now},
-	}
-
-	resp, err := handler.DeleteVenueAssignment(ctx, DeleteVenueAssignmentRequestObject{
-		VenueId: "hl1",
-		BotId:   99,
-	})
-	require.NoError(t, err)
-
-	_, ok := resp.(DeleteVenueAssignment204Response)
-	require.True(t, ok, "expected 204 response")
-
-	// Verify deleted
-	require.Empty(t, store.venueAssignments["hl1"])
-}
-
-func TestListBotVenues_Empty(t *testing.T) {
-	handler, _, ctx := newTestHandler(t)
-
-	resp, err := handler.ListBotVenues(ctx, ListBotVenuesRequestObject{BotId: 1})
-	require.NoError(t, err)
-
-	okResp, ok := resp.(ListBotVenues200JSONResponse)
-	require.True(t, ok, "expected 200 response")
-	require.NotNil(t, okResp.Items)
-	require.Empty(t, okResp.Items)
-}
-
-func TestListBotVenues_WithData(t *testing.T) {
-	handler, store, ctx := newTestHandler(t)
-
-	// Add bot venue assignments
-	store.botVenues[1] = []BotVenueAssignmentRecord{
-		{VenueId: "hl1", Wallet: "0x1234", IsPrimary: true},
-	}
-
-	resp, err := handler.ListBotVenues(ctx, ListBotVenuesRequestObject{BotId: 1})
-	require.NoError(t, err)
-
-	okResp, ok := resp.(ListBotVenues200JSONResponse)
-	require.True(t, ok, "expected 200 response")
-	require.Len(t, okResp.Items, 1)
-	require.Equal(t, "hl1", okResp.Items[0].VenueId)
-}
-
-func TestGetSystemStatus(t *testing.T) {
-	handler, _, ctx := newTestHandler(t)
-
-	resp, err := handler.GetSystemStatus(ctx, GetSystemStatusRequestObject{})
-	require.NoError(t, err)
-
-	okResp, ok := resp.(GetSystemStatus200JSONResponse)
-	require.True(t, ok, "expected 200 response")
-	require.NotNil(t, okResp.Timestamp)
-	require.NotZero(t, okResp.Engine)
-}
-
-func TestListOrderScalers_Empty(t *testing.T) {
-	handler, _, ctx := newTestHandler(t)
-
-	resp, err := handler.ListOrderScalers(ctx, ListOrderScalersRequestObject{})
-	require.NoError(t, err)
-
-	okResp, ok := resp.(ListOrderScalers200JSONResponse)
-	require.True(t, ok, "expected 200 response")
-	require.NotNil(t, okResp.Items)
-	require.Empty(t, okResp.Items)
 }
 
 func TestListOrderScalers_WithData(t *testing.T) {

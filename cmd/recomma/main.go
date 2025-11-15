@@ -54,8 +54,9 @@ func main() {
 	if err := app.WaitForVaultUnseal(appCtx); err != nil {
 		if !errors.Is(err, context.Canceled) {
 			app.Logger.Error("vault unseal failed", slog.String("error", err.Error()))
+			os.Exit(1) // Non-zero exit for startup failures
 		}
-		os.Exit(0)
+		os.Exit(0) // Clean shutdown on cancellation
 	}
 
 	// Start all services (workers, periodic tasks, etc.)

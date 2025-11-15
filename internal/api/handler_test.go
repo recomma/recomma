@@ -224,8 +224,8 @@ func TestListBots_WithData(t *testing.T) {
 	// Add test bots to store
 	now := time.Now().UTC()
 	store.bots = []BotItem{
-		{Bot: tc.Bot{ID: 1, Name: "Test Bot 1", IsEnabled: true}, LastSyncedAt: now},
-		{Bot: tc.Bot{ID: 2, Name: "Test Bot 2", IsEnabled: false}, LastSyncedAt: now},
+		{Bot: tc.Bot{Id: 1, Name: strPtr("Test Bot 1"), IsEnabled: true}, LastSyncedAt: now},
+		{Bot: tc.Bot{Id: 2, Name: strPtr("Test Bot 2"), IsEnabled: false}, LastSyncedAt: now},
 	}
 
 	resp, err := handler.ListBots(ctx, ListBotsRequestObject{})
@@ -270,8 +270,8 @@ func TestListDeals_WithData(t *testing.T) {
 
 	// Add test deals to store
 	store.deals = []tc.Deal{
-		{ID: 101, BotID: 1, Pair: "USDT_BTC"},
-		{ID: 102, BotID: 1, Pair: "USDT_ETH"},
+		{Id: 101, BotId: 1, Pair: "USDT_BTC"},
+		{Id: 102, BotId: 1, Pair: "USDT_ETH"},
 	}
 
 	resp, err := handler.ListDeals(ctx, ListDealsRequestObject{})

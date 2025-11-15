@@ -630,6 +630,12 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 			apiURL = primaryAPIURL
 		}
 
+		// WebSocket URL: use explicit websocket_url if provided, otherwise fall back to api_url
+		wsURL := strings.TrimSpace(venue.WebsocketURL)
+		if wsURL == "" {
+			wsURL = apiURL
+		}
+
 		venueIdent := recomma.VenueID(venueID)
 
 		payload := api.VenueUpsertRequest{
@@ -663,7 +669,7 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 			constraintsInfo = info
 		}
 
-		wsClient, err := ws.New(ctx, a.Store, a.FillTracker, venueIdent, wallet, apiURL)
+		wsClient, err := ws.New(ctx, a.Store, a.FillTracker, venueIdent, wallet, wsURL)
 		if err != nil {
 			return fmt.Errorf("create hyperliquid websocket: %w", err)
 		}
@@ -694,7 +700,7 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 		)
 
 		if shouldBootstrapDefaultWs && venueIdent == primaryIdent {
-			aliasClient, err := ws.New(ctx, a.Store, a.FillTracker, defaultHyperliquidIdent, defaultAliasWallet, apiURL)
+			aliasClient, err := ws.New(ctx, a.Store, a.FillTracker, defaultHyperliquidIdent, defaultAliasWallet, wsURL)
 			if err != nil {
 				return fmt.Errorf("create default hyperliquid websocket: %w", err)
 			}

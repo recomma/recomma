@@ -530,9 +530,32 @@ func TestListOrderScalers_WithData(t *testing.T) {
 
 	// Add test scaler configs
 	now := time.Now().UTC()
+	oid1 := orderid.OrderId{BotID: 1, DealID: 101, BotEventID: 1}
+	oid2 := orderid.OrderId{BotID: 2, DealID: 102, BotEventID: 1}
+
 	store.orderScalers = []OrderScalerConfigItem{
-		{BotID: 1, Multiplier: 1.5, UpdatedAt: now, UpdatedBy: "user1"},
-		{BotID: 2, Multiplier: 2.0, UpdatedAt: now, UpdatedBy: "user2"},
+		{
+			OrderId:    oid1,
+			ObservedAt: now,
+			Actor:      "user1",
+			Config: EffectiveOrderScaler{
+				OrderId:    oid1.Hex(),
+				Multiplier: 1.5,
+				Source:     Default,
+				Default:    OrderScalerState{Multiplier: 1.5, UpdatedAt: now, UpdatedBy: "user1"},
+			},
+		},
+		{
+			OrderId:    oid2,
+			ObservedAt: now,
+			Actor:      "user2",
+			Config: EffectiveOrderScaler{
+				OrderId:    oid2.Hex(),
+				Multiplier: 2.0,
+				Source:     Default,
+				Default:    OrderScalerState{Multiplier: 2.0, UpdatedAt: now, UpdatedBy: "user2"},
+			},
+		},
 	}
 
 	resp, err := handler.ListOrderScalers(ctx, ListOrderScalersRequestObject{})

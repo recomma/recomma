@@ -93,12 +93,12 @@ type App struct {
 
 // AppOptions configures application creation
 type AppOptions struct {
-    Config config.Config
+    Config config.AppConfig
+    Store  *storage.Storage // Optional: inject storage (if nil, created from Config.StoragePath)
 
-    // Optional: Override for testing
+    // Optional test overrides
     ThreeCommasClient engine.ThreeCommasAPI
-    VaultSecrets      *vault.Secrets
-    StoragePath       string // Override storage path (default: cfg.StoragePath)
+    VaultSecrets      *vault.Secrets // Optional: bypass vault unsealing for tests
 }
 
 // NewApp creates and initializes the application
@@ -145,11 +145,17 @@ func (a *App) HTTPAddr() string {
 ```
 
 **Key Design Principles:**
-1. **Dependency Injection**: Accept mocks via `AppOptions`
-2. **Explicit Lifecycle**: Separate creation, unsealing, starting, shutdown
-3. **Context-Aware**: All operations accept context for cancellation
-4. **Test-Friendly**: Expose internal state for assertions
-5. **Backwards Compatible**: Existing `main()` should work unchanged
+1. **Dependency Injection**: Accept mocks via `AppOptions` (Store, ThreeCommasClient, VaultSecrets)
+2. **Storage Control**: Tests inject pre-configured storage, production lets NewApp create it
+3. **Explicit Lifecycle**: Separate creation, unsealing, starting, shutdown
+4. **Context-Aware**: All operations accept context for cancellation
+5. **Test-Friendly**: Expose internal state for assertions
+6. **Backwards Compatible**: Existing `main()` should work unchanged
+
+**Testing Patterns:**
+- **Debug Mode Tests**: Use `cfg.Debug = true`, NewApp creates storage with `:memory:` path
+- **E2E Tests**: Create `storage.New(":memory:")` + inject `Store` + inject `VaultSecrets` to bypass unsealing
+- **Production**: NewApp creates storage from `Config.StoragePath`, checks database for vault state
 
 #### 1.2 Refactor `main()` (`cmd/recomma/main.go`)
 
@@ -479,18 +485,21 @@ func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
     )
     require.NoError(t, err)
 
+    // Create test storage
+    store, err := storage.New(":memory:")
+    require.NoError(t, err)
+
     // Create test configuration
     cfg := config.DefaultConfig()
     cfg.HTTPListen = "127.0.0.1:0" // Random port
-    cfg.StoragePath = ":memory:"
-    cfg.Debug = true
 
     // Create app with test dependencies
     ctx := context.Background()
     app, err := NewApp(ctx, AppOptions{
         Config:            cfg,
+        Store:             store,
         ThreeCommasClient: tcClient,
-        VaultSecrets:      secrets, // Bypass vault authentication
+        VaultSecrets:      secrets, // Bypass vault unsealing for tests
     })
     require.NoError(t, err)
 

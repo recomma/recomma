@@ -572,9 +572,6 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 	) {
 		defaultVenueWallet = ""
 	}
-	if err := a.Store.EnsureDefaultVenueWallet(ctx, defaultVenueWallet); err != nil {
-		return fmt.Errorf("update default venue wallet: %w", err)
-	}
 
 	defaultAliasWallet := strings.TrimSpace(defaultVenueWallet)
 	if defaultAliasWallet == "" {
@@ -727,6 +724,12 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 			slog.String("api_url", apiURL),
 			slog.Bool("primary", venue.Primary),
 		)
+	}
+
+	// Ensure default venue is configured after all venues from secrets are processed
+	// This allows the default venue to detect conflicts and skip creation if needed
+	if err := a.Store.EnsureDefaultVenueWallet(ctx, defaultVenueWallet); err != nil {
+		return fmt.Errorf("update default venue wallet: %w", err)
 	}
 
 	if len(a.StatusClients) == 0 {

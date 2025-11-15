@@ -1,0 +1,26 @@
+# Test coverage configuration for go-test-coverage action
+# See: https://github.com/vladopajic/go-test-coverage
+
+# Coverage profile location
+profile: cover.out
+
+# Minimum coverage thresholds
+threshold:
+  file: 50      # Minimum coverage per file (%)
+  package: 50   # Minimum coverage per package (%)
+  total: 60     # Minimum overall project coverage (%)
+
+# Exclusions
+exclude:
+  paths:
+    # Exclude webui directory
+    - ^webui/
+
+    # Exclude generated code from oapi-codegen
+    - \.gen\.go$
+
+    # Exclude generated code from sqlc
+    - ^storage/sqlcgen/
+
+    # Exclude test files (optional, but common practice)
+    # - _test\.go$

@@ -17,6 +17,22 @@ import (
 	"github.com/sonirico/go-hyperliquid"
 )
 
+// httpToWsURL converts an HTTP(S) URL to a WebSocket URL (ws:// or wss://)
+func httpToWsURL(apiURL string) string {
+	if apiURL == "" {
+		return ""
+	}
+	// Convert http:// to ws:// and https:// to wss://
+	if strings.HasPrefix(apiURL, "https://") {
+		return "wss://" + strings.TrimPrefix(apiURL, "https://")
+	}
+	if strings.HasPrefix(apiURL, "http://") {
+		return "ws://" + strings.TrimPrefix(apiURL, "http://")
+	}
+	// Already ws:// or wss://, return as-is
+	return apiURL
+}
+
 type Client struct {
 	ws            *hyperliquid.WebsocketClient
 	subscriptions sync.Map
@@ -71,7 +87,9 @@ func (t *bboTopic) broadcast(bbo hl.BestBidOffer) {
 // New opens a websocket and subscribes to order updates for userAddr.
 // Pass "" for apiURL to use SDK default (mainnet).
 func New(ctx context.Context, store *storage.Storage, tracker *filltracker.Service, venue recomma.VenueID, userAddr, apiURL string, opts ...hyperliquid.WsOpt) (*Client, error) {
-	ws := hyperliquid.NewWebsocketClient(apiURL, opts...)
+	// Convert HTTP(S) URL to WebSocket URL
+	wsURL := httpToWsURL(apiURL)
+	ws := hyperliquid.NewWebsocketClient(wsURL, opts...)
 	if err := ws.Connect(ctx); err != nil {
 		return nil, err
 	}

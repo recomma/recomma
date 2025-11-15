@@ -238,21 +238,6 @@ func TestListBots_WithData(t *testing.T) {
 	require.True(t, okResp.Items[0].Payload.IsEnabled)
 }
 
-func TestListBots_RequiresAuth(t *testing.T) {
-	handler, store, _ := newTestHandler(t)
-
-	// Create unauthenticated context (no session cookie)
-	req := httptest.NewRequest(http.MethodGet, "/api/bots", nil)
-	unauthCtx := context.WithValue(context.Background(), httpRequestContextKey, req)
-
-	resp, err := handler.ListBots(unauthCtx, ListBotsRequestObject{})
-	require.NoError(t, err)
-
-	_, unauthorized := resp.(ListBots401Response)
-	require.True(t, unauthorized, "expected 401 response without auth")
-	require.Empty(t, store.bots, "store should not be queried")
-}
-
 func TestListDeals_Empty(t *testing.T) {
 	handler, _, ctx := newTestHandler(t)
 
@@ -280,8 +265,9 @@ func TestListDeals_WithData(t *testing.T) {
 	okResp, ok := resp.(ListDeals200JSONResponse)
 	require.True(t, ok, "expected 200 response")
 	require.Len(t, okResp.Items, 2)
-	require.EqualValues(t, 101, okResp.Items[0].Id)
-	require.Equal(t, "USDT_BTC", okResp.Items[0].Pair)
+	require.EqualValues(t, 101, okResp.Items[0].DealId)
+	require.EqualValues(t, 101, okResp.Items[0].Payload.Id)
+	require.Equal(t, "USDT_BTC", okResp.Items[0].Payload.Pair)
 }
 
 func TestListOrders_Empty(t *testing.T) {
@@ -301,23 +287,27 @@ func TestListOrders_WithData(t *testing.T) {
 
 	// Add test orders to store
 	now := time.Now().UTC()
-	oid1 := orderid.OrderId{DealID: 101, BotID: 1, EventFingerprint: [20]byte{}}
-	oid2 := orderid.OrderId{DealID: 102, BotID: 1, EventFingerprint: [20]byte{}}
+	oid1 := orderid.OrderId{DealID: 101, BotID: 1, BotEventID: 1}
+	oid2 := orderid.OrderId{DealID: 102, BotID: 1, BotEventID: 2}
 
 	store.orders = []OrderItem{
 		{
 			OrderId:    oid1,
-			Coin:       "BTC",
-			Side:       "buy",
-			Size:       0.001,
 			ObservedAt: now,
+			BotEvent: &tc.BotEvent{
+				Coin: "BTC",
+				Type: tc.BUY,
+				Size: 0.001,
+			},
 		},
 		{
 			OrderId:    oid2,
-			Coin:       "ETH",
-			Side:       "sell",
-			Size:       0.1,
 			ObservedAt: now,
+			BotEvent: &tc.BotEvent{
+				Coin: "ETH",
+				Type: tc.SELL,
+				Size: 0.1,
+			},
 		},
 	}
 

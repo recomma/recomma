@@ -9,6 +9,7 @@ import (
 	"time"
 
 	threecommasmock "github.com/recomma/3commas-mock/server"
+	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/internal/api"
 	"github.com/stretchr/testify/require"
 )
@@ -21,6 +22,9 @@ func TestE2E_BasicHarnessLifecycle(t *testing.T) {
 	defer harness.Shutdown()
 
 	ctx := context.Background()
+
+	err := harness.ThreeCommasMock.LoadVCRCassette("../testdata/getdeal")
+	require.NoError(t, err)
 
 	// Start application
 	harness.Start(ctx)
@@ -42,38 +46,8 @@ func TestE2E_DealToOrderFlow(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Configure 3commas mock with a bot and active deal
-	harness.ThreeCommasMock.AddBot(threecommasmock.Bot{
-		ID:      1,
-		Name:    "E2E Test Bot",
-		Enabled: true,
-	})
-
-	harness.ThreeCommasMock.AddDeal(1, threecommasmock.Deal{
-		ID:           101,
-		BotID:        1,
-		Pair:         "USDT_BTC",
-		Status:       "active",
-		ToCurrency:   "BTC",
-		FromCurrency: "USDT",
-		CreatedAt:    "2024-01-15T10:30:00.000Z",
-		UpdatedAt:    "2024-01-15T10:31:00.000Z",
-		Events: []threecommasmock.BotEvent{
-			{
-				CreatedAt:     "2024-01-15T10:30:00.000Z",
-				Action:        "place",
-				Coin:          "BTC",
-				Type:          "buy",
-				Status:        "active",
-				Price:         "50000.0",
-				Size:          "0.0002",
-				OrderType:     "base",
-				OrderSize:     1,
-				OrderPosition: 1,
-				IsMarket:      false,
-			},
-		},
-	})
+	err := harness.ThreeCommasMock.LoadVCRCassette("../testdata/getdeal")
+	require.NoError(t, err)
 
 	// Start application
 	harness.Start(ctx)
@@ -81,8 +55,22 @@ func TestE2E_DealToOrderFlow(t *testing.T) {
 	// Trigger deal production
 	harness.TriggerDealProduction(ctx)
 
-	// Wait for deal to be processed
-	harness.WaitForDealProcessing(101, 5*time.Second)
+	// Wait for the recorded deal to be processed
+	harness.WaitForDealProcessing(2376446537, 5*time.Second)
+
+	deals, _, err := harness.Store.ListDeals(ctx, api.ListDealsOptions{})
+	require.NoError(t, err)
+
+	var recordedDeal *tc.Deal
+	for i := range deals {
+		if deals[i].Id == 2376446537 {
+			recordedDeal = &deals[i]
+			break
+		}
+	}
+	require.NotNil(t, recordedDeal, "recorded deal should be stored")
+	require.Equal(t, "USDT_DOGE", recordedDeal.Pair)
+	require.Equal(t, "Bot16511317 has signal", recordedDeal.BotName)
 
 	// Wait for order to be recorded in database (which implies it was submitted)
 	harness.WaitForOrderInDatabase(5 * time.Second)

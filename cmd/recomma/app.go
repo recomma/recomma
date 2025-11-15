@@ -176,7 +176,7 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 	initialVaultState := vault.StateSetupRequired
 	var controllerOpts []vault.ControllerOption
 
-	// Check if vault secrets provided (for testing - bypasses all normal vault logic)
+	// Check if vault secrets provided (for testing)
 	if opts.VaultSecrets != nil {
 		now := opts.VaultSecrets.ReceivedAt
 		if now.IsZero() {
@@ -188,8 +188,23 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 			vault.WithInitialTimestamps(nil, &now, nil),
 		)
 		initialVaultState = vault.StateUnsealed
+	} else if debugEnabled {
+		secrets, err := debugmode.LoadSecretsFromEnv()
+		if err != nil {
+			store.Close()
+			return nil, fmt.Errorf("load debug secrets: %w", err)
+		}
+		now := secrets.ReceivedAt
+		if now.IsZero() {
+			now = time.Now().UTC()
+		}
+		controllerOpts = append(controllerOpts,
+			vault.WithInitialSecrets(secrets),
+			vault.WithInitialUser(debugmode.DebugUser(now)),
+			vault.WithInitialTimestamps(nil, &now, nil),
+		)
+		initialVaultState = vault.StateUnsealed
 	} else {
-		// Check database for existing vault data (production and debug modes)
 		existingUser, err := store.GetVaultUser(appCtx)
 		if err != nil {
 			store.Close()
@@ -204,48 +219,11 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 				return nil, fmt.Errorf("load vault payload: %w", err)
 			}
 			if payload != nil {
-				// Existing encrypted vault data found - start Sealed (security critical!)
-				// This takes precedence over debug mode settings
 				initialVaultState = vault.StateSealed
 				sealedAt := payload.UpdatedAt
 				controllerOpts = append(controllerOpts, vault.WithInitialTimestamps(&sealedAt, nil, nil))
-			} else if debugEnabled {
-				// No vault payload yet, but debug mode - load from env
-				secrets, err := debugmode.LoadSecretsFromEnv()
-				if err != nil {
-					store.Close()
-					return nil, fmt.Errorf("load debug secrets: %w", err)
-				}
-				now := secrets.ReceivedAt
-				if now.IsZero() {
-					now = time.Now().UTC()
-				}
-				controllerOpts = append(controllerOpts,
-					vault.WithInitialSecrets(secrets),
-					vault.WithInitialUser(debugmode.DebugUser(now)),
-					vault.WithInitialTimestamps(nil, &now, nil),
-				)
-				initialVaultState = vault.StateUnsealed
 			}
-		} else if debugEnabled {
-			// No existing user, but debug mode - load from env
-			secrets, err := debugmode.LoadSecretsFromEnv()
-			if err != nil {
-				store.Close()
-				return nil, fmt.Errorf("load debug secrets: %w", err)
-			}
-			now := secrets.ReceivedAt
-			if now.IsZero() {
-				now = time.Now().UTC()
-			}
-			controllerOpts = append(controllerOpts,
-				vault.WithInitialSecrets(secrets),
-				vault.WithInitialUser(debugmode.DebugUser(now)),
-				vault.WithInitialTimestamps(nil, &now, nil),
-			)
-			initialVaultState = vault.StateUnsealed
 		}
-		// else: no user, not debug mode → StateSetupRequired (default)
 	}
 
 	vaultController := vault.NewController(initialVaultState, controllerOpts...)

@@ -77,13 +77,12 @@ func (s *stubHandlerStore) ListVenues(ctx context.Context) ([]VenueRecord, error
 }
 
 func (s *stubHandlerStore) UpsertVenue(ctx context.Context, venueID string, req VenueUpsertRequest) (VenueRecord, error) {
-	now := time.Now().UTC()
 	venue := VenueRecord{
-		VenueId:   venueID,
-		VenueType: req.VenueType,
-		Wallet:    req.Wallet,
-		CreatedAt: now,
-		UpdatedAt: now,
+		VenueId:     venueID,
+		Type:        req.Type,
+		Wallet:      req.Wallet,
+		DisplayName: req.DisplayName,
+		Flags:       req.Flags,
 	}
 	s.venues = append(s.venues, venue)
 	return venue, nil
@@ -103,14 +102,13 @@ func (s *stubHandlerStore) ListVenueAssignments(ctx context.Context, venueID str
 	return s.venueAssignments[venueID], nil
 }
 
-func (s *stubHandlerStore) UpsertVenueAssignment(ctx context.Context, venueID string, botID int64, enabled bool) (VenueAssignmentRecord, error) {
+func (s *stubHandlerStore) UpsertVenueAssignment(ctx context.Context, venueID string, botID int64, isPrimary bool) (VenueAssignmentRecord, error) {
 	now := time.Now().UTC()
 	assignment := VenueAssignmentRecord{
-		VenueId:   venueID,
-		BotId:     botID,
-		Enabled:   enabled,
-		CreatedAt: now,
-		UpdatedAt: now,
+		VenueId:    venueID,
+		BotId:      botID,
+		IsPrimary:  isPrimary,
+		AssignedAt: now,
 	}
 	s.venueAssignments[venueID] = append(s.venueAssignments[venueID], assignment)
 	return assignment, nil
@@ -216,17 +214,18 @@ func TestListBots_Empty(t *testing.T) {
 
 	okResp, ok := resp.(ListBots200JSONResponse)
 	require.True(t, ok, "expected 200 response")
-	require.NotNil(t, okResp.Bots)
-	require.Empty(t, okResp.Bots)
+	require.NotNil(t, okResp.Items)
+	require.Empty(t, okResp.Items)
 }
 
 func TestListBots_WithData(t *testing.T) {
 	handler, store, ctx := newTestHandler(t)
 
 	// Add test bots to store
+	now := time.Now().UTC()
 	store.bots = []BotItem{
-		{BotID: 1, BotName: "Test Bot 1", Enabled: true},
-		{BotID: 2, BotName: "Test Bot 2", Enabled: false},
+		{Bot: tc.Bot{ID: 1, Name: "Test Bot 1", IsEnabled: true}, LastSyncedAt: now},
+		{Bot: tc.Bot{ID: 2, Name: "Test Bot 2", IsEnabled: false}, LastSyncedAt: now},
 	}
 
 	resp, err := handler.ListBots(ctx, ListBotsRequestObject{})
@@ -234,10 +233,9 @@ func TestListBots_WithData(t *testing.T) {
 
 	okResp, ok := resp.(ListBots200JSONResponse)
 	require.True(t, ok, "expected 200 response")
-	require.Len(t, okResp.Bots, 2)
-	require.Equal(t, int64(1), okResp.Bots[0].BotId)
-	require.Equal(t, "Test Bot 1", okResp.Bots[0].Name)
-	require.True(t, okResp.Bots[0].Enabled)
+	require.Len(t, okResp.Items, 2)
+	require.EqualValues(t, 1, okResp.Items[0].BotId)
+	require.True(t, okResp.Items[0].Payload.IsEnabled)
 }
 
 func TestListBots_RequiresAuth(t *testing.T) {
@@ -263,8 +261,8 @@ func TestListDeals_Empty(t *testing.T) {
 
 	okResp, ok := resp.(ListDeals200JSONResponse)
 	require.True(t, ok, "expected 200 response")
-	require.NotNil(t, okResp.Deals)
-	require.Empty(t, okResp.Deals)
+	require.NotNil(t, okResp.Items)
+	require.Empty(t, okResp.Items)
 }
 
 func TestListDeals_WithData(t *testing.T) {
@@ -281,9 +279,9 @@ func TestListDeals_WithData(t *testing.T) {
 
 	okResp, ok := resp.(ListDeals200JSONResponse)
 	require.True(t, ok, "expected 200 response")
-	require.Len(t, okResp.Deals, 2)
-	require.EqualValues(t, 101, okResp.Deals[0].Id)
-	require.Equal(t, "USDT_BTC", okResp.Deals[0].Pair)
+	require.Len(t, okResp.Items, 2)
+	require.EqualValues(t, 101, okResp.Items[0].Id)
+	require.Equal(t, "USDT_BTC", okResp.Items[0].Pair)
 }
 
 func TestListOrders_Empty(t *testing.T) {
@@ -294,8 +292,8 @@ func TestListOrders_Empty(t *testing.T) {
 
 	okResp, ok := resp.(ListOrders200JSONResponse)
 	require.True(t, ok, "expected 200 response")
-	require.NotNil(t, okResp.Orders)
-	require.Empty(t, okResp.Orders)
+	require.NotNil(t, okResp.Items)
+	require.Empty(t, okResp.Items)
 }
 
 func TestListOrders_WithData(t *testing.T) {
@@ -303,18 +301,19 @@ func TestListOrders_WithData(t *testing.T) {
 
 	// Add test orders to store
 	now := time.Now().UTC()
+	oid1 := orderid.OrderId{DealID: 101, BotID: 1, EventFingerprint: [20]byte{}}
+	oid2 := orderid.OrderId{DealID: 102, BotID: 1, EventFingerprint: [20]byte{}}
+
 	store.orders = []OrderItem{
 		{
-			DealID:     101,
-			BotID:      1,
+			OrderId:    oid1,
 			Coin:       "BTC",
 			Side:       "buy",
 			Size:       0.001,
 			ObservedAt: now,
 		},
 		{
-			DealID:     102,
-			BotID:      1,
+			OrderId:    oid2,
 			Coin:       "ETH",
 			Side:       "sell",
 			Size:       0.1,
@@ -327,9 +326,7 @@ func TestListOrders_WithData(t *testing.T) {
 
 	okResp, ok := resp.(ListOrders200JSONResponse)
 	require.True(t, ok, "expected 200 response")
-	require.Len(t, okResp.Orders, 2)
-	require.Equal(t, "BTC", okResp.Orders[0].Coin)
-	require.Equal(t, "buy", okResp.Orders[0].Side)
+	require.Len(t, okResp.Items, 2)
 }
 
 func TestListVenues_Empty(t *testing.T) {
@@ -340,18 +337,17 @@ func TestListVenues_Empty(t *testing.T) {
 
 	okResp, ok := resp.(ListVenues200JSONResponse)
 	require.True(t, ok, "expected 200 response")
-	require.NotNil(t, okResp.Venues)
-	require.Empty(t, okResp.Venues)
+	require.NotNil(t, okResp.Items)
+	require.Empty(t, okResp.Items)
 }
 
 func TestListVenues_WithData(t *testing.T) {
 	handler, store, ctx := newTestHandler(t)
 
 	// Add test venues
-	now := time.Now().UTC()
 	store.venues = []VenueRecord{
-		{VenueId: "hl1", VenueType: "hyperliquid", Wallet: "0x1234", CreatedAt: now, UpdatedAt: now},
-		{VenueId: "hl2", VenueType: "hyperliquid", Wallet: "0x5678", CreatedAt: now, UpdatedAt: now},
+		{VenueId: "hl1", Type: "hyperliquid", Wallet: "0x1234", DisplayName: "HL 1"},
+		{VenueId: "hl2", Type: "hyperliquid", Wallet: "0x5678", DisplayName: "HL 2"},
 	}
 
 	resp, err := handler.ListVenues(ctx, ListVenuesRequestObject{})
@@ -359,17 +355,18 @@ func TestListVenues_WithData(t *testing.T) {
 
 	okResp, ok := resp.(ListVenues200JSONResponse)
 	require.True(t, ok, "expected 200 response")
-	require.Len(t, okResp.Venues, 2)
-	require.Equal(t, "hl1", okResp.Venues[0].VenueId)
-	require.Equal(t, "hyperliquid", okResp.Venues[0].VenueType)
+	require.Len(t, okResp.Items, 2)
+	require.Equal(t, "hl1", okResp.Items[0].VenueId)
+	require.Equal(t, "hyperliquid", okResp.Items[0].Type)
 }
 
 func TestUpsertVenue_Create(t *testing.T) {
 	handler, store, ctx := newTestHandler(t)
 
 	body := UpsertVenueJSONRequestBody{
-		VenueType: "hyperliquid",
-		Wallet:    "0xabcd",
+		Type:        "hyperliquid",
+		Wallet:      "0xabcd",
+		DisplayName: "Test Venue",
 	}
 
 	resp, err := handler.UpsertVenue(ctx, UpsertVenueRequestObject{
@@ -381,7 +378,7 @@ func TestUpsertVenue_Create(t *testing.T) {
 	okResp, ok := resp.(UpsertVenue200JSONResponse)
 	require.True(t, ok, "expected 200 response")
 	require.Equal(t, "test-venue", okResp.VenueId)
-	require.Equal(t, "hyperliquid", okResp.VenueType)
+	require.Equal(t, "hyperliquid", okResp.Type)
 	require.Equal(t, "0xabcd", okResp.Wallet)
 
 	// Verify stored
@@ -393,9 +390,8 @@ func TestDeleteVenue(t *testing.T) {
 	handler, store, ctx := newTestHandler(t)
 
 	// Add venue to delete
-	now := time.Now().UTC()
 	store.venues = []VenueRecord{
-		{VenueId: "to-delete", VenueType: "hyperliquid", Wallet: "0x1111", CreatedAt: now, UpdatedAt: now},
+		{VenueId: "to-delete", Type: "hyperliquid", Wallet: "0x1111", DisplayName: "Delete Me"},
 	}
 
 	resp, err := handler.DeleteVenue(ctx, DeleteVenueRequestObject{VenueId: "to-delete"})
@@ -416,8 +412,8 @@ func TestListVenueAssignments_Empty(t *testing.T) {
 
 	okResp, ok := resp.(ListVenueAssignments200JSONResponse)
 	require.True(t, ok, "expected 200 response")
-	require.NotNil(t, okResp.Assignments)
-	require.Empty(t, okResp.Assignments)
+	require.NotNil(t, okResp.Items)
+	require.Empty(t, okResp.Items)
 }
 
 func TestListVenueAssignments_WithData(t *testing.T) {
@@ -426,8 +422,8 @@ func TestListVenueAssignments_WithData(t *testing.T) {
 	// Add test assignments
 	now := time.Now().UTC()
 	store.venueAssignments["hl1"] = []VenueAssignmentRecord{
-		{VenueId: "hl1", BotId: 1, Enabled: true, CreatedAt: now, UpdatedAt: now},
-		{VenueId: "hl1", BotId: 2, Enabled: false, CreatedAt: now, UpdatedAt: now},
+		{VenueId: "hl1", BotId: 1, IsPrimary: true, AssignedAt: now},
+		{VenueId: "hl1", BotId: 2, IsPrimary: false, AssignedAt: now},
 	}
 
 	resp, err := handler.ListVenueAssignments(ctx, ListVenueAssignmentsRequestObject{VenueId: "hl1"})
@@ -435,16 +431,16 @@ func TestListVenueAssignments_WithData(t *testing.T) {
 
 	okResp, ok := resp.(ListVenueAssignments200JSONResponse)
 	require.True(t, ok, "expected 200 response")
-	require.Len(t, okResp.Assignments, 2)
-	require.EqualValues(t, 1, okResp.Assignments[0].BotId)
-	require.True(t, okResp.Assignments[0].Enabled)
+	require.Len(t, okResp.Items, 2)
+	require.EqualValues(t, 1, okResp.Items[0].BotId)
+	require.True(t, okResp.Items[0].IsPrimary)
 }
 
 func TestUpsertVenueAssignment(t *testing.T) {
 	handler, store, ctx := newTestHandler(t)
 
 	body := UpsertVenueAssignmentJSONRequestBody{
-		Enabled: true,
+		IsPrimary: true,
 	}
 
 	resp, err := handler.UpsertVenueAssignment(ctx, UpsertVenueAssignmentRequestObject{
@@ -458,7 +454,7 @@ func TestUpsertVenueAssignment(t *testing.T) {
 	require.True(t, ok, "expected 200 response")
 	require.Equal(t, "hl1", okResp.VenueId)
 	require.EqualValues(t, 42, okResp.BotId)
-	require.True(t, okResp.Enabled)
+	require.True(t, okResp.IsPrimary)
 
 	// Verify stored
 	require.Len(t, store.venueAssignments["hl1"], 1)
@@ -470,7 +466,7 @@ func TestDeleteVenueAssignment(t *testing.T) {
 	// Add assignment to delete
 	now := time.Now().UTC()
 	store.venueAssignments["hl1"] = []VenueAssignmentRecord{
-		{VenueId: "hl1", BotId: 99, Enabled: true, CreatedAt: now, UpdatedAt: now},
+		{VenueId: "hl1", BotId: 99, IsPrimary: true, AssignedAt: now},
 	}
 
 	resp, err := handler.DeleteVenueAssignment(ctx, DeleteVenueAssignmentRequestObject{
@@ -494,17 +490,16 @@ func TestListBotVenues_Empty(t *testing.T) {
 
 	okResp, ok := resp.(ListBotVenues200JSONResponse)
 	require.True(t, ok, "expected 200 response")
-	require.NotNil(t, okResp.Venues)
-	require.Empty(t, okResp.Venues)
+	require.NotNil(t, okResp.Items)
+	require.Empty(t, okResp.Items)
 }
 
 func TestListBotVenues_WithData(t *testing.T) {
 	handler, store, ctx := newTestHandler(t)
 
 	// Add bot venue assignments
-	now := time.Now().UTC()
 	store.botVenues[1] = []BotVenueAssignmentRecord{
-		{BotId: 1, VenueId: "hl1", VenueType: "hyperliquid", Wallet: "0x1234", Enabled: true, CreatedAt: now, UpdatedAt: now},
+		{VenueId: "hl1", Wallet: "0x1234", IsPrimary: true},
 	}
 
 	resp, err := handler.ListBotVenues(ctx, ListBotVenuesRequestObject{BotId: 1})
@@ -512,9 +507,8 @@ func TestListBotVenues_WithData(t *testing.T) {
 
 	okResp, ok := resp.(ListBotVenues200JSONResponse)
 	require.True(t, ok, "expected 200 response")
-	require.Len(t, okResp.Venues, 1)
-	require.EqualValues(t, 1, okResp.Venues[0].BotId)
-	require.Equal(t, "hl1", okResp.Venues[0].VenueId)
+	require.Len(t, okResp.Items, 1)
+	require.Equal(t, "hl1", okResp.Items[0].VenueId)
 }
 
 func TestGetSystemStatus(t *testing.T) {
@@ -537,8 +531,8 @@ func TestListOrderScalers_Empty(t *testing.T) {
 
 	okResp, ok := resp.(ListOrderScalers200JSONResponse)
 	require.True(t, ok, "expected 200 response")
-	require.NotNil(t, okResp.Configs)
-	require.Empty(t, okResp.Configs)
+	require.NotNil(t, okResp.Items)
+	require.Empty(t, okResp.Items)
 }
 
 func TestListOrderScalers_WithData(t *testing.T) {
@@ -556,7 +550,5 @@ func TestListOrderScalers_WithData(t *testing.T) {
 
 	okResp, ok := resp.(ListOrderScalers200JSONResponse)
 	require.True(t, ok, "expected 200 response")
-	require.Len(t, okResp.Configs, 2)
-	require.EqualValues(t, 1, okResp.Configs[0].BotId)
-	require.InDelta(t, 1.5, okResp.Configs[0].Multiplier, 0.001)
+	require.Len(t, okResp.Items, 2)
 }

@@ -19,6 +19,7 @@ import (
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/cmd/recomma/internal/config"
 	"github.com/recomma/recomma/internal/api"
+	"github.com/recomma/recomma/internal/vault"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
 	"github.com/stretchr/testify/require"
@@ -61,6 +62,9 @@ type E2ETestHarness struct {
 	HLPrivateKey *ecdsa.PrivateKey
 	HLWallet     string
 	VenueID      string
+
+	// Test vault secrets for programmatic unseal
+	testSecrets *vault.Secrets
 }
 
 // NewE2ETestHarness creates a new E2E test harness with all dependencies
@@ -85,14 +89,27 @@ func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
 
 	venueID := "hyperliquid:test"
 
-	// Set debug mode environment variables for vault auto-unseal
-	// This configures both 3commas and Hyperliquid credentials
-	t.Setenv("RECOMMA_DEBUG_THREECOMMAS_API_KEY", "test-api-key")
-	t.Setenv("RECOMMA_DEBUG_THREECOMMAS_PRIVATE_KEY", string(rsaKeyPEM))
-	t.Setenv("RECOMMA_DEBUG_THREECOMMAS_PLAN_TIER", "expert")
-	t.Setenv("RECOMMA_DEBUG_HYPERLIQUID_WALLET", wallet)
-	t.Setenv("RECOMMA_DEBUG_HYPERLIQUID_PRIVATE_KEY", hex.EncodeToString(gethCrypto.FromECDSA(privateKey)))
-	t.Setenv("RECOMMA_DEBUG_HYPERLIQUID_URL", hlMock.URL())
+	// Build test vault secrets for programmatic unseal
+	now := time.Now().UTC()
+	testSecrets := &vault.Secrets{
+		Secrets: vault.Data{
+			THREECOMMASAPIKEY:     "test-api-key",
+			THREECOMMASPRIVATEKEY: string(rsaKeyPEM),
+			THREECOMMASPLANTIER:   string(recomma.ThreeCommasPlanTierExpert),
+			Venues: []vault.VenueSecret{
+				{
+					ID:          venueID,
+					Type:        "hyperliquid",
+					DisplayName: "Test Hyperliquid",
+					Wallet:      wallet,
+					PrivateKey:  hex.EncodeToString(gethCrypto.FromECDSA(privateKey)),
+					APIURL:      hlMock.URL(),
+					Primary:     true,
+				},
+			},
+		},
+		ReceivedAt: now,
+	}
 
 	// Create 3commas client pointing to mock
 	tcClient, err := tc.New3CommasClient(
@@ -107,11 +124,11 @@ func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
 	cfg := config.DefaultConfig()
 	cfg.HTTPListen = "127.0.0.1:0" // Random port
 	cfg.StoragePath = ":memory:"
-	cfg.Debug = true
+	cfg.Debug = false
 	cfg.OrderWorkers = 2
 	cfg.OrderScalerMaxMultiplier = 10.0
 
-	// Create app with test dependencies - vault unsealed via debug mode
+	// Create app with test dependencies - vault will be unsealed programmatically
 	ctx := context.Background()
 	app, err := NewApp(ctx, AppOptions{
 		Config:            cfg,
@@ -129,6 +146,7 @@ func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
 		HLPrivateKey:    privateKey,
 		HLWallet:        wallet,
 		VenueID:         venueID,
+		testSecrets:     testSecrets,
 	}
 }
 
@@ -139,8 +157,12 @@ func (h *E2ETestHarness) Start(ctx context.Context) {
 	// Start HTTP server
 	h.App.StartHTTPServer()
 
+	// Unseal vault using production API (same as UI does)
+	err := h.App.VaultController.Unseal(*h.testSecrets, nil)
+	require.NoError(h.t, err)
+
 	// Start all services (workers, periodic tasks, etc.)
-	err := h.App.Start(ctx)
+	err = h.App.Start(ctx)
 	require.NoError(h.t, err)
 
 	// Wait for HTTP server to be ready

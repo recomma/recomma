@@ -25,7 +25,6 @@ import (
 	"github.com/recomma/recomma/hl"
 	"github.com/recomma/recomma/hl/ws"
 	"github.com/recomma/recomma/internal/api"
-	"github.com/recomma/recomma/internal/debugmode"
 	"github.com/recomma/recomma/internal/origin"
 	"github.com/recomma/recomma/internal/vault"
 	rlog "github.com/recomma/recomma/log"
@@ -86,7 +85,6 @@ type App struct {
 	venueClosers  []func()
 
 	// Runtime configuration
-	debugEnabled   bool
 	allowedOrigins []string
 	rpID           string
 	dealWorkers    int
@@ -111,8 +109,6 @@ type AppOptions struct {
 func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 	cfg := opts.Config
 
-	debugEnabled := cfg.Debug && debugmode.Available()
-
 	allowedOrigins := origin.BuildAllowedOrigins(cfg.HTTPListen, cfg.PublicOrigin)
 	rpID := origin.DeriveRPID(cfg.HTTPListen, cfg.PublicOrigin)
 
@@ -125,7 +121,7 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 	slog.SetDefault(logger)
 	log.SetOutput(slog.NewLogLogger(logger.Handler(), slog.LevelDebug).Writer())
 
-	webui.SetDebug(debugEnabled)
+	webui.SetDebug(cfg.Debug)
 	appCtx = rlog.ContextWithLogger(appCtx, logger)
 
 	// Initialize stream controllers
@@ -175,38 +171,21 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 	initialVaultState := vault.StateSetupRequired
 	var controllerOpts []vault.ControllerOption
 
-	if debugEnabled {
-		secrets, err := debugmode.LoadSecretsFromEnv()
-		if err != nil {
-			return nil, fmt.Errorf("load debug secrets: %w", err)
-		}
-		now := secrets.ReceivedAt
-		if now.IsZero() {
-			now = time.Now().UTC()
-		}
-		controllerOpts = append(controllerOpts,
-			vault.WithInitialSecrets(secrets),
-			vault.WithInitialUser(debugmode.DebugUser(now)),
-			vault.WithInitialTimestamps(nil, &now, nil),
-		)
-		initialVaultState = vault.StateUnsealed
-	} else {
-		existingUser, err := store.GetVaultUser(appCtx)
-		if err != nil {
-			return nil, fmt.Errorf("load vault user: %w", err)
-		}
-		if existingUser != nil {
-			controllerOpts = append(controllerOpts, vault.WithInitialUser(existingUser))
+	existingUser, err := store.GetVaultUser(appCtx)
+	if err != nil {
+		return nil, fmt.Errorf("load vault user: %w", err)
+	}
+	if existingUser != nil {
+		controllerOpts = append(controllerOpts, vault.WithInitialUser(existingUser))
 
-			payload, err := store.GetVaultPayloadForUser(appCtx, existingUser.ID)
-			if err != nil {
-				return nil, fmt.Errorf("load vault payload: %w", err)
-			}
-			if payload != nil {
-				initialVaultState = vault.StateSealed
-				sealedAt := payload.UpdatedAt
-				controllerOpts = append(controllerOpts, vault.WithInitialTimestamps(&sealedAt, nil, nil))
-			}
+		payload, err := store.GetVaultPayloadForUser(appCtx, existingUser.ID)
+		if err != nil {
+			return nil, fmt.Errorf("load vault payload: %w", err)
+		}
+		if payload != nil {
+			initialVaultState = vault.StateSealed
+			sealedAt := payload.UpdatedAt
+			controllerOpts = append(controllerOpts, vault.WithInitialTimestamps(&sealedAt, nil, nil))
 		}
 	}
 
@@ -229,7 +208,7 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 		api.WithWebAuthnService(webAuthApi),
 		api.WithVaultController(vaultController),
 		api.WithOrderScalerMaxMultiplier(cfg.OrderScalerMaxMultiplier),
-		api.WithDebugMode(debugEnabled),
+		api.WithDebugMode(cfg.Debug),
 		api.WithSystemStream(systemStream),
 		api.WithSystemStatus(systemStatus),
 	)
@@ -293,7 +272,6 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 		cancelFunc:       cancel,
 		workerCtx:        workerCtx,
 		cancelWorkers:    cancelWorkers,
-		debugEnabled:     debugEnabled,
 		allowedOrigins:   allowedOrigins,
 		rpID:             rpID,
 		StatusClients:    make(hl.StatusClientRegistry),

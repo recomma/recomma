@@ -98,7 +98,6 @@ type AppOptions struct {
 
     // Optional test overrides
     ThreeCommasClient engine.ThreeCommasAPI
-    VaultSecrets      *vault.Secrets // Optional: bypass vault unsealing for tests
 }
 
 // NewApp creates and initializes the application
@@ -153,9 +152,9 @@ func (a *App) HTTPAddr() string {
 6. **Backwards Compatible**: Existing `main()` should work unchanged
 
 **Testing Patterns:**
-- **Debug Mode Tests**: Use `cfg.Debug = true`, NewApp creates storage with `:memory:` path
-- **E2E Tests**: Create `storage.New(":memory:")` + inject `Store` + inject `VaultSecrets` to bypass unsealing
-- **Production**: NewApp creates storage from `Config.StoragePath`, checks database for vault state
+- **E2E Tests**: Create `storage.New(":memory:")`, inject `Store`, then call `VaultController.Unseal()` programmatically
+- **Production**: NewApp creates storage from `Config.StoragePath`, waits for WebAuthn vault unsealing
+- **Debug Mode**: Separate binary built with `-tags debugmode` that auto-unseals from environment variables
 
 #### 1.2 Refactor `main()` (`cmd/recomma/main.go`)
 
@@ -438,6 +437,9 @@ type E2ETestHarness struct {
     // Generated test credentials
     HLPrivateKey *ecdsa.PrivateKey
     HLWallet     string
+
+    // Test vault secrets for programmatic unseal
+    testSecrets *vault.Secrets
 }
 
 func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
@@ -499,7 +501,6 @@ func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
         Config:            cfg,
         Store:             store,
         ThreeCommasClient: tcClient,
-        VaultSecrets:      secrets, // Bypass vault unsealing for tests
     })
     require.NoError(t, err)
 
@@ -512,6 +513,7 @@ func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
         HTTPClient:      &http.Client{Timeout: 10 * time.Second},
         HLPrivateKey:    privateKey,
         HLWallet:        wallet,
+        testSecrets:     secrets,
     }
 }
 
@@ -519,8 +521,15 @@ func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
 func (h *E2ETestHarness) Start(ctx context.Context) {
     h.t.Helper()
 
-    // App.Start should be non-blocking (starts goroutines)
-    err := h.App.Start(ctx)
+    // Start HTTP server
+    h.App.StartHTTPServer()
+
+    // Unseal vault using production API (same as UI does)
+    err := h.App.VaultController.Unseal(*h.testSecrets, nil)
+    require.NoError(h.t, err)
+
+    // Start all services (workers, periodic tasks, etc.)
+    err = h.App.Start(ctx)
     require.NoError(h.t, err)
 
     // Wait for HTTP server to be ready

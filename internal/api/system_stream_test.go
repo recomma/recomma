@@ -296,8 +296,6 @@ func TestSystemStreamController_HistoryAgeFiltering(t *testing.T) {
 }
 
 func TestSystemEvent_Levels(t *testing.T) {
-	ctrl := NewSystemStreamController(SystemEventDebug)
-
 	tests := []struct {
 		minLevel      SystemEventLevel
 		publishLevel  SystemEventLevel

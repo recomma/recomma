@@ -206,10 +206,6 @@ func newTestHandler(t *testing.T) (*ApiHandler, *stubHandlerStore, context.Conte
 	return handler, store, ctx
 }
 
-func strPtr(s string) *string {
-	return &s
-}
-
 func TestListBots_WithData(t *testing.T) {
 	handler, store, ctx := newTestHandler(t)
 

@@ -19,7 +19,6 @@ import (
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/cmd/recomma/internal/config"
 	"github.com/recomma/recomma/internal/api"
-	"github.com/recomma/recomma/internal/vault"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
 	"github.com/stretchr/testify/require"
@@ -86,32 +85,20 @@ func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
 
 	venueID := "hyperliquid:test"
 
-	// Create test secrets with Hyperliquid venue
-	secrets := &vault.Secrets{
-		Secrets: vault.Data{
-			THREECOMMASAPIKEY:     "test-api-key",
-			THREECOMMASPRIVATEKEY: string(rsaKeyPEM),
-			THREECOMMASPLANTIER:   "expert",
-			Venues: []vault.VenueSecret{
-				{
-					ID:          venueID,
-					Type:        "hyperliquid",
-					DisplayName: "Test Hyperliquid",
-					Wallet:      wallet,
-					PrivateKey:  hex.EncodeToString(gethCrypto.FromECDSA(privateKey)),
-					APIURL:      hlMock.URL(),
-					Primary:     true,
-				},
-			},
-		},
-		ReceivedAt: time.Now().UTC(),
-	}
+	// Set debug mode environment variables for vault auto-unseal
+	// This configures both 3commas and Hyperliquid credentials
+	t.Setenv("RECOMMA_DEBUG_THREECOMMAS_API_KEY", "test-api-key")
+	t.Setenv("RECOMMA_DEBUG_THREECOMMAS_PRIVATE_KEY", string(rsaKeyPEM))
+	t.Setenv("RECOMMA_DEBUG_THREECOMMAS_PLAN_TIER", "expert")
+	t.Setenv("RECOMMA_DEBUG_HYPERLIQUID_WALLET", wallet)
+	t.Setenv("RECOMMA_DEBUG_HYPERLIQUID_PRIVATE_KEY", hex.EncodeToString(gethCrypto.FromECDSA(privateKey)))
+	t.Setenv("RECOMMA_DEBUG_HYPERLIQUID_URL", hlMock.URL())
 
 	// Create 3commas client pointing to mock
 	tcClient, err := tc.New3CommasClient(
 		tc.WithClientOption(tc.WithBaseURL(tcMock.URL())),
-		tc.WithAPIKey(secrets.Secrets.THREECOMMASAPIKEY),
-		tc.WithPrivatePEM([]byte(secrets.Secrets.THREECOMMASPRIVATEKEY)),
+		tc.WithAPIKey("test-api-key"),
+		tc.WithPrivatePEM(rsaKeyPEM),
 		tc.WithPlanTier(recomma.ThreeCommasPlanTierExpert.SDKTier()),
 	)
 	require.NoError(t, err)
@@ -124,12 +111,11 @@ func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
 	cfg.OrderWorkers = 2
 	cfg.OrderScalerMaxMultiplier = 10.0
 
-	// Create app with test dependencies
+	// Create app with test dependencies - vault unsealed via debug mode
 	ctx := context.Background()
 	app, err := NewApp(ctx, AppOptions{
 		Config:            cfg,
 		ThreeCommasClient: tcClient,
-		VaultSecrets:      secrets, // Bypass vault authentication
 	})
 	require.NoError(t, err)
 

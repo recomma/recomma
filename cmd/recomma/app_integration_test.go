@@ -8,7 +8,6 @@ import (
 	threecommasmock "github.com/recomma/3commas-mock/server"
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/cmd/recomma/internal/config"
-	"github.com/recomma/recomma/internal/vault"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,16 +37,14 @@ func TestApp_With3CommasMock(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Create minimal vault secrets for testing
-	secrets := &vault.Secrets{
-		Secrets: vault.Data{
-			THREECOMMASAPIKEY:     "test-key",
-			THREECOMMASPRIVATEKEY: string(rsaKeyPEM),
-			THREECOMMASPLANTIER:   "expert",
-			Venues:                []vault.VenueSecret{}, // Empty for this basic test
-		},
-		ReceivedAt: time.Now().UTC(),
-	}
+	// Set debug mode environment variables for vault auto-unseal
+	// (Debug mode requires -tags debugmode build flag)
+	t.Setenv("RECOMMA_DEBUG_THREECOMMAS_API_KEY", "test-key")
+	t.Setenv("RECOMMA_DEBUG_THREECOMMAS_PRIVATE_KEY", string(rsaKeyPEM))
+	t.Setenv("RECOMMA_DEBUG_THREECOMMAS_PLAN_TIER", "expert")
+	t.Setenv("RECOMMA_DEBUG_HYPERLIQUID_WALLET", "0x0000000000000000000000000000000000000000")
+	t.Setenv("RECOMMA_DEBUG_HYPERLIQUID_PRIVATE_KEY", "0000000000000000000000000000000000000000000000000000000000000000")
+	t.Setenv("RECOMMA_DEBUG_HYPERLIQUID_URL", "http://localhost:9999")
 
 	// Create test configuration
 	cfg := config.DefaultConfig()
@@ -55,12 +52,11 @@ func TestApp_With3CommasMock(t *testing.T) {
 	cfg.HTTPListen = "127.0.0.1:0" // Random port
 	cfg.Debug = true
 
-	// Create app with mock client and secrets
+	// Create app with mock client - vault unsealed via debug mode env vars
 	ctx := context.Background()
 	app, err := NewApp(ctx, AppOptions{
 		Config:            cfg,
 		ThreeCommasClient: client,
-		VaultSecrets:      secrets,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, app)
@@ -127,16 +123,13 @@ func TestApp_StartWithMock(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Create test secrets
-	secrets := &vault.Secrets{
-		Secrets: vault.Data{
-			THREECOMMASAPIKEY:     "test-key",
-			THREECOMMASPRIVATEKEY: string(rsaKeyPEM),
-			THREECOMMASPLANTIER:   "expert",
-			Venues:                []vault.VenueSecret{}, // No Hyperliquid venues for this test
-		},
-		ReceivedAt: time.Now().UTC(),
-	}
+	// Set debug mode environment variables for vault auto-unseal
+	t.Setenv("RECOMMA_DEBUG_THREECOMMAS_API_KEY", "test-key")
+	t.Setenv("RECOMMA_DEBUG_THREECOMMAS_PRIVATE_KEY", string(rsaKeyPEM))
+	t.Setenv("RECOMMA_DEBUG_THREECOMMAS_PLAN_TIER", "expert")
+	t.Setenv("RECOMMA_DEBUG_HYPERLIQUID_WALLET", "0x0000000000000000000000000000000000000000")
+	t.Setenv("RECOMMA_DEBUG_HYPERLIQUID_PRIVATE_KEY", "0000000000000000000000000000000000000000000000000000000000000000")
+	t.Setenv("RECOMMA_DEBUG_HYPERLIQUID_URL", "http://localhost:9999")
 
 	// Create app
 	cfg := config.DefaultConfig()
@@ -148,7 +141,6 @@ func TestApp_StartWithMock(t *testing.T) {
 	app, err := NewApp(ctx, AppOptions{
 		Config:            cfg,
 		ThreeCommasClient: client,
-		VaultSecrets:      secrets,
 	})
 	require.NoError(t, err)
 

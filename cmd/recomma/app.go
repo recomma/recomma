@@ -100,9 +100,8 @@ type AppOptions struct {
 	Config config.AppConfig
 	Store  *storage.Storage // Optional: inject storage (if nil, created from Config.StoragePath)
 
-	// Optional test overrides
+	// Optional: inject 3commas client for testing
 	ThreeCommasClient engine.ThreeCommasAPI
-	VaultSecrets      *vault.Secrets // Optional: bypass vault unsealing for tests
 }
 
 // NewApp creates and initializes the application (but doesn't start workers/server)
@@ -209,20 +208,6 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 				controllerOpts = append(controllerOpts, vault.WithInitialTimestamps(&sealedAt, nil, nil))
 			}
 		}
-	}
-
-	// Test override: allow bypassing vault unsealing by providing secrets directly
-	// This is necessary for E2E tests which cannot perform interactive WebAuthn unsealing
-	if opts.VaultSecrets != nil && initialVaultState != vault.StateSealed {
-		now := opts.VaultSecrets.ReceivedAt
-		if now.IsZero() {
-			now = time.Now().UTC()
-		}
-		controllerOpts = append(controllerOpts,
-			vault.WithInitialSecrets(opts.VaultSecrets),
-			vault.WithInitialTimestamps(nil, &now, nil),
-		)
-		initialVaultState = vault.StateUnsealed
 	}
 
 	vaultController := vault.NewController(initialVaultState, controllerOpts...)

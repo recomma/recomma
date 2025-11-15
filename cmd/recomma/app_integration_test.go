@@ -1,5 +1,3 @@
-//go:build integration
-
 package main
 
 import (
@@ -31,7 +29,7 @@ func TestApp_With3CommasMock(t *testing.T) {
 
 	// Create SDK client pointing to mock
 	client, err := tc.New3CommasClient(
-		tc.WithBaseURL(mockServer.URL()),
+		tc.WithClientOption(tc.WithBaseURL(mockServer.URL())),
 		tc.WithAPIKey("test-key"),
 		tc.WithPrivatePEM([]byte("test-pem")),
 	)
@@ -117,7 +115,7 @@ func TestApp_StartWithMock(t *testing.T) {
 
 	// Create client
 	client, err := tc.New3CommasClient(
-		tc.WithBaseURL(mockServer.URL()),
+		tc.WithClientOption(tc.WithBaseURL(mockServer.URL())),
 		tc.WithAPIKey("test-key"),
 		tc.WithPrivatePEM([]byte("test-pem")),
 	)

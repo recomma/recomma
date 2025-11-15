@@ -1,5 +1,3 @@
-//go:build integration
-
 package main
 
 import (
@@ -18,6 +16,7 @@ import (
 	"github.com/recomma/recomma/cmd/recomma/internal/config"
 	"github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/internal/vault"
+	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -87,10 +86,10 @@ func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
 
 	// Create 3commas client pointing to mock
 	tcClient, err := tc.New3CommasClient(
-		tc.WithBaseURL(tcMock.URL()),
+		tc.WithClientOption(tc.WithBaseURL(tcMock.URL())),
 		tc.WithAPIKey(secrets.Secrets.THREECOMMASAPIKEY),
 		tc.WithPrivatePEM([]byte(secrets.Secrets.THREECOMMASPRIVATEKEY)),
-		tc.WithPlanTier("expert"),
+		tc.WithPlanTier(recomma.ThreeCommasPlanTierExpert.SDKTier()),
 	)
 	require.NoError(t, err)
 
@@ -216,8 +215,8 @@ func (h *E2ETestHarness) WaitForDealProcessing(dealID uint32, timeout time.Durat
 	}
 }
 
-// WaitForOrderSubmission polls until at least one order exists
-func (h *E2ETestHarness) WaitForOrderSubmission(timeout time.Duration) {
+// WaitForOrderSubmission polls until the specified order appears in Hyperliquid mock
+func (h *E2ETestHarness) WaitForOrderSubmission(cloid string, timeout time.Duration) {
 	h.t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -229,10 +228,9 @@ func (h *E2ETestHarness) WaitForOrderSubmission(timeout time.Duration) {
 	for {
 		select {
 		case <-ctx.Done():
-			h.t.Fatal("timeout waiting for order submission")
+			h.t.Fatalf("timeout waiting for order %s submission", cloid)
 		case <-ticker.C:
-			orders := h.HyperliquidMock.GetAllOrders()
-			if len(orders) > 0 {
+			if _, exists := h.HyperliquidMock.GetOrder(cloid); exists {
 				return
 			}
 		}

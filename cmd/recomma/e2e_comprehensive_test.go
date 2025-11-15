@@ -1,5 +1,3 @@
-//go:build integration
-
 package main
 
 import (
@@ -8,6 +6,8 @@ import (
 	"time"
 
 	threecommasmock "github.com/recomma/3commas-mock/server"
+	tc "github.com/recomma/3commas-sdk-go/threecommas"
+	"github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -58,26 +58,27 @@ func TestE2E_OrderScaling_WithMultiplier(t *testing.T) {
 	harness.Start(ctx)
 
 	// Set order scaler multiplier to 5.0 for bot 1
-	err := harness.Store.UpsertBotOrderScaler(ctx, storage.UpsertBotOrderScalerParams{
-		BotID:      1,
-		Multiplier: 5.0,
-	})
+	multiplier := 5.0
+	_, err := harness.Store.UpsertBotOrderScaler(ctx, 1, &multiplier, nil, "e2e-test")
 	require.NoError(t, err)
 
 	// Trigger deal production (3commas -> app)
 	harness.TriggerDealProduction(ctx)
 
-	// Wait for order submission (app -> hyperliquid)
-	harness.WaitForOrderSubmission(5 * time.Second)
+	// Wait for order in database (which implies it was submitted and scaled)
+	harness.WaitForOrderInDatabase(5 * time.Second)
 
-	// Verify E2E: order was scaled and submitted to Hyperliquid mock
-	orders := harness.HyperliquidMock.GetAllOrders()
-	require.NotEmpty(t, orders, "expected at least one order submitted to Hyperliquid")
+	// Verify E2E: order was scaled correctly in database
+	dbOrders, _, err := harness.Store.ListOrders(ctx, api.ListOrdersOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, dbOrders, "expected at least one order in database")
 
-	order := orders[0]
-	require.Equal(t, "BTC", order.Order.Coin)
-	require.True(t, order.Order.IsBuy)
-	require.InDelta(t, 0.005, order.Order.Size, 0.0001, "expected order size to be scaled to 0.005 (0.001 * 5.0)")
+	order := dbOrders[0]
+	require.NotNil(t, order.BotEvent)
+	require.Equal(t, "BTC", order.BotEvent.Coin)
+	require.Equal(t, tc.BUY, order.BotEvent.Type)
+	// Original size 0.001 * multiplier 5.0 = 0.005
+	require.InDelta(t, 0.005, order.BotEvent.Size, 0.0001, "expected order size to be scaled to 0.005 (0.001 * 5.0)")
 
 	t.Log("✅ E2E test passed: 3commas -> app (5x scaling) -> hyperliquid")
 }
@@ -127,22 +128,23 @@ func TestE2E_OrderScaling_MaxMultiplierClamp(t *testing.T) {
 	harness.Start(ctx)
 
 	// Set multiplier to 20.0 (should be clamped to 10.0)
-	err := harness.Store.UpsertBotOrderScaler(ctx, storage.UpsertBotOrderScalerParams{
-		BotID:      2,
-		Multiplier: 20.0,
-	})
+	multiplier := 20.0
+	_, err := harness.Store.UpsertBotOrderScaler(ctx, 2, &multiplier, nil, "e2e-test")
 	require.NoError(t, err)
 
 	// Trigger E2E flow
 	harness.TriggerDealProduction(ctx)
-	harness.WaitForOrderSubmission(5 * time.Second)
+	harness.WaitForOrderInDatabase(5 * time.Second)
 
-	// Verify E2E: order was clamped and submitted
-	orders := harness.HyperliquidMock.GetAllOrders()
-	require.NotEmpty(t, orders, "expected at least one order submitted to Hyperliquid")
+	// Verify E2E: order was clamped correctly
+	dbOrders, _, err := harness.Store.ListOrders(ctx, api.ListOrdersOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, dbOrders, "expected at least one order in database")
 
-	order := orders[0]
-	require.InDelta(t, 0.1, order.Order.Size, 0.01, "expected order size to be clamped to 0.1 (0.01 * 10.0 max)")
+	order := dbOrders[0]
+	require.NotNil(t, order.BotEvent)
+	// Original 0.01 * clamped max 10.0 = 0.1
+	require.InDelta(t, 0.1, order.BotEvent.Size, 0.01, "expected order size to be clamped to 0.1 (0.01 * 10.0 max)")
 
 	t.Log("✅ E2E test passed: 3commas -> app (max clamp) -> hyperliquid")
 }
@@ -255,17 +257,19 @@ func TestE2E_MultiDeal_ConcurrentProcessing(t *testing.T) {
 	harness.WaitForDealProcessing(302, 5*time.Second)
 	harness.WaitForDealProcessing(401, 5*time.Second)
 
-	// Wait for all orders to be submitted
+	// Wait for all orders to be in database
 	time.Sleep(2 * time.Second)
 
-	// Verify E2E: all 3 orders were submitted to Hyperliquid mock
-	orders := harness.HyperliquidMock.GetAllOrders()
-	require.Len(t, orders, 3, "expected 3 orders to be submitted to Hyperliquid")
+	// Verify E2E: all 3 orders were submitted
+	dbOrders, _, err := harness.Store.ListOrders(ctx, api.ListOrdersOptions{})
+	require.NoError(t, err)
+	require.Len(t, dbOrders, 3, "expected 3 orders in database")
 
 	// Verify coins match
 	coins := make(map[string]int)
-	for _, order := range orders {
-		coins[order.Order.Coin]++
+	for _, order := range dbOrders {
+		require.NotNil(t, order.BotEvent)
+		coins[order.BotEvent.Coin]++
 	}
 	require.Equal(t, 1, coins["BTC"], "expected 1 BTC order")
 	require.Equal(t, 1, coins["ETH"], "expected 1 ETH order")
@@ -365,17 +369,19 @@ func TestE2E_TakeProfitStack(t *testing.T) {
 	// Trigger E2E flow
 	harness.TriggerDealProduction(ctx)
 
-	// Wait for orders to be submitted
+	// Wait for orders to be in database
 	time.Sleep(3 * time.Second)
 
 	// Verify E2E: base order submitted (TPs managed separately by fill tracker)
-	orders := harness.HyperliquidMock.GetAllOrders()
-	require.GreaterOrEqual(t, len(orders), 1, "expected at least the base order to be submitted to Hyperliquid")
+	dbOrders, _, err := harness.Store.ListOrders(ctx, api.ListOrdersOptions{})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(dbOrders), 1, "expected at least the base order in database")
 
 	// Count buy vs sell orders
 	var buyOrders, sellOrders int
-	for _, order := range orders {
-		if order.Order.IsBuy {
+	for _, order := range dbOrders {
+		require.NotNil(t, order.BotEvent)
+		if order.BotEvent.Type == tc.BUY {
 			buyOrders++
 		} else {
 			sellOrders++

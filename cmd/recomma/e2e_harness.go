@@ -103,7 +103,7 @@ func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
 					DisplayName: "Test Hyperliquid",
 					Wallet:      wallet,
 					PrivateKey:  hex.EncodeToString(gethCrypto.FromECDSA(privateKey)),
-					APIURL:      hlMock.URL(),
+					APIURL:      hlMock.WebSocketURL(),
 					Primary:     true,
 				},
 			},

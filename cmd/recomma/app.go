@@ -176,15 +176,21 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 	initialVaultState := vault.StateSetupRequired
 	var controllerOpts []vault.ControllerOption
 
-	// Check if vault secrets provided (for testing)
+	// Check if vault secrets provided (for testing - works in both debug and non-debug builds)
 	if opts.VaultSecrets != nil {
 		now := opts.VaultSecrets.ReceivedAt
 		if now.IsZero() {
 			now = time.Now().UTC()
 		}
+		// Create a test user without depending on debugmode package (which panics in non-debug builds)
+		testUser := &vault.User{
+			ID:        0,
+			Username:  "test",
+			CreatedAt: now,
+		}
 		controllerOpts = append(controllerOpts,
 			vault.WithInitialSecrets(opts.VaultSecrets),
-			vault.WithInitialUser(debugmode.DebugUser(now)),
+			vault.WithInitialUser(testUser),
 			vault.WithInitialTimestamps(nil, &now, nil),
 		)
 		initialVaultState = vault.StateUnsealed

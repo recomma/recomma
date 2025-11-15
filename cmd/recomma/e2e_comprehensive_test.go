@@ -36,6 +36,8 @@ func TestE2E_OrderScaling_WithMultiplier(t *testing.T) {
 		Status:       "active",
 		ToCurrency:   "BTC",
 		FromCurrency: "USDT",
+		CreatedAt:    "2024-01-15T10:30:00.000Z",
+		UpdatedAt:    "2024-01-15T10:31:00.000Z",
 		Events: []threecommasmock.BotEvent{
 			{
 				CreatedAt:     "2024-01-15T10:30:00.000Z",
@@ -106,6 +108,8 @@ func TestE2E_OrderScaling_MaxMultiplierClamp(t *testing.T) {
 		Status:       "active",
 		ToCurrency:   "ETH",
 		FromCurrency: "USDT",
+		CreatedAt:    "2024-01-15T10:30:00.000Z",
+		UpdatedAt:    "2024-01-15T10:31:00.000Z",
 		Events: []threecommasmock.BotEvent{
 			{
 				CreatedAt:     "2024-01-15T10:30:00.000Z",
@@ -178,6 +182,8 @@ func TestE2E_MultiDeal_ConcurrentProcessing(t *testing.T) {
 		Status:       "active",
 		ToCurrency:   "BTC",
 		FromCurrency: "USDT",
+		CreatedAt:    "2024-01-15T10:30:00.000Z",
+		UpdatedAt:    "2024-01-15T10:31:00.000Z",
 		Events: []threecommasmock.BotEvent{
 			{
 				CreatedAt:     "2024-01-15T10:00:00.000Z",
@@ -203,6 +209,8 @@ func TestE2E_MultiDeal_ConcurrentProcessing(t *testing.T) {
 		Status:       "active",
 		ToCurrency:   "ETH",
 		FromCurrency: "USDT",
+		CreatedAt:    "2024-01-15T10:30:00.000Z",
+		UpdatedAt:    "2024-01-15T10:31:00.000Z",
 		Events: []threecommasmock.BotEvent{
 			{
 				CreatedAt:     "2024-01-15T10:05:00.000Z",
@@ -228,6 +236,8 @@ func TestE2E_MultiDeal_ConcurrentProcessing(t *testing.T) {
 		Status:       "active",
 		ToCurrency:   "SOL",
 		FromCurrency: "USDT",
+		CreatedAt:    "2024-01-15T10:30:00.000Z",
+		UpdatedAt:    "2024-01-15T10:31:00.000Z",
 		Events: []threecommasmock.BotEvent{
 			{
 				CreatedAt:     "2024-01-15T10:10:00.000Z",
@@ -302,6 +312,8 @@ func TestE2E_TakeProfitStack(t *testing.T) {
 		Status:       "active",
 		ToCurrency:   "BTC",
 		FromCurrency: "USDT",
+		CreatedAt:    "2024-01-15T10:30:00.000Z",
+		UpdatedAt:    "2024-01-15T10:31:00.000Z",
 		Events: []threecommasmock.BotEvent{
 			// Base buy order
 			{

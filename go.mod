@@ -9,7 +9,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/oapi-codegen/nullable v1.1.0
 	github.com/oapi-codegen/runtime v1.1.2
-	github.com/recomma/3commas-mock v0.1.0
+	github.com/recomma/3commas-mock v0.2.0
 	github.com/recomma/3commas-sdk-go v0.4.0
 	github.com/recomma/hyperliquid-mock v0.1.1
 	github.com/rs/cors v1.11.1

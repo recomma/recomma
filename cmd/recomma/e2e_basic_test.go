@@ -56,6 +56,8 @@ func TestE2E_DealToOrderFlow(t *testing.T) {
 		Status:       "active",
 		ToCurrency:   "BTC",
 		FromCurrency: "USDT",
+		CreatedAt:    "2024-01-15T10:30:00.000Z",
+		UpdatedAt:    "2024-01-15T10:31:00.000Z",
 		Events: []threecommasmock.BotEvent{
 			{
 				CreatedAt:     "2024-01-15T10:30:00.000Z",

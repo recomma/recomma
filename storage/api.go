@@ -26,7 +26,7 @@ const cursorSeparator = ":"
 
 func (s *Storage) ListBots(ctx context.Context, opts api.ListBotsOptions) ([]api.BotItem, *string, error) {
 	if opts.Limit <= 0 {
-		return nil, nil, fmt.Errorf("limit must be positive")
+		opts.Limit = 50
 	}
 
 	var cursorSynced, cursorBotID int64
@@ -121,7 +121,7 @@ func (s *Storage) ListBots(ctx context.Context, opts api.ListBotsOptions) ([]api
 
 func (s *Storage) ListDeals(ctx context.Context, opts api.ListDealsOptions) ([]tc.Deal, *string, error) {
 	if opts.Limit <= 0 {
-		return nil, nil, fmt.Errorf("limit must be positive")
+		opts.Limit = 50
 	}
 
 	var cursorUpdatedAt, cursorDealID int64
@@ -221,7 +221,7 @@ func (s *Storage) ListDeals(ctx context.Context, opts api.ListDealsOptions) ([]t
 
 func (s *Storage) ListOrderScalers(ctx context.Context, opts api.ListOrderScalersOptions) ([]api.OrderScalerConfigItem, *string, error) {
 	if opts.Limit <= 0 {
-		return nil, nil, fmt.Errorf("limit must be positive")
+		opts.Limit = 50
 	}
 
 	orderOpts := api.ListOrdersOptions{
@@ -333,7 +333,7 @@ func toAPIOrderScalerOverride(override BotOrderScalerOverride) api.OrderScalerOv
 
 func (s *Storage) ListOrders(ctx context.Context, opts api.ListOrdersOptions) ([]api.OrderItem, *string, error) {
 	if opts.Limit <= 0 {
-		return nil, nil, fmt.Errorf("limit must be positive")
+		opts.Limit = 50
 	}
 
 	var cursorObservedAt, cursorID int64

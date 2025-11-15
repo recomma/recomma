@@ -176,44 +176,28 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 	initialVaultState := vault.StateSetupRequired
 	var controllerOpts []vault.ControllerOption
 
-	// Determine vault initialization based on mode and configuration
-	var vaultSecrets *vault.Secrets
-	var vaultUser *vault.User
-
 	if debugEnabled {
-		// Debug mode: load secrets from environment
 		secrets, err := debugmode.LoadSecretsFromEnv()
 		if err != nil {
 			return nil, fmt.Errorf("load debug secrets: %w", err)
 		}
-		vaultSecrets = secrets
 		now := secrets.ReceivedAt
 		if now.IsZero() {
 			now = time.Now().UTC()
 		}
-		vaultUser = debugmode.DebugUser(now)
-		initialVaultState = vault.StateUnsealed
-	} else if opts.VaultSecrets != nil {
-		// Test mode: use injected secrets
-		vaultSecrets = opts.VaultSecrets
-		now := vaultSecrets.ReceivedAt
-		if now.IsZero() {
-			now = time.Now().UTC()
-		}
-		vaultUser = &vault.User{
-			ID:        0,
-			Username:  "test",
-			CreatedAt: now,
-		}
+		controllerOpts = append(controllerOpts,
+			vault.WithInitialSecrets(secrets),
+			vault.WithInitialUser(debugmode.DebugUser(now)),
+			vault.WithInitialTimestamps(nil, &now, nil),
+		)
 		initialVaultState = vault.StateUnsealed
 	} else {
-		// Production mode: check database
 		existingUser, err := store.GetVaultUser(appCtx)
 		if err != nil {
 			return nil, fmt.Errorf("load vault user: %w", err)
 		}
 		if existingUser != nil {
-			vaultUser = existingUser
+			controllerOpts = append(controllerOpts, vault.WithInitialUser(existingUser))
 
 			payload, err := store.GetVaultPayloadForUser(appCtx, existingUser.ID)
 			if err != nil {
@@ -227,19 +211,18 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 		}
 	}
 
-	// Apply vault configuration
-	if vaultUser != nil {
-		controllerOpts = append(controllerOpts, vault.WithInitialUser(vaultUser))
-	}
-	if vaultSecrets != nil {
-		now := vaultSecrets.ReceivedAt
+	// Test override: allow bypassing vault unsealing by providing secrets directly
+	// This is necessary for E2E tests which cannot perform interactive WebAuthn unsealing
+	if opts.VaultSecrets != nil && initialVaultState != vault.StateSealed {
+		now := opts.VaultSecrets.ReceivedAt
 		if now.IsZero() {
 			now = time.Now().UTC()
 		}
 		controllerOpts = append(controllerOpts,
-			vault.WithInitialSecrets(vaultSecrets),
+			vault.WithInitialSecrets(opts.VaultSecrets),
 			vault.WithInitialTimestamps(nil, &now, nil),
 		)
+		initialVaultState = vault.StateUnsealed
 	}
 
 	vaultController := vault.NewController(initialVaultState, controllerOpts...)

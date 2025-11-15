@@ -27,11 +27,14 @@ func TestApp_With3CommasMock(t *testing.T) {
 		Enabled: true,
 	})
 
+	// Generate test RSA key
+	rsaKeyPEM := generateTestRSAKeyPEM(t)
+
 	// Create SDK client pointing to mock
 	client, err := tc.New3CommasClient(
 		tc.WithClientOption(tc.WithBaseURL(mockServer.URL())),
 		tc.WithAPIKey("test-key"),
-		tc.WithPrivatePEM([]byte("test-pem")),
+		tc.WithPrivatePEM(rsaKeyPEM),
 	)
 	require.NoError(t, err)
 
@@ -39,7 +42,7 @@ func TestApp_With3CommasMock(t *testing.T) {
 	secrets := &vault.Secrets{
 		Secrets: vault.Data{
 			THREECOMMASAPIKEY:     "test-key",
-			THREECOMMASPRIVATEKEY: "test-pem",
+			THREECOMMASPRIVATEKEY: string(rsaKeyPEM),
 			THREECOMMASPLANTIER:   "expert",
 			Venues:                []vault.VenueSecret{}, // Empty for this basic test
 		},
@@ -113,11 +116,14 @@ func TestApp_StartWithMock(t *testing.T) {
 		},
 	})
 
+	// Generate test RSA key
+	rsaKeyPEM := generateTestRSAKeyPEM(t)
+
 	// Create client
 	client, err := tc.New3CommasClient(
 		tc.WithClientOption(tc.WithBaseURL(mockServer.URL())),
 		tc.WithAPIKey("test-key"),
-		tc.WithPrivatePEM([]byte("test-pem")),
+		tc.WithPrivatePEM(rsaKeyPEM),
 	)
 	require.NoError(t, err)
 
@@ -125,7 +131,7 @@ func TestApp_StartWithMock(t *testing.T) {
 	secrets := &vault.Secrets{
 		Secrets: vault.Data{
 			THREECOMMASAPIKEY:     "test-key",
-			THREECOMMASPRIVATEKEY: "test-pem",
+			THREECOMMASPRIVATEKEY: string(rsaKeyPEM),
 			THREECOMMASPLANTIER:   "expert",
 			Venues:                []vault.VenueSecret{}, // No Hyperliquid venues for this test
 		},

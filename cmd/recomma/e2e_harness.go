@@ -3,7 +3,11 @@ package main
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"io"
 	"net/http"
 	"testing"
@@ -20,6 +24,22 @@ import (
 	"github.com/recomma/recomma/storage"
 	"github.com/stretchr/testify/require"
 )
+
+// generateTestRSAKeyPEM generates an RSA private key and returns it as PEM-encoded bytes
+func generateTestRSAKeyPEM(t *testing.T) []byte {
+	t.Helper()
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	privateKeyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
+	privateKeyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: privateKeyBytes,
+	})
+
+	return privateKeyPEM
+}
 
 // E2ETestHarness manages all components for end-to-end testing
 type E2ETestHarness struct {
@@ -52,6 +72,9 @@ func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
 	tcMock := threecommasmock.NewTestServer(t)
 	hlMock := hlmock.NewTestServer(t)
 
+	// Generate ThreeCommas RSA credentials
+	rsaKeyPEM := generateTestRSAKeyPEM(t)
+
 	// Generate Hyperliquid test credentials
 	privateKey, err := gethCrypto.GenerateKey()
 	require.NoError(t, err)
@@ -67,7 +90,7 @@ func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
 	secrets := &vault.Secrets{
 		Secrets: vault.Data{
 			THREECOMMASAPIKEY:     "test-api-key",
-			THREECOMMASPRIVATEKEY: "test-private-key",
+			THREECOMMASPRIVATEKEY: string(rsaKeyPEM),
 			THREECOMMASPLANTIER:   "expert",
 			Venues: []vault.VenueSecret{
 				{

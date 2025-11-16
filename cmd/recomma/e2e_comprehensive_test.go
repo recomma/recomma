@@ -2,12 +2,18 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
 	threecommasmock "github.com/recomma/3commas-mock/server"
+	tcMock "github.com/recomma/3commas-mock/tcmock"
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/internal/api"
+	"github.com/recomma/recomma/orderid"
+	"github.com/recomma/recomma/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -16,61 +22,41 @@ import (
 func TestE2E_OrderScaling_WithMultiplier(t *testing.T) {
 	t.Parallel()
 
-	harness := NewE2ETestHarness(t)
-	defer harness.Shutdown()
+	testCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	harness := NewE2ETestHarness(t, testCtx)
+	defer func() {
+		cancel()
+		harness.Shutdown()
+	}()
 
-	ctx := context.Background()
+	harness.ThreeCommasMock.AddBot(threecommasmock.NewBot(1, "Order Scaling Bot", 12345, true))
 
-	// Configure 3commas mock with a bot and deal
-	harness.ThreeCommasMock.AddBot(threecommasmock.Bot{
-		ID:      1,
-		Name:    "Order Scaling Bot",
-		Enabled: true,
-	})
+	deal := threecommasmock.NewDeal(201, 1, "USDT_BTC", "active")
+	addBaseOrderEvent(&deal, "BTC", 50000.0, 0.001)
+	require.NoError(t, harness.ThreeCommasMock.AddDeal(deal))
 
-	// Add a deal with a base order
-	harness.ThreeCommasMock.AddDeal(1, threecommasmock.Deal{
-		ID:           201,
-		BotID:        1,
-		Pair:         "USDT_BTC",
-		Status:       "active",
-		ToCurrency:   "BTC",
-		FromCurrency: "USDT",
-		CreatedAt:    "2024-01-15T10:30:00.000Z",
-		UpdatedAt:    "2024-01-15T10:31:00.000Z",
-		Events: []threecommasmock.BotEvent{
-			{
-				CreatedAt:     "2024-01-15T10:30:00.000Z",
-				Action:        "place",
-				Coin:          "BTC",
-				Type:          "buy",
-				Status:        "active",
-				Price:         "50000.0",
-				Size:          "0.001", // Small base size
-				OrderType:     "base",
-				OrderSize:     1,
-				OrderPosition: 1,
-				IsMarket:      false,
-			},
-		},
-	})
+	require.NoError(t, harness.Store.RecordBot(testCtx, tc.Bot{Id: 1}, time.Now()))
 
-	// Start application
-	harness.Start(ctx)
-
-	// Set order scaler multiplier to 5.0 for bot 1
+	// Configure order scaler multiplier before startup so initial sync uses it
 	multiplier := 5.0
-	_, err := harness.Store.UpsertBotOrderScaler(ctx, 1, &multiplier, nil, "e2e-test")
+	_, err := harness.Store.UpsertBotOrderScaler(testCtx, 1, &multiplier, nil, "e2e-test")
 	require.NoError(t, err)
 
+	// Start application
+	harness.Start(testCtx)
+
 	// Trigger deal production (3commas -> app)
-	harness.TriggerDealProduction(ctx)
+	harness.TriggerDealProduction(testCtx)
 
 	// Wait for order in database (which implies it was submitted and scaled)
 	harness.WaitForOrderInDatabase(5 * time.Second)
 
-	// Verify E2E: order was scaled correctly in database
-	dbOrders, _, err := harness.Store.ListOrders(ctx, api.ListOrdersOptions{})
+	// Verify scaling via Hyperliquid submission
+	size := lastHyperliquidOrderSize(t, harness, 201)
+	require.InDelta(t, 0.005, size, 0.0001, "expected Hyperliquid order size to be 0.005")
+
+	// Verify database has the order
+	dbOrders, _, err := harness.Store.ListOrders(testCtx, api.ListOrdersOptions{})
 	require.NoError(t, err)
 	require.NotEmpty(t, dbOrders, "expected at least one order in database")
 
@@ -78,8 +64,8 @@ func TestE2E_OrderScaling_WithMultiplier(t *testing.T) {
 	require.NotNil(t, order.BotEvent)
 	require.Equal(t, "BTC", order.BotEvent.Coin)
 	require.Equal(t, tc.BUY, order.BotEvent.Type)
-	// Original size 0.001 * multiplier 5.0 = 0.005
-	require.InDelta(t, 0.005, order.BotEvent.Size, 0.0001, "expected order size to be scaled to 0.005 (0.001 * 5.0)")
+	// Bot events reflect the original 3Commas size.
+	require.InDelta(t, 0.001, order.BotEvent.Size, 0.0001, "expected bot event to retain original size")
 
 	t.Log("✅ E2E test passed: 3commas -> app (5x scaling) -> hyperliquid")
 }
@@ -89,65 +75,46 @@ func TestE2E_OrderScaling_WithMultiplier(t *testing.T) {
 func TestE2E_OrderScaling_MaxMultiplierClamp(t *testing.T) {
 	t.Parallel()
 
-	harness := NewE2ETestHarness(t)
-	defer harness.Shutdown()
+	testCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	harness := NewE2ETestHarness(t, testCtx)
+	defer func() {
+		cancel()
+		harness.Shutdown()
+	}()
 
-	ctx := context.Background()
+	harness.ThreeCommasMock.AddBot(threecommasmock.NewBot(2, "Max Multiplier Bot", 67890, true))
 
-	// Configure 3commas mock
-	harness.ThreeCommasMock.AddBot(threecommasmock.Bot{
-		ID:      2,
-		Name:    "Max Multiplier Bot",
-		Enabled: true,
-	})
+	deal := threecommasmock.NewDeal(202, 2, "USDT_ETH", "active")
+	addBaseOrderEvent(&deal, "ETH", 3000.0, 0.01)
+	require.NoError(t, harness.ThreeCommasMock.AddDeal(deal))
 
-	harness.ThreeCommasMock.AddDeal(1, threecommasmock.Deal{
-		ID:           202,
-		BotID:        2,
-		Pair:         "USDT_ETH",
-		Status:       "active",
-		ToCurrency:   "ETH",
-		FromCurrency: "USDT",
-		CreatedAt:    "2024-01-15T10:30:00.000Z",
-		UpdatedAt:    "2024-01-15T10:31:00.000Z",
-		Events: []threecommasmock.BotEvent{
-			{
-				CreatedAt:     "2024-01-15T10:30:00.000Z",
-				Action:        "place",
-				Coin:          "ETH",
-				Type:          "buy",
-				Status:        "active",
-				Price:         "3000.0",
-				Size:          "0.01",
-				OrderType:     "base",
-				OrderSize:     1,
-				OrderPosition: 1,
-				IsMarket:      false,
-			},
-		},
-	})
+	require.NoError(t, harness.Store.RecordBot(testCtx, tc.Bot{Id: 2}, time.Now()))
 
-	// Start application (max multiplier is 10.0 from config)
-	harness.Start(ctx)
-
-	// Set multiplier to 20.0 (should be clamped to 10.0)
+	// Set multiplier to 20.0 (should be clamped to 10.0) before startup
 	multiplier := 20.0
-	_, err := harness.Store.UpsertBotOrderScaler(ctx, 2, &multiplier, nil, "e2e-test")
+	_, err := harness.Store.UpsertBotOrderScaler(testCtx, 2, &multiplier, nil, "e2e-test")
 	require.NoError(t, err)
 
+	// Start application (max multiplier is 10.0 from config)
+	harness.Start(testCtx)
+
 	// Trigger E2E flow
-	harness.TriggerDealProduction(ctx)
+	harness.TriggerDealProduction(testCtx)
 	harness.WaitForOrderInDatabase(5 * time.Second)
 
-	// Verify E2E: order was clamped correctly
-	dbOrders, _, err := harness.Store.ListOrders(ctx, api.ListOrdersOptions{})
+	// Verify clamped scaling via Hyperliquid submission
+	size := lastHyperliquidOrderSize(t, harness, 202)
+	require.InDelta(t, 0.1, size, 0.01, "expected Hyperliquid order size to be clamped to 0.1")
+
+	// Verify database has the order
+	dbOrders, _, err := harness.Store.ListOrders(testCtx, api.ListOrdersOptions{})
 	require.NoError(t, err)
 	require.NotEmpty(t, dbOrders, "expected at least one order in database")
 
 	order := dbOrders[0]
 	require.NotNil(t, order.BotEvent)
-	// Original 0.01 * clamped max 10.0 = 0.1
-	require.InDelta(t, 0.1, order.BotEvent.Size, 0.01, "expected order size to be clamped to 0.1 (0.01 * 10.0 max)")
+	// Bot events reflect the original size; scaling happens at submission.
+	require.InDelta(t, 0.01, order.BotEvent.Size, 0.001, "expected bot event to retain original size")
 
 	t.Log("✅ E2E test passed: 3commas -> app (max clamp) -> hyperliquid")
 }
@@ -157,121 +124,51 @@ func TestE2E_OrderScaling_MaxMultiplierClamp(t *testing.T) {
 func TestE2E_MultiDeal_ConcurrentProcessing(t *testing.T) {
 	t.Parallel()
 
-	harness := NewE2ETestHarness(t)
-	defer harness.Shutdown()
-
-	ctx := context.Background()
+	testCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	harness := NewE2ETestHarness(t, testCtx)
+	defer func() {
+		cancel()
+		harness.Shutdown()
+	}()
 
 	// Configure 3commas mock with multiple bots and deals
-	harness.ThreeCommasMock.AddBot(threecommasmock.Bot{
-		ID:      10,
-		Name:    "Bot A",
-		Enabled: true,
-	})
-	harness.ThreeCommasMock.AddBot(threecommasmock.Bot{
-		ID:      20,
-		Name:    "Bot B",
-		Enabled: true,
-	})
+	harness.ThreeCommasMock.AddBot(threecommasmock.NewBot(10, "Bot A", 111, true))
+	harness.ThreeCommasMock.AddBot(threecommasmock.NewBot(20, "Bot B", 222, true))
 
-	// Bot 10, Deal 301 - BTC
-	harness.ThreeCommasMock.AddDeal(10, threecommasmock.Deal{
-		ID:           301,
-		BotID:        10,
-		Pair:         "USDT_BTC",
-		Status:       "active",
-		ToCurrency:   "BTC",
-		FromCurrency: "USDT",
-		CreatedAt:    "2024-01-15T10:30:00.000Z",
-		UpdatedAt:    "2024-01-15T10:31:00.000Z",
-		Events: []threecommasmock.BotEvent{
-			{
-				CreatedAt:     "2024-01-15T10:00:00.000Z",
-				Action:        "place",
-				Coin:          "BTC",
-				Type:          "buy",
-				Status:        "active",
-				Price:         "50000.0",
-				Size:          "0.001",
-				OrderType:     "base",
-				OrderSize:     1,
-				OrderPosition: 1,
-				IsMarket:      false,
-			},
-		},
-	})
+	deal301 := threecommasmock.NewDeal(301, 10, "USDT_BTC", "active")
+	addBaseOrderEvent(&deal301, "BTC", 50000.0, 0.001)
+	require.NoError(t, harness.ThreeCommasMock.AddDeal(deal301))
 
-	// Bot 10, Deal 302 - ETH
-	harness.ThreeCommasMock.AddDeal(10, threecommasmock.Deal{
-		ID:           302,
-		BotID:        10,
-		Pair:         "USDT_ETH",
-		Status:       "active",
-		ToCurrency:   "ETH",
-		FromCurrency: "USDT",
-		CreatedAt:    "2024-01-15T10:30:00.000Z",
-		UpdatedAt:    "2024-01-15T10:31:00.000Z",
-		Events: []threecommasmock.BotEvent{
-			{
-				CreatedAt:     "2024-01-15T10:05:00.000Z",
-				Action:        "place",
-				Coin:          "ETH",
-				Type:          "buy",
-				Status:        "active",
-				Price:         "3000.0",
-				Size:          "0.01",
-				OrderType:     "base",
-				OrderSize:     1,
-				OrderPosition: 1,
-				IsMarket:      false,
-			},
-		},
-	})
+	deal302 := threecommasmock.NewDeal(302, 10, "USDT_ETH", "active")
+	addBaseOrderEvent(&deal302, "ETH", 3000.0, 0.01)
+	require.NoError(t, harness.ThreeCommasMock.AddDeal(deal302))
 
-	// Bot 20, Deal 401 - SOL
-	harness.ThreeCommasMock.AddDeal(20, threecommasmock.Deal{
-		ID:           401,
-		BotID:        20,
-		Pair:         "USDT_SOL",
-		Status:       "active",
-		ToCurrency:   "SOL",
-		FromCurrency: "USDT",
-		CreatedAt:    "2024-01-15T10:30:00.000Z",
-		UpdatedAt:    "2024-01-15T10:31:00.000Z",
-		Events: []threecommasmock.BotEvent{
-			{
-				CreatedAt:     "2024-01-15T10:10:00.000Z",
-				Action:        "place",
-				Coin:          "SOL",
-				Type:          "buy",
-				Status:        "active",
-				Price:         "100.0",
-				Size:          "1.0",
-				OrderType:     "base",
-				OrderSize:     1,
-				OrderPosition: 1,
-				IsMarket:      false,
-			},
-		},
-	})
+	deal401 := threecommasmock.NewDeal(401, 20, "USDT_SOL", "active")
+	addBaseOrderEvent(&deal401, "SOL", 100.0, 1.0)
+	require.NoError(t, harness.ThreeCommasMock.AddDeal(deal401))
 
 	// Start application
-	harness.Start(ctx)
+	harness.Start(testCtx)
 
 	// Trigger E2E flow (should process all 3 deals)
-	harness.TriggerDealProduction(ctx)
+	harness.TriggerDealProduction(testCtx)
 
 	// Wait for all deals to be processed
 	harness.WaitForDealProcessing(301, 5*time.Second)
 	harness.WaitForDealProcessing(302, 5*time.Second)
 	harness.WaitForDealProcessing(401, 5*time.Second)
 
-	// Wait for all orders to be in database
-	time.Sleep(2 * time.Second)
+	var dbOrders []api.OrderItem
+	require.Eventually(t, func() bool {
+		var err error
+		dbOrders, _, err = harness.Store.ListOrders(testCtx, api.ListOrdersOptions{})
+		if err != nil {
+			return false
+		}
+		return len(dbOrders) == 3
+	}, 5*time.Second, 100*time.Millisecond, "expected 3 orders in database")
 
 	// Verify E2E: all 3 orders were submitted
-	dbOrders, _, err := harness.Store.ListOrders(ctx, api.ListOrdersOptions{})
-	require.NoError(t, err)
 	require.Len(t, dbOrders, 3, "expected 3 orders in database")
 
 	// Verify coins match
@@ -292,99 +189,33 @@ func TestE2E_MultiDeal_ConcurrentProcessing(t *testing.T) {
 func TestE2E_TakeProfitStack(t *testing.T) {
 	t.Parallel()
 
-	harness := NewE2ETestHarness(t)
-	defer harness.Shutdown()
+	testCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	harness := NewE2ETestHarness(t, testCtx)
+	defer func() {
+		cancel()
+		harness.Shutdown()
+	}()
 
-	ctx := context.Background()
+	harness.ThreeCommasMock.AddBot(threecommasmock.NewBot(60, "TP Stack Bot", 333, true))
 
-	// Configure 3commas mock
-	harness.ThreeCommasMock.AddBot(threecommasmock.Bot{
-		ID:      60,
-		Name:    "TP Stack Bot",
-		Enabled: true,
-	})
-
-	// Add a deal with stacked take-profits
-	harness.ThreeCommasMock.AddDeal(60, threecommasmock.Deal{
-		ID:           801,
-		BotID:        60,
-		Pair:         "USDT_BTC",
-		Status:       "active",
-		ToCurrency:   "BTC",
-		FromCurrency: "USDT",
-		CreatedAt:    "2024-01-15T10:30:00.000Z",
-		UpdatedAt:    "2024-01-15T10:31:00.000Z",
-		Events: []threecommasmock.BotEvent{
-			// Base buy order
-			{
-				CreatedAt:     "2024-01-15T10:00:00.000Z",
-				Action:        "place",
-				Coin:          "BTC",
-				Type:          "buy",
-				Status:        "active",
-				Price:         "50000.0",
-				Size:          "0.003",
-				OrderType:     "base",
-				OrderSize:     1,
-				OrderPosition: 1,
-				IsMarket:      false,
-			},
-			// TP level 1 (33% position)
-			{
-				CreatedAt:     "2024-01-15T10:01:00.000Z",
-				Action:        "place",
-				Coin:          "BTC",
-				Type:          "sell",
-				Status:        "active",
-				Price:         "51000.0",
-				Size:          "0.001",
-				OrderType:     "take_profit",
-				OrderSize:     3,
-				OrderPosition: 1,
-				IsMarket:      false,
-			},
-			// TP level 2 (33% position)
-			{
-				CreatedAt:     "2024-01-15T10:02:00.000Z",
-				Action:        "place",
-				Coin:          "BTC",
-				Type:          "sell",
-				Status:        "active",
-				Price:         "52000.0",
-				Size:          "0.001",
-				OrderType:     "take_profit",
-				OrderSize:     3,
-				OrderPosition: 2,
-				IsMarket:      false,
-			},
-			// TP level 3 (34% position)
-			{
-				CreatedAt:     "2024-01-15T10:03:00.000Z",
-				Action:        "place",
-				Coin:          "BTC",
-				Type:          "sell",
-				Status:        "active",
-				Price:         "53000.0",
-				Size:          "0.001",
-				OrderType:     "take_profit",
-				OrderSize:     3,
-				OrderPosition: 3,
-				IsMarket:      false,
-			},
-		},
-	})
+	deal := threecommasmock.NewDeal(801, 60, "USDT_BTC", "active")
+	addBaseOrderEvent(&deal, "BTC", 50000.0, 0.003)
+	addTakeProfitEvent(&deal, "BTC", 51000.0, 51.0, 0.001)
+	addTakeProfitEvent(&deal, "BTC", 52000.0, 52.0, 0.001)
+	addTakeProfitEvent(&deal, "BTC", 53000.0, 53.0, 0.001)
+	require.NoError(t, harness.ThreeCommasMock.AddDeal(deal))
 
 	// Start application
-	harness.Start(ctx)
+	harness.Start(testCtx)
 
 	// Trigger E2E flow
-	harness.TriggerDealProduction(ctx)
+	harness.TriggerDealProduction(testCtx)
 
 	// Wait for orders to be in database
 	time.Sleep(3 * time.Second)
 
 	// Verify E2E: base order submitted (TPs managed separately by fill tracker)
-	dbOrders, _, err := harness.Store.ListOrders(ctx, api.ListOrdersOptions{})
+	dbOrders, _, err := harness.Store.ListOrders(testCtx, api.ListOrdersOptions{})
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(dbOrders), 1, "expected at least the base order in database")
 
@@ -401,4 +232,131 @@ func TestE2E_TakeProfitStack(t *testing.T) {
 	require.Equal(t, 1, buyOrders, "expected 1 buy order (base)")
 
 	t.Log("✅ E2E test passed: 3commas (TP stack) -> app -> hyperliquid")
+}
+
+func addBaseOrderEvent(deal *tcMock.Deal, coin string, price, size float64) {
+	quoteVolume := price * size
+	threecommasmock.AddBotEvent(deal, fmt.Sprintf(
+		"Placing base order. Price: %.5f USDT Size: %.5f USDT (%.5f %s)",
+		price, quoteVolume, size, coin,
+	))
+}
+
+func addTakeProfitEvent(deal *tcMock.Deal, coin string, price, quoteVolume, baseSize float64) {
+	threecommasmock.AddBotEvent(deal, fmt.Sprintf(
+		"Placing TakeProfit trade.  Price: %.5f USDT Size: %.5f USDT (%.5f %s), the price should rise for 2.00%% to close the trade",
+		price, quoteVolume, baseSize, coin,
+	))
+}
+
+func fetchScaledOrders(t *testing.T, store *storage.Storage, ctx context.Context, dealID uint32) []storage.ScaledOrderAudit {
+	t.Helper()
+
+	audits, err := store.ListScaledOrdersByDeal(ctx, dealID)
+	require.NoError(t, err)
+	require.NotEmpty(t, audits, "expected scaled order audit entries")
+	return audits
+}
+
+func lastHyperliquidOrderSize(t *testing.T, harness *E2ETestHarness, dealID uint32) float64 {
+	t.Helper()
+
+	reqs := harness.HyperliquidMock.GetExchangeRequests()
+	require.NotEmpty(t, reqs, "expected Hyperliquid requests")
+
+	for i := len(reqs) - 1; i >= 0; i-- {
+		orders := extractOrdersFromAction(reqs[i].Action)
+		for _, order := range orders {
+			cloid := firstString(order, "cloid", "c")
+			if cloid == "" {
+				continue
+			}
+			oid, err := orderid.FromHexString(cloid)
+			if err != nil {
+				continue
+			}
+			if oid.DealID != dealID {
+				continue
+			}
+			if sz, ok := extractOrderSize(order); ok {
+				return sz
+			}
+		}
+	}
+
+	t.Fatalf("no Hyperliquid order found for deal %d", dealID)
+	return 0
+}
+
+func extractOrdersFromAction(action interface{}) []map[string]interface{} {
+	var orders []map[string]interface{}
+
+	actionMap, ok := action.(map[string]interface{})
+	if !ok {
+		return orders
+	}
+
+	if rawOrders, ok := actionMap["orders"]; ok {
+		switch list := rawOrders.(type) {
+		case []interface{}:
+			for _, entry := range list {
+				if om, ok := entry.(map[string]interface{}); ok {
+					orders = append(orders, om)
+				}
+			}
+			return orders
+		}
+	}
+
+	orders = append(orders, actionMap)
+	return orders
+}
+
+func firstString(values map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if v, ok := values[key]; ok {
+			switch typed := v.(type) {
+			case string:
+				return typed
+			case json.Number:
+				return typed.String()
+			}
+		}
+	}
+	return ""
+}
+
+func extractOrderSize(order map[string]interface{}) (float64, bool) {
+	if sz, ok := order["sz"]; ok {
+		if parsed, ok := parseNumeric(sz); ok {
+			return parsed, true
+		}
+	}
+	if sz, ok := order["s"]; ok {
+		if parsed, ok := parseNumeric(sz); ok {
+			return parsed, true
+		}
+	}
+	if szStr := firstString(order, "size"); szStr != "" {
+		if parsed, err := strconv.ParseFloat(szStr, 64); err == nil {
+			return parsed, true
+		}
+	}
+	return 0, false
+}
+
+func parseNumeric(value interface{}) (float64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return v, true
+	case json.Number:
+		if parsed, err := v.Float64(); err == nil {
+			return parsed, true
+		}
+	case string:
+		if parsed, err := strconv.ParseFloat(v, 64); err == nil {
+			return parsed, true
+		}
+	}
+	return 0, false
 }

@@ -8,7 +8,9 @@ import (
 	"time"
 
 	gethCrypto "github.com/ethereum/go-ethereum/crypto"
+	tcMockServer "github.com/recomma/3commas-mock/server"
 	threecommasmock "github.com/recomma/3commas-mock/server"
+	tcMock "github.com/recomma/3commas-mock/tcmock"
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/cmd/recomma/internal/config"
 	"github.com/recomma/recomma/internal/vault"
@@ -16,19 +18,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func strPtr(v string) *string {
+	return &v
+}
+
 // TestApp_With3CommasMock verifies that the App can be created and started with a 3commas-mock server
 func TestApp_With3CommasMock(t *testing.T) {
 	t.Parallel()
 
 	// Create mock 3commas server
-	mockServer := threecommasmock.NewTestServer(t)
+	mockServer := tcMockServer.NewTestServer(t)
 	defer mockServer.Close()
 
 	// Configure mock state - add a simple bot
-	mockServer.AddBot(threecommasmock.Bot{
-		ID:      1,
-		Name:    "Test Bot",
-		Enabled: true,
+	mockServer.AddBot(tcMock.Bot{
+		Id:        1,
+		Name:      strPtr("Test Bot"),
+		IsEnabled: true,
 	})
 
 	// Generate test RSA key
@@ -113,32 +119,17 @@ func TestApp_StartWithMock(t *testing.T) {
 	defer mockServer.Close()
 
 	// Add test data
-	mockServer.AddBot(threecommasmock.Bot{
-		ID:      1,
-		Name:    "Integration Test Bot",
-		Enabled: true,
+	mockServer.AddBot(tcMock.Bot{
+		Id:        1,
+		Name:      strPtr("Integration Test Bot"),
+		IsEnabled: true,
 	})
 
-	mockServer.AddDeal(1, threecommasmock.Deal{
-		ID:     101,
-		BotID:  1,
+	mockServer.AddDeal(tcMock.Deal{
+		Id:     101,
+		BotId:  1,
 		Status: "active",
 		Pair:   "USDT_BTC",
-		Events: []threecommasmock.BotEvent{
-			{
-				CreatedAt:     "2024-01-15T10:30:00.000Z",
-				Action:        "place",
-				Coin:          "BTC",
-				Type:          "buy",
-				Status:        "active",
-				Price:         "50000.0",
-				Size:          "0.0002",
-				OrderType:     "base",
-				OrderSize:     1,
-				OrderPosition: 1,
-				IsMarket:      false,
-			},
-		},
 	})
 
 	// Generate test RSA key

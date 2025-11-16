@@ -15,8 +15,8 @@ import (
 
 	gethCrypto "github.com/ethereum/go-ethereum/crypto"
 	threecommasmock "github.com/recomma/3commas-mock/server"
-	hlmock "github.com/recomma/hyperliquid-mock/server"
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
+	hlmock "github.com/recomma/hyperliquid-mock/server"
 	"github.com/recomma/recomma/cmd/recomma/internal/config"
 	"github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/internal/vault"
@@ -68,7 +68,7 @@ type E2ETestHarness struct {
 }
 
 // NewE2ETestHarness creates a new E2E test harness with all dependencies
-func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
+func NewE2ETestHarness(t *testing.T, ctx context.Context) *E2ETestHarness {
 	t.Helper()
 
 	// Create mock servers
@@ -130,7 +130,6 @@ func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
 	cfg.OrderScalerMaxMultiplier = 10.0
 
 	// Create app with test dependencies - vault will be unsealed programmatically
-	ctx := context.Background()
 	app, err := NewApp(ctx, AppOptions{
 		Config:            cfg,
 		ThreeCommasClient: tcClient,

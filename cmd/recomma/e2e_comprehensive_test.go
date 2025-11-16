@@ -13,6 +13,7 @@ import (
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/orderid"
+	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -184,6 +185,100 @@ func TestE2E_MultiDeal_ConcurrentProcessing(t *testing.T) {
 	t.Log("✅ E2E test passed: 3commas (3 deals) -> app -> hyperliquid (3 orders)")
 }
 
+// TestE2E_MultiVenueReplay ensures that assigning a new venue after an order exists
+// triggers a replay on the missing venue, resulting in submissions on both venues.
+func TestE2E_MultiVenueReplay(t *testing.T) {
+	t.Parallel()
+
+	const (
+		botID            = 910
+		dealID           = 91001
+		secondaryVenueID = "hyperliquid:secondary"
+	)
+
+	testCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	harness := NewE2ETestHarness(t, testCtx,
+		WithAdditionalHyperliquidVenue(secondaryVenueID, "Secondary Hyperliquid"),
+		WithStorageLogger(),
+	)
+	defer func() {
+		cancel()
+		harness.Shutdown()
+	}()
+
+	harness.ThreeCommasMock.AddBot(threecommasmock.NewBot(botID, "Replay Bot", 4242, true))
+
+	deal := threecommasmock.NewDeal(dealID, botID, "USDT_BTC", "active")
+	addBaseOrderEvent(&deal, "BTC", 50000.0, 0.001)
+	require.NoError(t, harness.ThreeCommasMock.AddDeal(deal))
+
+	// Ensure the bot initially targets only the primary venue.
+	require.NoError(t, harness.Store.UpsertBotVenueAssignment(testCtx, uint32(botID), recomma.VenueID(harness.VenueID), true))
+
+	harness.Start(testCtx)
+	harness.TriggerDealProduction(testCtx)
+	harness.WaitForDealProcessing(uint32(dealID), 5*time.Second)
+	harness.WaitForOrderInDatabase(5 * time.Second)
+
+	dbOrders, _, err := harness.Store.ListOrders(testCtx, api.ListOrdersOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, dbOrders)
+	oid := dbOrders[0].OrderId
+
+	var initialIdents []recomma.OrderIdentifier
+	require.Eventually(t, func() bool {
+		var err error
+		initialIdents, err = harness.Store.ListSubmissionIdentifiersForOrder(testCtx, oid)
+		if err != nil {
+			return false
+		}
+		for _, ident := range initialIdents {
+			if ident.Venue() == secondaryVenueID {
+				return false
+			}
+		}
+		return len(initialIdents) > 0
+	}, 5*time.Second, 100*time.Millisecond, "expected submission before multi-venue replay")
+
+	// Assign the secondary venue after the initial submission exists.
+	require.NoError(t, harness.Store.UpsertBotVenueAssignment(testCtx, uint32(botID), recomma.VenueID(secondaryVenueID), false))
+
+	// Append a new event to trigger a modify, which should replay to the new venue.
+	modifiedMsg := baseOrderEventMessage("BTC", 50500.0, 0.0012)
+	require.NoError(t, harness.ThreeCommasMock.AddBotEventToDeal(dealID, modifiedMsg))
+
+	harness.TriggerDealProduction(testCtx)
+
+	require.Eventually(t, func() bool {
+		idents, err := harness.Store.ListSubmissionIdentifiersForOrder(testCtx, oid)
+		if err != nil {
+			return false
+		}
+		if len(idents) < 2 {
+			return false
+		}
+		for _, ident := range idents {
+			if ident.Venue() == secondaryVenueID {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 100*time.Millisecond, "expected replay to submit on secondary venue")
+
+	idents, err := harness.Store.ListSubmissionIdentifiersForOrder(testCtx, oid)
+	require.NoError(t, err)
+	require.NotEmpty(t, idents, "expected submissions recorded for both venues")
+
+	seenVenues := make(map[string]struct{})
+	for _, ident := range idents {
+		seenVenues[ident.Venue()] = struct{}{}
+	}
+	require.Contains(t, seenVenues, secondaryVenueID, "secondary venue submission missing")
+	require.Contains(t, seenVenues, harness.VenueID, "primary venue submission missing")
+
+	t.Log("✅ E2E test passed: missing venue assignment triggers replay submission")
+}
+
 // TestE2E_TakeProfitStack tests the full E2E flow with stacked take-profit orders:
 // 3commas mock (1 base + 3 TPs) -> app -> hyperliquid mock (base order + TPs)
 func TestE2E_TakeProfitStack(t *testing.T) {
@@ -235,11 +330,15 @@ func TestE2E_TakeProfitStack(t *testing.T) {
 }
 
 func addBaseOrderEvent(deal *tcMock.Deal, coin string, price, size float64) {
+	threecommasmock.AddBotEvent(deal, baseOrderEventMessage(coin, price, size))
+}
+
+func baseOrderEventMessage(coin string, price, size float64) string {
 	quoteVolume := price * size
-	threecommasmock.AddBotEvent(deal, fmt.Sprintf(
+	return fmt.Sprintf(
 		"Placing base order. Price: %.5f USDT Size: %.5f USDT (%.5f %s)",
 		price, quoteVolume, size, coin,
-	))
+	)
 }
 
 func addTakeProfitEvent(deal *tcMock.Deal, coin string, price, quoteVolume, baseSize float64) {

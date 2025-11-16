@@ -41,6 +41,45 @@ func generateTestRSAKeyPEM(t *testing.T) []byte {
 	return privateKeyPEM
 }
 
+type harnessConfig struct {
+	additionalVenues    []additionalVenueSpec
+	enableStorageLogger bool
+}
+
+type additionalVenueSpec struct {
+	id          string
+	displayName string
+}
+
+// E2EHarnessOption customizes the harness construction.
+type E2EHarnessOption func(*harnessConfig)
+
+// WithAdditionalHyperliquidVenue appends another Hyperliquid venue secret to the harness.
+func WithAdditionalHyperliquidVenue(id, displayName string) E2EHarnessOption {
+	return func(cfg *harnessConfig) {
+		if id == "" {
+			return
+		}
+		cfg.additionalVenues = append(cfg.additionalVenues, additionalVenueSpec{
+			id:          id,
+			displayName: displayName,
+		})
+	}
+}
+
+func generateHyperliquidCredentials(t *testing.T) (*ecdsa.PrivateKey, string) {
+	t.Helper()
+
+	privateKey, err := gethCrypto.GenerateKey()
+	require.NoError(t, err)
+
+	pub := privateKey.Public()
+	pubECDSA, ok := pub.(*ecdsa.PublicKey)
+	require.True(t, ok)
+	wallet := gethCrypto.PubkeyToAddress(*pubECDSA).Hex()
+	return privateKey, wallet
+}
+
 // E2ETestHarness manages all components for end-to-end testing
 type E2ETestHarness struct {
 	t *testing.T
@@ -65,11 +104,19 @@ type E2ETestHarness struct {
 
 	// Test vault secrets for programmatic unseal
 	testSecrets *vault.Secrets
+
+	AdditionalVenues map[string]vault.VenueSecret
 }
 
 // NewE2ETestHarness creates a new E2E test harness with all dependencies
-func NewE2ETestHarness(t *testing.T, ctx context.Context) *E2ETestHarness {
+func NewE2ETestHarness(t *testing.T, ctx context.Context, opts ...E2EHarnessOption) *E2ETestHarness {
 	t.Helper()
+	harnessCfg := harnessConfig{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&harnessCfg)
+		}
+	}
 
 	// Create mock servers
 	tcMock := threecommasmock.NewTestServer(t)
@@ -79,13 +126,7 @@ func NewE2ETestHarness(t *testing.T, ctx context.Context) *E2ETestHarness {
 	rsaKeyPEM := generateTestRSAKeyPEM(t)
 
 	// Generate Hyperliquid test credentials
-	privateKey, err := gethCrypto.GenerateKey()
-	require.NoError(t, err)
-
-	pub := privateKey.Public()
-	pubECDSA, ok := pub.(*ecdsa.PublicKey)
-	require.True(t, ok)
-	wallet := gethCrypto.PubkeyToAddress(*pubECDSA).Hex()
+	privateKey, wallet := generateHyperliquidCredentials(t)
 
 	venueID := "hyperliquid:test"
 
@@ -112,6 +153,23 @@ func NewE2ETestHarness(t *testing.T, ctx context.Context) *E2ETestHarness {
 		ReceivedAt: now,
 	}
 
+	additional := make(map[string]vault.VenueSecret)
+	for _, venue := range harnessCfg.additionalVenues {
+		key, addr := generateHyperliquidCredentials(t)
+		secret := vault.VenueSecret{
+			ID:           venue.id,
+			Type:         "hyperliquid",
+			DisplayName:  venue.displayName,
+			Wallet:       addr,
+			PrivateKey:   hex.EncodeToString(gethCrypto.FromECDSA(key)),
+			APIURL:       hlMock.URL(),
+			WebsocketURL: hlMock.WebSocketURL(),
+			Primary:      false,
+		}
+		testSecrets.Secrets.Venues = append(testSecrets.Secrets.Venues, secret)
+		additional[venue.id] = secret
+	}
+
 	// Create 3commas client pointing to mock
 	tcClient, err := tc.New3CommasClient(
 		tc.WithClientOption(tc.WithBaseURL(tcMock.URL())),
@@ -136,6 +194,10 @@ func NewE2ETestHarness(t *testing.T, ctx context.Context) *E2ETestHarness {
 	})
 	require.NoError(t, err)
 
+	if harnessCfg.enableStorageLogger {
+		storage.WithLogger(app.Logger)(app.Store)
+	}
+
 	return &E2ETestHarness{
 		t:               t,
 		App:             app,
@@ -147,6 +209,7 @@ func NewE2ETestHarness(t *testing.T, ctx context.Context) *E2ETestHarness {
 		HLWallet:        wallet,
 		VenueID:         venueID,
 		testSecrets:     testSecrets,
+		AdditionalVenues: additional,
 	}
 }
 
@@ -319,4 +382,10 @@ func (h *E2ETestHarness) TriggerDealProduction(ctx context.Context) {
 	h.t.Helper()
 
 	h.App.ProduceActiveDealsOnce(ctx)
+}
+// WithStorageLogger enables verbose SQL logging for the harness storage instance.
+func WithStorageLogger() E2EHarnessOption {
+	return func(cfg *harnessConfig) {
+		cfg.enableStorageLogger = true
+	}
 }

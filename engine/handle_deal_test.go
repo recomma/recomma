@@ -184,6 +184,38 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 			},
 		},
 		{
+			name:   "initial create targets each assigned venue once",
+			events: []tc.BotEvent{activeEvent},
+			prepare: func(t *testing.T, h *harness) {
+				ctx := h.ctx
+
+				require.NoError(t, h.store.EnsureDefaultVenueWallet(ctx, "hl-primary-wallet"))
+
+				const (
+					defaultVenue    = recomma.VenueID("hyperliquid:default")
+					secondaryVenue  = recomma.VenueID("hyperliquid:secondary")
+					secondaryWallet = "hl-secondary-wallet"
+				)
+
+				_, err := h.store.UpsertVenue(ctx, string(secondaryVenue), api.VenueUpsertRequest{
+					Type:        "hyperliquid",
+					DisplayName: "Secondary Hyperliquid Venue",
+					Wallet:      secondaryWallet,
+				})
+				require.NoError(t, err)
+				require.NoError(t, h.store.UpsertBotVenueAssignment(ctx, h.key.BotID, defaultVenue, true))
+				require.NoError(t, h.store.UpsertBotVenueAssignment(ctx, h.key.BotID, secondaryVenue, false))
+			},
+			wantActions: []recomma.ActionType{recomma.ActionCreate, recomma.ActionCreate},
+			wantVenues: []recomma.VenueID{
+				recomma.VenueID("hyperliquid:default"),
+				recomma.VenueID("hyperliquid:secondary"),
+			},
+			wantStatuses: []tc.MarketOrderStatusString{
+				tc.MarketOrderStatusString(tc.Active),
+			},
+		},
+		{
 			name: "replays create for venues missing submissions",
 			events: []tc.BotEvent{
 				activeEvent,
@@ -225,6 +257,48 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 			wantStatuses: []tc.MarketOrderStatusString{
 				tc.MarketOrderStatusString(tc.Active),
 				tc.MarketOrderStatusString(tc.Cancelled),
+				tc.MarketOrderStatusString(tc.Active),
+			},
+		},
+		{
+			name: "replay skips modify emission for existing venue",
+			events: []tc.BotEvent{
+				activeEvent,
+				modifyEvent,
+			},
+			prepare: func(t *testing.T, h *harness) {
+				ctx := h.ctx
+
+				require.NoError(t, h.store.EnsureDefaultVenueWallet(ctx, "hl-primary-wallet"))
+
+				const (
+					defaultVenue    = recomma.VenueID("hyperliquid:default")
+					secondaryVenue  = recomma.VenueID("hyperliquid:secondary")
+					secondaryWallet = "hl-secondary-wallet"
+				)
+
+				_, err := h.store.UpsertVenue(ctx, string(secondaryVenue), api.VenueUpsertRequest{
+					Type:        "hyperliquid",
+					DisplayName: "Secondary Hyperliquid Venue",
+					Wallet:      secondaryWallet,
+				})
+				require.NoError(t, err)
+				require.NoError(t, h.store.UpsertBotVenueAssignment(ctx, h.key.BotID, defaultVenue, true))
+				require.NoError(t, h.store.UpsertBotVenueAssignment(ctx, h.key.BotID, secondaryVenue, false))
+
+				inserted, err := h.store.RecordThreeCommasBotEvent(ctx, activeOid, activeEvent)
+				require.NoError(t, err)
+				require.NotZero(t, inserted)
+
+				be := recomma.BotEvent{RowID: inserted, BotEvent: activeEvent}
+				createReq := adapter.ToCreateOrderRequest(h.deal.ToCurrency, be, activeOid)
+				primaryIdent := recomma.NewOrderIdentifier(defaultVenue, "hl-primary-wallet", activeOid)
+				require.NoError(t, h.store.RecordHyperliquidOrderRequest(ctx, primaryIdent, createReq, inserted))
+			},
+			wantActions: []recomma.ActionType{recomma.ActionCreate},
+			wantVenues:  []recomma.VenueID{recomma.VenueID("hyperliquid:secondary")},
+			wantStatuses: []tc.MarketOrderStatusString{
+				tc.MarketOrderStatusString(tc.Active),
 				tc.MarketOrderStatusString(tc.Active),
 			},
 		},

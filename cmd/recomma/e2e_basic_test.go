@@ -8,22 +8,29 @@ import (
 	"testing"
 	"time"
 
-	threecommasmock "github.com/recomma/3commas-mock/server"
+	tcMock "github.com/recomma/3commas-mock/tcmock"
+	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/internal/api"
 	"github.com/stretchr/testify/require"
 )
 
 // TestE2E_BasicHarnessLifecycle tests that the E2E harness can start and stop cleanly
 func TestE2E_BasicHarnessLifecycle(t *testing.T) {
-	t.Parallel()
+	// t.Parallel()
 
-	harness := NewE2ETestHarness(t)
-	defer harness.Shutdown()
+	testCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	harness := NewE2ETestHarness(t, testCtx)
+	defer func() {
+		cancel()
+		harness.Shutdown()
+	}()
 
-	ctx := context.Background()
+	harness.ThreeCommasMock.AllowDuplicateIDs(true)
+	err := harness.ThreeCommasMock.LoadVCRCassette("../../testdata/singledeal")
+	require.NoError(t, err)
 
 	// Start application
-	harness.Start(ctx)
+	harness.Start(testCtx)
 
 	// Verify HTTP server is responding
 	resp := harness.APIGet("/api/bots")
@@ -37,56 +44,45 @@ func TestE2E_BasicHarnessLifecycle(t *testing.T) {
 func TestE2E_DealToOrderFlow(t *testing.T) {
 	t.Parallel()
 
-	harness := NewE2ETestHarness(t)
-	defer harness.Shutdown()
+	testCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 
-	ctx := context.Background()
+	harness := NewE2ETestHarness(t, testCtx)
+	defer func() {
+		cancel()
+		harness.Shutdown()
+	}()
 
-	// Configure 3commas mock with a bot and active deal
-	harness.ThreeCommasMock.AddBot(threecommasmock.Bot{
-		ID:      1,
-		Name:    "E2E Test Bot",
-		Enabled: true,
-	})
-
-	harness.ThreeCommasMock.AddDeal(1, threecommasmock.Deal{
-		ID:           101,
-		BotID:        1,
-		Pair:         "USDT_BTC",
-		Status:       "active",
-		ToCurrency:   "BTC",
-		FromCurrency: "USDT",
-		Events: []threecommasmock.BotEvent{
-			{
-				CreatedAt:     "2024-01-15T10:30:00.000Z",
-				Action:        "place",
-				Coin:          "BTC",
-				Type:          "buy",
-				Status:        "active",
-				Price:         "50000.0",
-				Size:          "0.0002",
-				OrderType:     "base",
-				OrderSize:     1,
-				OrderPosition: 1,
-				IsMarket:      false,
-			},
-		},
-	})
+	err := harness.ThreeCommasMock.LoadVCRCassette("../../testdata/singledeal")
+	require.NoError(t, err)
 
 	// Start application
-	harness.Start(ctx)
+	harness.Start(testCtx)
 
 	// Trigger deal production
-	harness.TriggerDealProduction(ctx)
+	harness.TriggerDealProduction(testCtx)
 
-	// Wait for deal to be processed
-	harness.WaitForDealProcessing(101, 5*time.Second)
+	// Wait for the recorded deal to be processed
+	harness.WaitForDealProcessing(2376446537, 5*time.Second)
+
+	deals, _, err := harness.Store.ListDeals(testCtx, api.ListDealsOptions{})
+	require.NoError(t, err)
+
+	var recordedDeal *tc.Deal
+	for i := range deals {
+		if deals[i].Id == 2376446537 {
+			recordedDeal = &deals[i]
+			break
+		}
+	}
+	require.NotNil(t, recordedDeal, "recorded deal should be stored")
+	require.Equal(t, "USDT_DOGE", recordedDeal.Pair)
+	require.Equal(t, "Bot16511317 has signal", recordedDeal.BotName)
 
 	// Wait for order to be recorded in database (which implies it was submitted)
 	harness.WaitForOrderInDatabase(5 * time.Second)
 
 	// Verify database has the order
-	dbOrders, _, err := harness.Store.ListOrders(ctx, api.ListOrdersOptions{})
+	dbOrders, _, err := harness.Store.ListOrders(testCtx, api.ListOrdersOptions{})
 	require.NoError(t, err)
 	require.NotEmpty(t, dbOrders)
 
@@ -98,17 +94,10 @@ func TestE2E_DealToOrderFlow(t *testing.T) {
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 
-	var apiResp map[string]interface{}
+	var apiResp api.ListOrders200JSONResponse
 	err = json.Unmarshal(body, &apiResp)
 	require.NoError(t, err)
-
-	// API should have orders
-	ordersData, ok := apiResp["orders"]
-	require.True(t, ok, "API response should have 'orders' field")
-
-	ordersArray, ok := ordersData.([]interface{})
-	require.True(t, ok, "orders should be an array")
-	require.NotEmpty(t, ordersArray, "API should return at least one order")
+	require.NotEmpty(t, apiResp.Items, "API should return at least one order")
 
 	t.Log("✅ E2E test passed: 3commas deal → processing → hyperliquid order → database → web API")
 }
@@ -117,23 +106,25 @@ func TestE2E_DealToOrderFlow(t *testing.T) {
 func TestE2E_APIListBots(t *testing.T) {
 	t.Parallel()
 
-	harness := NewE2ETestHarness(t)
-	defer harness.Shutdown()
-
-	ctx := context.Background()
+	testCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	harness := NewE2ETestHarness(t, testCtx)
+	defer func() {
+		cancel()
+		harness.Shutdown()
+	}()
 
 	// Configure mock with a bot
-	harness.ThreeCommasMock.AddBot(threecommasmock.Bot{
-		ID:      1,
-		Name:    "API Test Bot",
-		Enabled: true,
+	harness.ThreeCommasMock.AddBot(tcMock.Bot{
+		Id:        1,
+		Name:      strPtr("API Test Bot"),
+		IsEnabled: true,
 	})
 
 	// Start application
-	harness.Start(ctx)
+	harness.Start(testCtx)
 
 	// Trigger bot sync
-	harness.TriggerDealProduction(ctx)
+	harness.TriggerDealProduction(testCtx)
 
 	// Give time for bot to be synced
 	time.Sleep(500 * time.Millisecond)

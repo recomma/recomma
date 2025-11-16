@@ -1,4 +1,4 @@
-//go:build !debugmode
+//go:build debugmode
 
 package main
 
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/recomma/recomma/cmd/recomma/internal/config"
+	"github.com/recomma/recomma/internal/debugmode"
 )
 
 func fatal(msg string, err error) {
@@ -44,16 +45,18 @@ func main() {
 		fatal("app init failed", err)
 	}
 
-	// Start HTTP server (before vault unsealing, for WebAuthn/vault UI)
+	// Start HTTP server
 	app.StartHTTPServer()
 
-	// Wait for vault to be unsealed
-	if err := app.WaitForVaultUnseal(appCtx); err != nil {
-		if !errors.Is(err, context.Canceled) {
-			app.Logger.Error("vault unseal failed", slog.String("error", err.Error()))
-			os.Exit(1) // Non-zero exit for startup failures
-		}
-		os.Exit(0) // Clean shutdown on cancellation
+	// Auto-unseal vault from environment variables (debug mode only)
+	slog.Info("debug mode: auto-unsealing vault from environment")
+	secrets, err := debugmode.LoadSecretsFromEnv()
+	if err != nil {
+		fatal("load debug secrets failed", err)
+	}
+
+	if err := app.VaultController.Unseal(*secrets, nil); err != nil {
+		fatal("vault unseal failed", err)
 	}
 
 	// Start all services (workers, periodic tasks, etc.)

@@ -25,7 +25,6 @@ import (
 	"github.com/recomma/recomma/hl"
 	"github.com/recomma/recomma/hl/ws"
 	"github.com/recomma/recomma/internal/api"
-	"github.com/recomma/recomma/internal/debugmode"
 	"github.com/recomma/recomma/internal/origin"
 	"github.com/recomma/recomma/internal/vault"
 	rlog "github.com/recomma/recomma/log"
@@ -86,7 +85,6 @@ type App struct {
 	venueClosers  []func()
 
 	// Runtime configuration
-	debugEnabled   bool
 	allowedOrigins []string
 	rpID           string
 	dealWorkers    int
@@ -98,11 +96,10 @@ type App struct {
 // AppOptions configures application creation
 type AppOptions struct {
 	Config config.AppConfig
+	Store  *storage.Storage // Optional: inject storage (if nil, created from Config.StoragePath)
 
-	// Optional overrides for testing
+	// Optional: inject 3commas client for testing
 	ThreeCommasClient engine.ThreeCommasAPI
-	VaultSecrets      *vault.Secrets // Bypass vault unsealing
-	StoragePath       string         // Override storage path
 }
 
 // NewApp creates and initializes the application (but doesn't start workers/server)
@@ -111,13 +108,6 @@ type AppOptions struct {
 // Call WaitForVaultUnseal() then Start() to begin operation.
 func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 	cfg := opts.Config
-
-	// Apply storage path override if provided
-	if opts.StoragePath != "" {
-		cfg.StoragePath = opts.StoragePath
-	}
-
-	debugEnabled := cfg.Debug && debugmode.Available()
 
 	allowedOrigins := origin.BuildAllowedOrigins(cfg.HTTPListen, cfg.PublicOrigin)
 	rpID := origin.DeriveRPID(cfg.HTTPListen, cfg.PublicOrigin)
@@ -131,7 +121,7 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 	slog.SetDefault(logger)
 	log.SetOutput(slog.NewLogLogger(logger.Handler(), slog.LevelDebug).Writer())
 
-	webui.SetDebug(debugEnabled)
+	webui.SetDebug(cfg.Debug)
 	appCtx = rlog.ContextWithLogger(appCtx, logger)
 
 	// Initialize stream controllers
@@ -155,10 +145,16 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 	systemStream := api.NewSystemStreamController(systemLevel)
 	systemStatus := api.NewSystemStatusTracker()
 
-	// Initialize storage
-	store, err := storage.New(cfg.StoragePath, storage.WithStreamPublisher(streamController))
-	if err != nil {
-		return nil, fmt.Errorf("storage init failed: %w", err)
+	// Initialize storage (use provided store or create new one)
+	var store *storage.Storage
+	var err error
+	if opts.Store != nil {
+		store = opts.Store
+	} else {
+		store, err = storage.New(cfg.StoragePath, storage.WithStreamPublisher(streamController))
+		if err != nil {
+			return nil, fmt.Errorf("storage init failed: %w", err)
+		}
 	}
 
 	// Initialize WebAuthn
@@ -168,7 +164,6 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 		RPOrigins:     allowedOrigins,
 	})
 	if err != nil {
-		store.Close()
 		return nil, fmt.Errorf("webauth init failed: %w", err)
 	}
 
@@ -176,76 +171,22 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 	initialVaultState := vault.StateSetupRequired
 	var controllerOpts []vault.ControllerOption
 
-	// Check if vault secrets provided (for testing - bypasses all normal vault logic)
-	if opts.VaultSecrets != nil {
-		now := opts.VaultSecrets.ReceivedAt
-		if now.IsZero() {
-			now = time.Now().UTC()
-		}
-		controllerOpts = append(controllerOpts,
-			vault.WithInitialSecrets(opts.VaultSecrets),
-			vault.WithInitialUser(debugmode.DebugUser(now)),
-			vault.WithInitialTimestamps(nil, &now, nil),
-		)
-		initialVaultState = vault.StateUnsealed
-	} else {
-		// Check database for existing vault data (production and debug modes)
-		existingUser, err := store.GetVaultUser(appCtx)
-		if err != nil {
-			store.Close()
-			return nil, fmt.Errorf("load vault user: %w", err)
-		}
-		if existingUser != nil {
-			controllerOpts = append(controllerOpts, vault.WithInitialUser(existingUser))
+	existingUser, err := store.GetVaultUser(appCtx)
+	if err != nil {
+		return nil, fmt.Errorf("load vault user: %w", err)
+	}
+	if existingUser != nil {
+		controllerOpts = append(controllerOpts, vault.WithInitialUser(existingUser))
 
-			payload, err := store.GetVaultPayloadForUser(appCtx, existingUser.ID)
-			if err != nil {
-				store.Close()
-				return nil, fmt.Errorf("load vault payload: %w", err)
-			}
-			if payload != nil {
-				// Existing encrypted vault data found - start Sealed (security critical!)
-				// This takes precedence over debug mode settings
-				initialVaultState = vault.StateSealed
-				sealedAt := payload.UpdatedAt
-				controllerOpts = append(controllerOpts, vault.WithInitialTimestamps(&sealedAt, nil, nil))
-			} else if debugEnabled {
-				// No vault payload yet, but debug mode - load from env
-				secrets, err := debugmode.LoadSecretsFromEnv()
-				if err != nil {
-					store.Close()
-					return nil, fmt.Errorf("load debug secrets: %w", err)
-				}
-				now := secrets.ReceivedAt
-				if now.IsZero() {
-					now = time.Now().UTC()
-				}
-				controllerOpts = append(controllerOpts,
-					vault.WithInitialSecrets(secrets),
-					vault.WithInitialUser(debugmode.DebugUser(now)),
-					vault.WithInitialTimestamps(nil, &now, nil),
-				)
-				initialVaultState = vault.StateUnsealed
-			}
-		} else if debugEnabled {
-			// No existing user, but debug mode - load from env
-			secrets, err := debugmode.LoadSecretsFromEnv()
-			if err != nil {
-				store.Close()
-				return nil, fmt.Errorf("load debug secrets: %w", err)
-			}
-			now := secrets.ReceivedAt
-			if now.IsZero() {
-				now = time.Now().UTC()
-			}
-			controllerOpts = append(controllerOpts,
-				vault.WithInitialSecrets(secrets),
-				vault.WithInitialUser(debugmode.DebugUser(now)),
-				vault.WithInitialTimestamps(nil, &now, nil),
-			)
-			initialVaultState = vault.StateUnsealed
+		payload, err := store.GetVaultPayloadForUser(appCtx, existingUser.ID)
+		if err != nil {
+			return nil, fmt.Errorf("load vault payload: %w", err)
 		}
-		// else: no user, not debug mode → StateSetupRequired (default)
+		if payload != nil {
+			initialVaultState = vault.StateSealed
+			sealedAt := payload.UpdatedAt
+			controllerOpts = append(controllerOpts, vault.WithInitialTimestamps(&sealedAt, nil, nil))
+		}
 	}
 
 	vaultController := vault.NewController(initialVaultState, controllerOpts...)
@@ -267,7 +208,7 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 		api.WithWebAuthnService(webAuthApi),
 		api.WithVaultController(vaultController),
 		api.WithOrderScalerMaxMultiplier(cfg.OrderScalerMaxMultiplier),
-		api.WithDebugMode(debugEnabled),
+		api.WithDebugMode(cfg.Debug),
 		api.WithSystemStream(systemStream),
 		api.WithSystemStatus(systemStatus),
 	)
@@ -331,7 +272,6 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 		cancelFunc:       cancel,
 		workerCtx:        workerCtx,
 		cancelWorkers:    cancelWorkers,
-		debugEnabled:     debugEnabled,
 		allowedOrigins:   allowedOrigins,
 		rpID:             rpID,
 		StatusClients:    make(hl.StatusClientRegistry),
@@ -632,9 +572,6 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 	) {
 		defaultVenueWallet = ""
 	}
-	if err := a.Store.EnsureDefaultVenueWallet(ctx, defaultVenueWallet); err != nil {
-		return fmt.Errorf("update default venue wallet: %w", err)
-	}
 
 	defaultAliasWallet := strings.TrimSpace(defaultVenueWallet)
 	if defaultAliasWallet == "" {
@@ -693,6 +630,12 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 			apiURL = primaryAPIURL
 		}
 
+		// WebSocket URL: use explicit websocket_url if provided, otherwise fall back to api_url
+		wsURL := strings.TrimSpace(venue.WebsocketURL)
+		if wsURL == "" {
+			wsURL = apiURL
+		}
+
 		venueIdent := recomma.VenueID(venueID)
 
 		payload := api.VenueUpsertRequest{
@@ -726,7 +669,7 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 			constraintsInfo = info
 		}
 
-		wsClient, err := ws.New(ctx, a.Store, a.FillTracker, venueIdent, wallet, apiURL)
+		wsClient, err := ws.New(ctx, a.Store, a.FillTracker, venueIdent, wallet, wsURL)
 		if err != nil {
 			return fmt.Errorf("create hyperliquid websocket: %w", err)
 		}
@@ -757,7 +700,7 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 		)
 
 		if shouldBootstrapDefaultWs && venueIdent == primaryIdent {
-			aliasClient, err := ws.New(ctx, a.Store, a.FillTracker, defaultHyperliquidIdent, defaultAliasWallet, apiURL)
+			aliasClient, err := ws.New(ctx, a.Store, a.FillTracker, defaultHyperliquidIdent, defaultAliasWallet, wsURL)
 			if err != nil {
 				return fmt.Errorf("create default hyperliquid websocket: %w", err)
 			}
@@ -787,6 +730,12 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 			slog.String("api_url", apiURL),
 			slog.Bool("primary", venue.Primary),
 		)
+	}
+
+	// Ensure default venue is configured after all venues from secrets are processed
+	// This allows the default venue to detect conflicts and skip creation if needed
+	if err := a.Store.EnsureDefaultVenueWallet(ctx, defaultVenueWallet); err != nil {
+		return fmt.Errorf("update default venue wallet: %w", err)
 	}
 
 	if len(a.StatusClients) == 0 {

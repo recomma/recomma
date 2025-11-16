@@ -15,8 +15,8 @@ import (
 
 	gethCrypto "github.com/ethereum/go-ethereum/crypto"
 	threecommasmock "github.com/recomma/3commas-mock/server"
-	hlmock "github.com/recomma/hyperliquid-mock/server"
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
+	hlmock "github.com/recomma/hyperliquid-mock/server"
 	"github.com/recomma/recomma/cmd/recomma/internal/config"
 	"github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/internal/vault"
@@ -62,10 +62,13 @@ type E2ETestHarness struct {
 	HLPrivateKey *ecdsa.PrivateKey
 	HLWallet     string
 	VenueID      string
+
+	// Test vault secrets for programmatic unseal
+	testSecrets *vault.Secrets
 }
 
 // NewE2ETestHarness creates a new E2E test harness with all dependencies
-func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
+func NewE2ETestHarness(t *testing.T, ctx context.Context) *E2ETestHarness {
 	t.Helper()
 
 	// Create mock servers
@@ -86,32 +89,34 @@ func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
 
 	venueID := "hyperliquid:test"
 
-	// Create test secrets with Hyperliquid venue
-	secrets := &vault.Secrets{
+	// Build test vault secrets for programmatic unseal
+	now := time.Now().UTC()
+	testSecrets := &vault.Secrets{
 		Secrets: vault.Data{
 			THREECOMMASAPIKEY:     "test-api-key",
 			THREECOMMASPRIVATEKEY: string(rsaKeyPEM),
-			THREECOMMASPLANTIER:   "expert",
+			THREECOMMASPLANTIER:   string(recomma.ThreeCommasPlanTierExpert),
 			Venues: []vault.VenueSecret{
 				{
-					ID:          venueID,
-					Type:        "hyperliquid",
-					DisplayName: "Test Hyperliquid",
-					Wallet:      wallet,
-					PrivateKey:  hex.EncodeToString(gethCrypto.FromECDSA(privateKey)),
-					APIURL:      hlMock.URL(),
-					Primary:     true,
+					ID:           venueID,
+					Type:         "hyperliquid",
+					DisplayName:  "Test Hyperliquid",
+					Wallet:       wallet,
+					PrivateKey:   hex.EncodeToString(gethCrypto.FromECDSA(privateKey)),
+					APIURL:       hlMock.URL(),
+					WebsocketURL: hlMock.WebSocketURL(),
+					Primary:      true,
 				},
 			},
 		},
-		ReceivedAt: time.Now().UTC(),
+		ReceivedAt: now,
 	}
 
 	// Create 3commas client pointing to mock
 	tcClient, err := tc.New3CommasClient(
 		tc.WithClientOption(tc.WithBaseURL(tcMock.URL())),
-		tc.WithAPIKey(secrets.Secrets.THREECOMMASAPIKEY),
-		tc.WithPrivatePEM([]byte(secrets.Secrets.THREECOMMASPRIVATEKEY)),
+		tc.WithAPIKey("test-api-key"),
+		tc.WithPrivatePEM(rsaKeyPEM),
 		tc.WithPlanTier(recomma.ThreeCommasPlanTierExpert.SDKTier()),
 	)
 	require.NoError(t, err)
@@ -120,16 +125,14 @@ func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
 	cfg := config.DefaultConfig()
 	cfg.HTTPListen = "127.0.0.1:0" // Random port
 	cfg.StoragePath = ":memory:"
-	cfg.Debug = true
+	cfg.Debug = false
 	cfg.OrderWorkers = 2
 	cfg.OrderScalerMaxMultiplier = 10.0
 
-	// Create app with test dependencies
-	ctx := context.Background()
+	// Create app with test dependencies - vault will be unsealed programmatically
 	app, err := NewApp(ctx, AppOptions{
 		Config:            cfg,
 		ThreeCommasClient: tcClient,
-		VaultSecrets:      secrets, // Bypass vault authentication
 	})
 	require.NoError(t, err)
 
@@ -143,6 +146,7 @@ func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
 		HLPrivateKey:    privateKey,
 		HLWallet:        wallet,
 		VenueID:         venueID,
+		testSecrets:     testSecrets,
 	}
 }
 
@@ -153,8 +157,12 @@ func (h *E2ETestHarness) Start(ctx context.Context) {
 	// Start HTTP server
 	h.App.StartHTTPServer()
 
+	// Unseal vault using production API (same as UI does)
+	err := h.App.VaultController.Unseal(*h.testSecrets, nil)
+	require.NoError(h.t, err)
+
 	// Start all services (workers, periodic tasks, etc.)
-	err := h.App.Start(ctx)
+	err = h.App.Start(ctx)
 	require.NoError(h.t, err)
 
 	// Wait for HTTP server to be ready

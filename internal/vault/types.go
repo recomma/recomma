@@ -89,14 +89,15 @@ type Data struct {
 
 // VenueSecret captures the credentials required to interact with a venue.
 type VenueSecret struct {
-	ID          string
-	Type        string
-	DisplayName string
-	Wallet      string
-	PrivateKey  string
-	APIURL      string
-	Flags       map[string]interface{}
-	Primary     bool
+	ID           string
+	Type         string
+	DisplayName  string
+	Wallet       string
+	PrivateKey   string
+	APIURL       string
+	WebsocketURL string
+	Flags        map[string]interface{}
+	Primary      bool
 }
 
 type wireData struct {
@@ -107,14 +108,15 @@ type wireData struct {
 }
 
 type wireVenue struct {
-	ID          string                 `json:"id"`
-	Type        string                 `json:"type"`
-	DisplayName string                 `json:"display_name"`
-	Wallet      string                 `json:"wallet"`
-	PrivateKey  string                 `json:"private_key"`
-	APIURL      string                 `json:"api_url"`
-	Flags       map[string]interface{} `json:"flags"`
-	Primary     bool                   `json:"is_primary"`
+	ID           string                 `json:"id"`
+	Type         string                 `json:"type"`
+	DisplayName  string                 `json:"display_name"`
+	Wallet       string                 `json:"wallet"`
+	PrivateKey   string                 `json:"private_key"`
+	APIURL       string                 `json:"api_url"`
+	WebsocketURL string                 `json:"websocket_url"`
+	Flags        map[string]interface{} `json:"flags"`
+	Primary      bool                   `json:"is_primary"`
 }
 
 // UnmarshalJSON decodes the multi-venue payload format.
@@ -177,14 +179,15 @@ func parseWireVenues(raw json.RawMessage) ([]VenueSecret, error) {
 func convertWireVenue(venue wireVenue) VenueSecret {
 	clonedFlags := copyFlags(venue.Flags)
 	return VenueSecret{
-		ID:          strings.TrimSpace(venue.ID),
-		Type:        strings.TrimSpace(venue.Type),
-		DisplayName: strings.TrimSpace(venue.DisplayName),
-		Wallet:      strings.TrimSpace(venue.Wallet),
-		PrivateKey:  strings.TrimSpace(venue.PrivateKey),
-		APIURL:      strings.TrimSpace(venue.APIURL),
-		Flags:       clonedFlags,
-		Primary:     venue.Primary,
+		ID:           strings.TrimSpace(venue.ID),
+		Type:         strings.TrimSpace(venue.Type),
+		DisplayName:  strings.TrimSpace(venue.DisplayName),
+		Wallet:       strings.TrimSpace(venue.Wallet),
+		PrivateKey:   strings.TrimSpace(venue.PrivateKey),
+		APIURL:       strings.TrimSpace(venue.APIURL),
+		WebsocketURL: strings.TrimSpace(venue.WebsocketURL),
+		Flags:        clonedFlags,
+		Primary:      venue.Primary,
 	}
 }
 

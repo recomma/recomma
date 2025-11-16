@@ -93,12 +93,11 @@ type App struct {
 
 // AppOptions configures application creation
 type AppOptions struct {
-    Config config.Config
+    Config config.AppConfig
+    Store  *storage.Storage // Optional: inject storage (if nil, created from Config.StoragePath)
 
-    // Optional: Override for testing
+    // Optional test overrides
     ThreeCommasClient engine.ThreeCommasAPI
-    VaultSecrets      *vault.Secrets
-    StoragePath       string // Override storage path (default: cfg.StoragePath)
 }
 
 // NewApp creates and initializes the application
@@ -145,11 +144,17 @@ func (a *App) HTTPAddr() string {
 ```
 
 **Key Design Principles:**
-1. **Dependency Injection**: Accept mocks via `AppOptions`
-2. **Explicit Lifecycle**: Separate creation, unsealing, starting, shutdown
-3. **Context-Aware**: All operations accept context for cancellation
-4. **Test-Friendly**: Expose internal state for assertions
-5. **Backwards Compatible**: Existing `main()` should work unchanged
+1. **Dependency Injection**: Accept mocks via `AppOptions` (Store, ThreeCommasClient, VaultSecrets)
+2. **Storage Control**: Tests inject pre-configured storage, production lets NewApp create it
+3. **Explicit Lifecycle**: Separate creation, unsealing, starting, shutdown
+4. **Context-Aware**: All operations accept context for cancellation
+5. **Test-Friendly**: Expose internal state for assertions
+6. **Backwards Compatible**: Existing `main()` should work unchanged
+
+**Testing Patterns:**
+- **E2E Tests**: Create `storage.New(":memory:")`, inject `Store`, then call `VaultController.Unseal()` programmatically
+- **Production**: NewApp creates storage from `Config.StoragePath`, waits for WebAuthn vault unsealing
+- **Debug Mode**: Separate binary built with `-tags debugmode` that auto-unseals from environment variables
 
 #### 1.2 Refactor `main()` (`cmd/recomma/main.go`)
 
@@ -432,6 +437,9 @@ type E2ETestHarness struct {
     // Generated test credentials
     HLPrivateKey *ecdsa.PrivateKey
     HLWallet     string
+
+    // Test vault secrets for programmatic unseal
+    testSecrets *vault.Secrets
 }
 
 func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
@@ -479,18 +487,20 @@ func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
     )
     require.NoError(t, err)
 
+    // Create test storage
+    store, err := storage.New(":memory:")
+    require.NoError(t, err)
+
     // Create test configuration
     cfg := config.DefaultConfig()
     cfg.HTTPListen = "127.0.0.1:0" // Random port
-    cfg.StoragePath = ":memory:"
-    cfg.Debug = true
 
     // Create app with test dependencies
     ctx := context.Background()
     app, err := NewApp(ctx, AppOptions{
         Config:            cfg,
+        Store:             store,
         ThreeCommasClient: tcClient,
-        VaultSecrets:      secrets, // Bypass vault authentication
     })
     require.NoError(t, err)
 
@@ -503,6 +513,7 @@ func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
         HTTPClient:      &http.Client{Timeout: 10 * time.Second},
         HLPrivateKey:    privateKey,
         HLWallet:        wallet,
+        testSecrets:     secrets,
     }
 }
 
@@ -510,8 +521,15 @@ func NewE2ETestHarness(t *testing.T) *E2ETestHarness {
 func (h *E2ETestHarness) Start(ctx context.Context) {
     h.t.Helper()
 
-    // App.Start should be non-blocking (starts goroutines)
-    err := h.App.Start(ctx)
+    // Start HTTP server
+    h.App.StartHTTPServer()
+
+    // Unseal vault using production API (same as UI does)
+    err := h.App.VaultController.Unseal(*h.testSecrets, nil)
+    require.NoError(h.t, err)
+
+    // Start all services (workers, periodic tasks, etc.)
+    err = h.App.Start(ctx)
     require.NoError(h.t, err)
 
     // Wait for HTTP server to be ready
@@ -694,6 +712,8 @@ func TestE2E_DealToOrderFlow(t *testing.T) {
         Status:       "active",
         ToCurrency:   "BTC",
         FromCurrency: "USDT",
+        CreatedAt:    "2024-01-15T10:30:00.000Z",
+		UpdatedAt:    "2024-01-15T10:31:00.000Z",
         Events: []threecommasmock.BotEvent{
             {
                 CreatedAt:     "2024-01-15T10:30:00.000Z",

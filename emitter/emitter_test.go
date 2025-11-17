@@ -49,6 +49,18 @@ func (s *stubExchange) ModifyOrder(ctx context.Context, req hyperliquid.ModifyOr
 	return hyperliquid.OrderStatus{}, nil
 }
 
+type missingDataExchange struct {
+	stubExchange
+	lastModify hyperliquid.ModifyOrderRequest
+}
+
+func (m *missingDataExchange) ModifyOrder(ctx context.Context, req hyperliquid.ModifyOrderRequest) (hyperliquid.OrderStatus, error) {
+	m.mu.Lock()
+	m.lastModify = req
+	m.mu.Unlock()
+	return hyperliquid.OrderStatus{}, fmt.Errorf("missing response.data field in successful response")
+}
+
 type recordingRateGate struct {
 	mu        sync.Mutex
 	waitCalls int
@@ -245,6 +257,58 @@ func TestHyperLiquidEmitterIOCRetriesWarnOnFailure(t *testing.T) {
 	}
 
 	require.Equal(t, 1, warnCount, "expected a single warning when retries exhaust")
+}
+
+func TestHyperLiquidEmitterTreatsMissingResponseDataAsSuccess(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	exchange := &missingDataExchange{}
+	store := newTestStore(t)
+
+	emitter := NewHyperLiquidEmitter(exchange, "hyperliquid:default", nil, store)
+
+	oid := orderid.OrderId{BotID: 123, DealID: 456, BotEventID: 789}
+	ident := recomma.NewOrderIdentifier("hyperliquid:default", "0xabc", oid)
+	cloid := oid.Hex()
+
+	createReq := hyperliquid.CreateOrderRequest{
+		Coin:          "DOGE",
+		IsBuy:         false,
+		Price:         0.165,
+		Size:          155,
+		ClientOrderID: &cloid,
+		ReduceOnly:    true,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
+		},
+	}
+	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, ident, createReq, 0))
+
+	modifyReq := hyperliquid.ModifyOrderRequest{
+		Cloid: &hyperliquid.Cloid{Value: cloid},
+		Order: hyperliquid.CreateOrderRequest{
+			Coin:          "DOGE",
+			IsBuy:         false,
+			Price:         0.172,
+			Size:          310,
+			ClientOrderID: &cloid,
+			ReduceOnly:    true,
+			OrderType: hyperliquid.OrderType{
+				Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
+			},
+		},
+	}
+
+	work := recomma.OrderWork{
+		Identifier: ident,
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionModify, Modify: modifyReq},
+		BotEvent:   recomma.BotEvent{RowID: 42},
+	}
+
+	err := emitter.Emit(ctx, work)
+	require.NoError(t, err, "modify should succeed even when exchange omits response.data")
 }
 
 func TestHyperLiquidEmitterUsesInjectedRateGate(t *testing.T) {

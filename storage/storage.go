@@ -69,7 +69,7 @@ func WithStreamPublisher(stream api.StreamPublisher) StorageOption {
 func WithLogger(logger *slog.Logger) StorageOption {
 	return func(s *Storage) {
 		if logger != nil {
-			s.logger = logger
+			s.logger = logger.WithGroup("storage")
 		}
 	}
 }

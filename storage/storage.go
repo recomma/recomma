@@ -124,16 +124,33 @@ func New(path string, opts ...StorageOption) (*Storage, error) {
 }
 
 func (s *Storage) Close() error {
+	logger := s.logger.WithGroup("Close")
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.db.Close()
+
+	if err := s.db.Close(); err != nil {
+		logger.Warn("close failed", slog.String("error", err.Error()))
+		return err
+	}
+
+	logger.Debug("closed")
+	return nil
 }
 
 func (s *Storage) ensureDefaultVenue(ctx context.Context) error {
+	logger := s.logger.WithGroup("ensureDefaultVenue")
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.upsertDefaultVenueLocked(ctx, defaultHyperliquidWallet)
+	if err := s.upsertDefaultVenueLocked(ctx, defaultHyperliquidWallet); err != nil {
+		logger.Warn("ensure default venue failed", slog.String("error", err.Error()))
+		return err
+	}
+
+	logger.Debug("default venue ensured")
+	return nil
 }
 
 // EnsureDefaultVenueWallet updates the default Hyperliquid venue to reference the
@@ -141,15 +158,29 @@ func (s *Storage) ensureDefaultVenue(ctx context.Context) error {
 // are available so downstream lookups return identifiers that align with the
 // live emitter/websocket clients.
 func (s *Storage) EnsureDefaultVenueWallet(ctx context.Context, wallet string) error {
+	logger := s.logger.WithGroup("EnsureDefaultVenueWallet").With(slog.String("wallet", wallet))
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.upsertDefaultVenueLocked(ctx, wallet)
+	if err := s.upsertDefaultVenueLocked(ctx, wallet); err != nil {
+		logger.Warn("ensure default wallet failed", slog.String("error", err.Error()))
+		return err
+	}
+
+	logger.Debug("default wallet ensured")
+	return nil
 }
 
 // UpsertBotVenueAssignment associates a bot with a venue. Repeated calls update
 // the primary flag while preserving the latest assignment timestamp.
 func (s *Storage) UpsertBotVenueAssignment(ctx context.Context, botID uint32, venueID recomma.VenueID, isPrimary bool) error {
+	logger := s.logger.WithGroup("UpsertBotVenueAssignment").With(
+		slog.Uint64("bot_id", uint64(botID)),
+		slog.String("venue_id", string(venueID)),
+		slog.Bool("is_primary", isPrimary),
+	)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -161,23 +192,34 @@ func (s *Storage) UpsertBotVenueAssignment(ctx context.Context, botID uint32, ve
 		params.IsPrimary = 1
 	}
 
-	return s.queries.UpsertBotVenueAssignment(ctx, params)
+	if err := s.queries.UpsertBotVenueAssignment(ctx, params); err != nil {
+		logger.Warn("upsert failed", slog.String("error", err.Error()))
+		return err
+	}
+
+	logger.Debug("assignment updated")
+	return nil
 }
 
 // HasPrimaryVenueAssignment reports whether a bot already has a stored primary
 // venue assignment. Callers can use this to avoid overwriting operator
 // preferences when syncing secrets-derived defaults.
 func (s *Storage) HasPrimaryVenueAssignment(ctx context.Context, botID uint32) (bool, error) {
+	logger := s.logger.WithGroup("HasPrimaryVenueAssignment").With(slog.Uint64("bot_id", uint64(botID)))
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	_, err := s.queries.GetPrimaryVenueForBot(ctx, int64(botID))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			logger.Debug("no primary venue assignment")
 			return false, nil
 		}
+		logger.Warn("query failed", slog.String("error", err.Error()))
 		return false, err
 	}
+	logger.Debug("primary venue assignment exists")
 	return true, nil
 }
 
@@ -185,6 +227,7 @@ func (s *Storage) upsertDefaultVenueLocked(ctx context.Context, wallet string) e
 	if wallet == "" {
 		wallet = defaultHyperliquidWallet
 	}
+	logger := s.logger.WithGroup("upsertDefaultVenueLocked").With(slog.String("wallet", wallet))
 
 	// Check if a venue with this (type, wallet) already exists with a different ID.
 	// This can happen if a user created a custom venue before the default was established.
@@ -194,9 +237,13 @@ func (s *Storage) upsertDefaultVenueLocked(ctx context.Context, wallet string) e
 		Wallet: wallet,
 	})
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		logger.Warn("lookup venue by wallet failed", slog.String("error", err.Error()))
 		return err
 	}
 	hasConflictingVenue := err == nil && existingVenue.ID != string(defaultHyperliquidVenueID)
+	if hasConflictingVenue {
+		logger = logger.With(slog.String("conflicting_venue_id", existingVenue.ID))
+	}
 
 	currentWallet := defaultHyperliquidWallet
 	row, err := s.queries.GetVenue(ctx, string(defaultHyperliquidVenueID))
@@ -208,8 +255,10 @@ func (s *Storage) upsertDefaultVenueLocked(ctx context.Context, wallet string) e
 	case errors.Is(err, sql.ErrNoRows):
 		// No existing venue, fall back to defaults.
 	default:
+		logger.Warn("load default venue failed", slog.String("error", err.Error()))
 		return err
 	}
+	logger = logger.With(slog.String("current_wallet", currentWallet))
 
 	flags := json.RawMessage(`{}`)
 	params := sqlcgen.UpsertVenueParams{
@@ -222,6 +271,7 @@ func (s *Storage) upsertDefaultVenueLocked(ctx context.Context, wallet string) e
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		logger.Warn("begin tx failed", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -238,31 +288,38 @@ func (s *Storage) upsertDefaultVenueLocked(ctx context.Context, wallet string) e
 		// If we have a conflicting venue and hit a unique constraint on (type, wallet),
 		// this is expected. The existing venue serves the same purpose.
 		if hasConflictingVenue && strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			slog.Info("default venue not created: wallet already assigned to different venue",
-				slog.String("existing_venue_id", existingVenue.ID),
-				slog.String("wallet", wallet),
-			)
+			logger.Info("default venue not created: wallet already assigned to different venue")
 			return nil
 		}
+		logger.Warn("upsert default venue failed", slog.String("error", err.Error()))
 		return err
 	}
 
 	if currentWallet != wallet {
 		if err := s.migrateDefaultVenueWalletLocked(ctx, qtx, currentWallet, wallet); err != nil {
+			logger.Warn("migrate default wallet failed", slog.String("error", err.Error()))
 			return fmt.Errorf("migrate default hyperliquid wallet: %w", err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
+		logger.Warn("commit failed", slog.String("error", err.Error()))
 		return err
 	}
 
 	rollback = false
+	logger.Debug("default venue upserted")
 	return nil
 }
 
 func (s *Storage) migrateDefaultVenueWalletLocked(ctx context.Context, qtx *sqlcgen.Queries, fromWallet, toWallet string) error {
+	logger := s.logger.WithGroup("migrateDefaultVenueWalletLocked").With(
+		slog.String("from_wallet", fromWallet),
+		slog.String("to_wallet", toWallet),
+	)
+
 	if fromWallet == toWallet {
+		logger.Debug("wallets already aligned")
 		return nil
 	}
 
@@ -272,6 +329,7 @@ func (s *Storage) migrateDefaultVenueWalletLocked(ctx context.Context, qtx *sqlc
 		FromWallet: fromWallet,
 	}
 	if err := qtx.CloneHyperliquidSubmissionsToWallet(ctx, cloneSubmissionsParams); err != nil {
+		logger.Warn("clone submissions failed", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -281,6 +339,7 @@ func (s *Storage) migrateDefaultVenueWalletLocked(ctx context.Context, qtx *sqlc
 		FromWallet: fromWallet,
 	}
 	if err := qtx.CloneHyperliquidStatusesToWallet(ctx, cloneStatusesParams); err != nil {
+		logger.Warn("clone statuses failed", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -290,6 +349,7 @@ func (s *Storage) migrateDefaultVenueWalletLocked(ctx context.Context, qtx *sqlc
 		FromWallet: fromWallet,
 	}
 	if err := qtx.CloneScaledOrdersToWallet(ctx, cloneScaledOrdersParams); err != nil {
+		logger.Warn("clone scaled orders failed", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -298,6 +358,7 @@ func (s *Storage) migrateDefaultVenueWalletLocked(ctx context.Context, qtx *sqlc
 		Wallet:  fromWallet,
 	}
 	if err := qtx.DeleteHyperliquidStatusesForWallet(ctx, deleteStatusesParams); err != nil {
+		logger.Warn("delete statuses failed", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -306,6 +367,7 @@ func (s *Storage) migrateDefaultVenueWalletLocked(ctx context.Context, qtx *sqlc
 		Wallet:  fromWallet,
 	}
 	if err := qtx.DeleteHyperliquidSubmissionsForWallet(ctx, deleteSubmissionsParams); err != nil {
+		logger.Warn("delete submissions failed", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -314,9 +376,11 @@ func (s *Storage) migrateDefaultVenueWalletLocked(ctx context.Context, qtx *sqlc
 		Wallet:  fromWallet,
 	}
 	if err := qtx.DeleteScaledOrdersForWallet(ctx, deleteScaledOrdersParams); err != nil {
+		logger.Warn("delete scaled orders failed", slog.String("error", err.Error()))
 		return err
 	}
 
+	logger.Debug("wallet data migrated")
 	return nil
 }
 
@@ -346,6 +410,8 @@ func ensureIdentifier(ident recomma.OrderIdentifier) recomma.OrderIdentifier {
 }
 
 func (s *Storage) defaultVenueAssignmentLocked(ctx context.Context) (VenueAssignment, error) {
+	logger := s.logger.WithGroup("defaultVenueAssignmentLocked")
+
 	row, err := s.queries.GetVenue(ctx, string(defaultHyperliquidVenueID))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -355,6 +421,7 @@ func (s *Storage) defaultVenueAssignmentLocked(ctx context.Context) (VenueAssign
 				IsPrimary: true,
 			}, nil
 		}
+		logger.Warn("load default venue failed", slog.String("error", err.Error()))
 		return VenueAssignment{}, err
 	}
 
@@ -370,23 +437,36 @@ func (s *Storage) defaultVenueAssignmentLocked(ctx context.Context) (VenueAssign
 	}
 
 	if wallet != defaultHyperliquidWallet {
+		logger.Debug("resolved default assignment", slog.String("venue_id", string(assignment.VenueID)), slog.String("wallet", wallet))
 		return assignment, nil
 	}
 
 	primary, err := s.findPrimaryHyperliquidVenueLocked(ctx)
 	if err != nil {
 		if errors.Is(err, errPrimaryHyperliquidVenueNotFound) {
+			logger.Debug("no primary venue flagged; using default",
+				slog.String("venue_id", string(assignment.VenueID)),
+				slog.String("wallet", wallet),
+			)
 			return assignment, nil
 		}
+		logger.Warn("lookup primary venue failed", slog.String("error", err.Error()))
 		return VenueAssignment{}, err
 	}
 
+	logger.Debug("resolved default assignment from primary",
+		slog.String("venue_id", string(primary.VenueID)),
+		slog.String("wallet", primary.Wallet),
+	)
 	return primary, nil
 }
 
 func (s *Storage) findPrimaryHyperliquidVenueLocked(ctx context.Context) (VenueAssignment, error) {
+	logger := s.logger.WithGroup("findPrimaryHyperliquidVenueLocked")
+
 	rows, err := s.queries.ListVenues(ctx)
 	if err != nil {
+		logger.Warn("list venues failed", slog.String("error", err.Error()))
 		return VenueAssignment{}, err
 	}
 
@@ -397,6 +477,7 @@ func (s *Storage) findPrimaryHyperliquidVenueLocked(ctx context.Context) (VenueA
 
 		flags, err := decodeVenueFlags(row.Flags)
 		if err != nil {
+			logger.Warn("decode venue flags failed", slog.String("venue_id", row.ID), slog.String("error", err.Error()))
 			return VenueAssignment{}, fmt.Errorf("decode venue flags: %w", err)
 		}
 
@@ -409,13 +490,16 @@ func (s *Storage) findPrimaryHyperliquidVenueLocked(ctx context.Context) (VenueA
 			wallet = defaultHyperliquidWallet
 		}
 
-		return VenueAssignment{
+		assignment := VenueAssignment{
 			VenueID:   recomma.VenueID(row.ID),
 			Wallet:    wallet,
 			IsPrimary: true,
-		}, nil
+		}
+		logger.Debug("primary venue found", slog.String("venue_id", string(assignment.VenueID)), slog.String("wallet", wallet))
+		return assignment, nil
 	}
 
+	logger.Debug("primary venue not found")
 	return VenueAssignment{}, errPrimaryHyperliquidVenueNotFound
 }
 
@@ -464,19 +548,24 @@ func isPrimaryVenueFlagged(flags map[string]interface{}) bool {
 // ListVenuesForBot returns the configured venue assignments for the given bot.
 // If no explicit assignments exist, the default Hyperliquid venue is returned.
 func (s *Storage) ListVenuesForBot(ctx context.Context, botID uint32) ([]VenueAssignment, error) {
+	logger := s.logger.WithGroup("ListVenuesForBot").With(slog.Uint64("bot_id", uint64(botID)))
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	assignments, err := s.queries.ListBotVenueAssignments(ctx, int64(botID))
 	if err != nil {
+		logger.Warn("list assignments failed", slog.String("error", err.Error()))
 		return nil, err
 	}
 
 	if len(assignments) == 0 {
 		defaultAssignment, err := s.defaultVenueAssignmentLocked(ctx)
 		if err != nil {
+			logger.Warn("default assignment lookup failed", slog.String("error", err.Error()))
 			return nil, err
 		}
+		logger.Debug("returning default assignment", slog.String("venue_id", string(defaultAssignment.VenueID)), slog.String("wallet", defaultAssignment.Wallet))
 		return []VenueAssignment{defaultAssignment}, nil
 	}
 
@@ -489,6 +578,7 @@ func (s *Storage) ListVenuesForBot(ctx context.Context, botID uint32) ([]VenueAs
 			continue
 		}
 		if err != nil {
+			logger.Warn("load venue failed", slog.String("venue_id", assignment.VenueID), slog.String("error", err.Error()))
 			return nil, err
 		}
 
@@ -507,17 +597,21 @@ func (s *Storage) ListVenuesForBot(ctx context.Context, botID uint32) ([]VenueAs
 	if len(venues) == 0 {
 		defaultAssignment, err := s.defaultVenueAssignmentLocked(ctx)
 		if err != nil {
+			logger.Warn("default assignment fallback failed", slog.String("error", err.Error()))
 			return nil, err
 		}
 		venues = append(venues, defaultAssignment)
 	}
 
+	logger.Debug("resolved venues", slog.Int("count", len(venues)))
 	return venues, nil
 }
 
 // ListSubmissionIdentifiersForOrder returns the venue-aware identifiers that
 // have recorded submissions for the given order fingerprint.
 func (s *Storage) ListSubmissionIdentifiersForOrder(ctx context.Context, oid orderid.OrderId) ([]recomma.OrderIdentifier, error) {
+	logger := s.logger.WithGroup("ListSubmissionIdentifiersForOrder").With(slog.String("order_id", oid.Hex()))
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -528,11 +622,12 @@ func (s *Storage) ListSubmissionIdentifiersForOrder(ctx context.Context, oid ord
 	const submissionsQuery = "SELECT venue_id, wallet FROM hyperliquid_submissions WHERE lower(order_id) = ?"
 	const statusesQuery = "SELECT venue_id, wallet FROM hyperliquid_status_history WHERE lower(order_id) = ?"
 
-	appendIdentifiers := func(rows *sql.Rows) error {
+	appendIdentifiers := func(rows *sql.Rows, source string) error {
 		defer rows.Close()
 		for rows.Next() {
 			var venueID, wallet string
 			if err := rows.Scan(&venueID, &wallet); err != nil {
+				logger.Warn("scan identifier failed", slog.String("source", source), slog.String("error", err.Error()))
 				return err
 			}
 			ident := ensureIdentifier(recomma.NewOrderIdentifier(recomma.VenueID(venueID), wallet, oid))
@@ -542,32 +637,46 @@ func (s *Storage) ListSubmissionIdentifiersForOrder(ctx context.Context, oid ord
 			seen[ident] = struct{}{}
 			identifiers = append(identifiers, ident)
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			logger.Warn("iterate identifiers failed", slog.String("source", source), slog.String("error", err.Error()))
+			return err
+		}
+		return nil
 	}
 
 	subRows, err := s.db.QueryContext(ctx, submissionsQuery, hex)
 	if err != nil {
+		logger.Warn("query submissions failed", slog.String("error", err.Error()))
 		return nil, err
 	}
-	if err := appendIdentifiers(subRows); err != nil {
+	if err := appendIdentifiers(subRows, "submissions"); err != nil {
 		return nil, err
 	}
 
 	statusRows, err := s.db.QueryContext(ctx, statusesQuery, hex)
 	if err != nil {
+		logger.Warn("query statuses failed", slog.String("error", err.Error()))
 		return nil, err
 	}
-	if err := appendIdentifiers(statusRows); err != nil {
+	if err := appendIdentifiers(statusRows, "statuses"); err != nil {
 		return nil, err
 	}
 
+	logger.Debug("resolved identifiers", slog.Int("count", len(identifiers)))
 	return identifiers, nil
 }
 
 // RecordThreeCommasBotEvent records the threecommas botevents that we acted upon
 func (s *Storage) RecordThreeCommasBotEvent(ctx context.Context, oid orderid.OrderId, order tc.BotEvent) (lastInsertId int64, err error) {
+	logger := s.logger.WithGroup("RecordThreeCommasBotEvent").With(
+		slog.String("order_id", oid.Hex()),
+		slog.Uint64("bot_id", uint64(oid.BotID)),
+		slog.Uint64("deal_id", uint64(oid.DealID)),
+	)
+
 	raw, err := json.Marshal(order)
 	if err != nil {
+		logger.Warn("marshal failed", slog.String("error", err.Error()))
 		return 0, err
 	}
 
@@ -585,10 +694,12 @@ func (s *Storage) RecordThreeCommasBotEvent(ctx context.Context, oid orderid.Ord
 
 	lastInsertId, err = s.queries.InsertThreeCommasBotEvent(ctx, params)
 	if err != nil {
+		logger.Warn("insert botevent failed", slog.String("error", err.Error()))
 		return 0, err
 	}
 
 	if lastInsertId != 0 {
+		logger.Debug("bot event recorded", slog.Int64("row_id", lastInsertId))
 		clone := order
 		ident := ensureIdentifier(recomma.NewOrderIdentifier("", "", oid))
 		identCopy := ident
@@ -605,8 +716,15 @@ func (s *Storage) RecordThreeCommasBotEvent(ctx context.Context, oid orderid.Ord
 
 // RecordThreeCommasBotEvent records all threecommas botevents, acted upon or not
 func (s *Storage) RecordThreeCommasBotEventLog(ctx context.Context, oid orderid.OrderId, order tc.BotEvent) (lastInsertId int64, err error) {
+	logger := s.logger.WithGroup("RecordThreeCommasBotEventLog").With(
+		slog.String("order_id", oid.Hex()),
+		slog.Uint64("bot_id", uint64(oid.BotID)),
+		slog.Uint64("deal_id", uint64(oid.DealID)),
+	)
+
 	raw, err := json.Marshal(order)
 	if err != nil {
+		logger.Warn("marshal failed", slog.String("error", err.Error()))
 		return 0, err
 	}
 
@@ -624,13 +742,21 @@ func (s *Storage) RecordThreeCommasBotEventLog(ctx context.Context, oid orderid.
 
 	lastInsertId, err = s.queries.InsertThreeCommasBotEventLog(ctx, params)
 	if err != nil {
+		logger.Warn("insert botevent log failed", slog.String("error", err.Error()))
 		return 0, err
 	}
 
+	logger.Debug("bot event log recorded", slog.Int64("row_id", lastInsertId))
 	return lastInsertId, nil
 }
 
 func (s *Storage) ListEventsForOrder(ctx context.Context, botID, dealID, botEventID uint32) ([]recomma.BotEvent, error) {
+	logger := s.logger.WithGroup("ListEventsForOrder").With(
+		slog.Uint64("bot_id", uint64(botID)),
+		slog.Uint64("deal_id", uint64(dealID)),
+		slog.Uint64("botevent_id", uint64(botEventID)),
+	)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -640,6 +766,7 @@ func (s *Storage) ListEventsForOrder(ctx context.Context, botID, dealID, botEven
 		BoteventID: int64(botEventID),
 	})
 	if err != nil {
+		logger.Warn("list botevents failed", slog.String("error", err.Error()))
 		return nil, err
 	}
 
@@ -647,6 +774,7 @@ func (s *Storage) ListEventsForOrder(ctx context.Context, botID, dealID, botEven
 	for _, row := range rows {
 		var evt tc.BotEvent
 		if err := json.Unmarshal(row.Payload, &evt); err != nil {
+			logger.Warn("decode botevent failed", slog.Int64("row_id", row.ID), slog.String("error", err.Error()))
 			return nil, fmt.Errorf("decode bot event: %w", err)
 		}
 		events = append(events, recomma.BotEvent{
@@ -655,16 +783,20 @@ func (s *Storage) ListEventsForOrder(ctx context.Context, botID, dealID, botEven
 		})
 	}
 
+	logger.Debug("listed events", slog.Int("count", len(events)))
 	return events, nil
 }
 
 // ListEventsLog returns all BotEvents recorded, irrelevant if we acted on it.
 func (s *Storage) ListEventsLog(ctx context.Context) ([]recomma.BotEventLog, error) {
+	logger := s.logger.WithGroup("ListEventsLog")
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	rows, err := s.queries.ListThreeCommasBotEventLogs(ctx)
 	if err != nil {
+		logger.Warn("list botevent logs failed", slog.String("error", err.Error()))
 		return nil, err
 	}
 
@@ -672,10 +804,12 @@ func (s *Storage) ListEventsLog(ctx context.Context) ([]recomma.BotEventLog, err
 	for _, row := range rows {
 		var evt tc.BotEvent
 		if err := json.Unmarshal(row.Payload, &evt); err != nil {
+			logger.Warn("decode botevent log failed", slog.Int64("row_id", row.ID), slog.String("error", err.Error()))
 			return nil, fmt.Errorf("decode bot event: %w", err)
 		}
 		oid, err := orderid.FromHexString(row.OrderID)
 		if err != nil {
+			logger.Warn("decode order id failed", slog.Int64("row_id", row.ID), slog.String("error", err.Error()))
 			return nil, fmt.Errorf("decode orderid: %w", err)
 		}
 		events = append(events, recomma.BotEventLog{
@@ -690,38 +824,50 @@ func (s *Storage) ListEventsLog(ctx context.Context) ([]recomma.BotEventLog, err
 		})
 	}
 
+	logger.Debug("listed botevent logs", slog.Int("count", len(events)))
 	return events, nil
 }
 
 func (s *Storage) HasOrderId(ctx context.Context, oid orderid.OrderId) (bool, error) {
+	logger := s.logger.WithGroup("HasOrderId").With(slog.String("order_id", oid.Hex()))
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	exists, err := s.queries.HasThreeCommasOrderId(ctx, oid.Hex())
 	if err != nil {
+		logger.Warn("query failed", slog.String("error", err.Error()))
 		return false, err
 	}
 
-	return exists == 1, nil
+	found := exists == 1
+	logger.Debug("checked order id", slog.Bool("exists", found))
+	return found, nil
 }
 
 func (s *Storage) LoadThreeCommasBotEvent(ctx context.Context, oid orderid.OrderId) (*tc.BotEvent, error) {
+	logger := s.logger.WithGroup("LoadThreeCommasBotEvent").With(slog.String("order_id", oid.Hex()))
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	payload, err := s.queries.FetchThreeCommasBotEvent(ctx, oid.Hex())
 	if errors.Is(err, sql.ErrNoRows) {
+		logger.Debug("bot event not found")
 		return nil, nil
 	}
 	if err != nil {
+		logger.Warn("fetch bot event failed", slog.String("error", err.Error()))
 		return nil, err
 	}
 
 	var order tc.BotEvent
 	if err := json.Unmarshal(payload, &order); err != nil {
+		logger.Warn("decode bot event failed", slog.String("error", err.Error()))
 		return nil, err
 	}
 
+	logger.Debug("bot event loaded")
 	return &order, nil
 }
 
@@ -756,6 +902,7 @@ func (s *Storage) RecordHyperliquidOrderRequest(ctx context.Context, ident recom
 	}
 
 	s.publishHyperliquidSubmissionLocked(ctx, ident, req, boteventRowId)
+	logger.Debug("order upserted")
 	return nil
 }
 
@@ -790,12 +937,17 @@ func (s *Storage) AppendHyperliquidModify(ctx context.Context, ident recomma.Ord
 	}
 
 	s.publishHyperliquidSubmissionLocked(ctx, ident, req, boteventRowId)
+	logger.Debug("order upserted")
 	return nil
 }
 
 func (s *Storage) RecordHyperliquidCancel(ctx context.Context, ident recomma.OrderIdentifier, req hyperliquid.CancelOrderRequestByCloid, boteventRowId int64) error {
+	logger := s.logger.WithGroup("RecordHyperliquidCancel").With(slog.Any("ident", ident))
+	logger.Debug("request", slog.Any("req", req))
+
 	raw, err := json.Marshal(req)
 	if err != nil {
+		logger.Warn("could not marshal req", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -816,6 +968,7 @@ func (s *Storage) RecordHyperliquidCancel(ctx context.Context, ident recomma.Ord
 	}
 
 	if err := s.queries.UpsertHyperliquidCancel(ctx, params); err != nil {
+		logger.Warn("could not upsert", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -824,8 +977,12 @@ func (s *Storage) RecordHyperliquidCancel(ctx context.Context, ident recomma.Ord
 }
 
 func (s *Storage) RecordHyperliquidStatus(ctx context.Context, ident recomma.OrderIdentifier, status hyperliquid.WsOrder) error {
+	logger := s.logger.WithGroup("RecordHyperliquidStatus").With(slog.Any("ident", ident))
+	logger.Debug("status", slog.Any("payload", status))
+
 	raw, err := json.Marshal(status)
 	if err != nil {
+		logger.Warn("marshal status failed", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -850,8 +1007,10 @@ func (s *Storage) RecordHyperliquidStatus(ctx context.Context, ident recomma.Ord
 		if err := s.queries.InsertHyperliquidStatus(ctx, params); err != nil {
 			lastErr = err
 			if isUniqueConstraintError(err) {
+				logger.Debug("unique constraint on status insert; retrying", slog.Int("attempt", attempt+1))
 				continue
 			}
+			logger.Warn("insert status failed", slog.String("error", err.Error()))
 			return err
 		}
 
@@ -859,6 +1018,7 @@ func (s *Storage) RecordHyperliquidStatus(ctx context.Context, ident recomma.Ord
 		break
 	}
 	if lastErr != nil {
+		logger.Warn("insert status exhausted retries", slog.String("error", lastErr.Error()))
 		return lastErr
 	}
 
@@ -871,10 +1031,13 @@ func (s *Storage) RecordHyperliquidStatus(ctx context.Context, ident recomma.Ord
 		Status:     &copy,
 	})
 
+	logger.Debug("status recorded")
 	return nil
 }
 
 func (s *Storage) loadLatestHyperliquidStatusLocked(ctx context.Context, ident recomma.OrderIdentifier) (*hyperliquid.WsOrder, bool, error) {
+	logger := s.logger.WithGroup("loadLatestHyperliquidStatusLocked").With(slog.Any("ident", ident))
+
 	ident = ensureIdentifier(ident)
 	oidHex := ident.Hex()
 
@@ -884,17 +1047,21 @@ func (s *Storage) loadLatestHyperliquidStatusLocked(ctx context.Context, ident r
 		OrderID: oidHex,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
+		logger.Debug("status not found")
 		return nil, false, nil
 	}
 	if err != nil {
+		logger.Warn("fetch latest status failed", slog.String("error", err.Error()))
 		return nil, false, err
 	}
 
 	var decoded hyperliquid.WsOrder
 	if err := json.Unmarshal(row.PayloadBlob, &decoded); err != nil {
+		logger.Warn("decode latest status failed", slog.String("error", err.Error()))
 		return nil, false, err
 	}
 
+	logger.Debug("latest status loaded")
 	return &decoded, true, nil
 }
 
@@ -922,17 +1089,22 @@ func (s *Storage) publishHyperliquidSubmissionLocked(ctx context.Context, ident 
 }
 
 func (s *Storage) fetchBotEventByRowIDLocked(ctx context.Context, rowID int64) (*tc.BotEvent, error) {
+	logger := s.logger.WithGroup("fetchBotEventByRowIDLocked").With(slog.Int64("row_id", rowID))
+
 	var payload []byte
 	err := s.db.QueryRowContext(ctx, "SELECT payload FROM threecommas_botevents WHERE id = ?", rowID).Scan(&payload)
 	if err != nil {
+		logger.Warn("lookup bot event failed", slog.String("error", err.Error()))
 		return nil, err
 	}
 
 	var evt tc.BotEvent
 	if err := json.Unmarshal(payload, &evt); err != nil {
+		logger.Warn("decode bot event failed", slog.String("error", err.Error()))
 		return nil, err
 	}
 
+	logger.Debug("bot event loaded by row id")
 	return &evt, nil
 }
 
@@ -947,6 +1119,8 @@ func (s *Storage) publishStreamEventLocked(evt api.StreamEvent) {
 }
 
 func (s *Storage) ListHyperliquidStatuses(ctx context.Context, ident recomma.OrderIdentifier) ([]hyperliquid.WsOrder, error) {
+	logger := s.logger.WithGroup("ListHyperliquidStatuses").With(slog.Any("ident", ident))
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -959,6 +1133,7 @@ func (s *Storage) ListHyperliquidStatuses(ctx context.Context, ident recomma.Ord
 		OrderID: oidHex,
 	})
 	if err != nil {
+		logger.Warn("list statuses failed", slog.String("error", err.Error()))
 		return nil, err
 	}
 
@@ -966,27 +1141,33 @@ func (s *Storage) ListHyperliquidStatuses(ctx context.Context, ident recomma.Ord
 	for _, row := range rows {
 		var decoded hyperliquid.WsOrder
 		if err := json.Unmarshal(row.PayloadBlob, &decoded); err != nil {
+			logger.Warn("decode status failed", slog.String("error", err.Error()))
 			return nil, err
 		}
 		out = append(out, decoded)
 	}
 
+	logger.Debug("listed statuses", slog.Int("count", len(out)))
 	return out, nil
 }
 
 // ListHyperliquidOrderIds returns the venue-aware identifiers we have submitted to Hyperliquid.
 func (s *Storage) ListHyperliquidOrderIds(ctx context.Context) ([]recomma.OrderIdentifier, error) {
+	logger := s.logger.WithGroup("ListHyperliquidOrderIds")
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	venues, err := s.queries.ListVenues(ctx)
 	if err != nil {
+		logger.Warn("list venues failed", slog.String("error", err.Error()))
 		return nil, err
 	}
 
 	if len(venues) == 0 {
 		defaultAssignment, err := s.defaultVenueAssignmentLocked(ctx)
 		if err != nil {
+			logger.Warn("default assignment lookup failed", slog.String("error", err.Error()))
 			return nil, err
 		}
 		venues = append(venues, sqlcgen.ListVenuesRow{ID: string(defaultAssignment.VenueID), Wallet: defaultAssignment.Wallet})
@@ -996,6 +1177,7 @@ func (s *Storage) ListHyperliquidOrderIds(ctx context.Context) ([]recomma.OrderI
 	for _, venue := range venues {
 		rows, err := s.queries.ListHyperliquidOrderIds(ctx, venue.ID)
 		if err != nil {
+			logger.Warn("list order ids failed", slog.String("venue_id", venue.ID), slog.String("error", err.Error()))
 			return nil, err
 		}
 
@@ -1011,16 +1193,20 @@ func (s *Storage) ListHyperliquidOrderIds(ctx context.Context) ([]recomma.OrderI
 		}
 	}
 
+	logger.Debug("listed hyperliquid order ids", slog.Int("count", len(identifiers)))
 	return identifiers, nil
 }
 
 // ListOrderIdsForDeal returns the distinct order identifiers observed for a deal.
 func (s *Storage) ListOrderIdsForDeal(ctx context.Context, dealID uint32) ([]orderid.OrderId, error) {
+	logger := s.logger.WithGroup("ListOrderIdsForDeal").With(slog.Uint64("deal_id", uint64(dealID)))
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	result, err := s.queries.GetOrderIdForDeal(ctx, int64(dealID))
 	if err != nil {
+		logger.Warn("get order ids for deal failed", slog.String("error", err.Error()))
 		return nil, err
 	}
 
@@ -1031,11 +1217,13 @@ func (s *Storage) ListOrderIdsForDeal(ctx context.Context, dealID uint32) ([]ord
 		}
 		oid, err := orderid.FromHexString(oidHex)
 		if err != nil {
+			logger.Warn("decode order id failed", slog.String("order_id", oidHex), slog.String("error", err.Error()))
 			return nil, fmt.Errorf("decode orderid %q: %w", oidHex, err)
 		}
 		list = append(list, *oid)
 	}
 
+	logger.Debug("listed order ids for deal", slog.Int("count", len(list)))
 	return list, nil
 }
 
@@ -1054,6 +1242,8 @@ type HyperliquidSafetyStatus struct {
 }
 
 func (s *Storage) ListLatestHyperliquidSafetyStatuses(ctx context.Context, dealID uint32) ([]HyperliquidSafetyStatus, error) {
+	logger := s.logger.WithGroup("ListLatestHyperliquidSafetyStatuses").With(slog.Uint64("deal_id", uint64(dealID)))
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1063,6 +1253,7 @@ func (s *Storage) ListLatestHyperliquidSafetyStatuses(ctx context.Context, dealI
 		Wallet:  nil,
 	})
 	if err != nil {
+		logger.Warn("list safety statuses failed", slog.String("error", err.Error()))
 		return nil, err
 	}
 
@@ -1070,6 +1261,7 @@ func (s *Storage) ListLatestHyperliquidSafetyStatuses(ctx context.Context, dealI
 	for _, row := range rows {
 		oid, err := orderid.FromHexString(row.OrderID)
 		if err != nil {
+			logger.Warn("decode order id failed", slog.String("order_id", row.OrderID), slog.String("error", err.Error()))
 			return nil, fmt.Errorf("decode orderid %q: %w", row.OrderID, err)
 		}
 
@@ -1088,6 +1280,7 @@ func (s *Storage) ListLatestHyperliquidSafetyStatuses(ctx context.Context, dealI
 		result = append(result, status)
 	}
 
+	logger.Debug("listed safety statuses", slog.Int("count", len(result)))
 	return result, nil
 }
 
@@ -1095,16 +1288,21 @@ func (s *Storage) ListLatestHyperliquidSafetyStatuses(ctx context.Context, dealI
 // Only returns an error when an inconsistency has occured, e.g. ordersize is set to
 // 2 but only 1 status is available
 func (s *Storage) DealSafetiesFilled(ctx context.Context, dealID uint32) (bool, error) {
+	logger := s.logger.WithGroup("DealSafetiesFilled").With(slog.Uint64("deal_id", uint64(dealID)))
+
 	statuses, err := s.ListLatestHyperliquidSafetyStatuses(ctx, dealID)
 	if err != nil {
+		logger.Warn("list safety statuses failed", slog.String("error", err.Error()))
 		return false, err
 	}
 
 	if len(statuses) == 0 {
+		logger.Warn("no statuses available")
 		return false, fmt.Errorf("no statuses available for deal %d", dealID)
 	}
 
 	if statuses[0].OrderSize != len(statuses) {
+		logger.Warn("order size mismatch", slog.Int("order_size", statuses[0].OrderSize), slog.Int("status_count", len(statuses)))
 		return false, fmt.Errorf("ordersize does not match amount of statuses: %d / %d", statuses[0].OrderSize, len(statuses))
 	}
 
@@ -1117,6 +1315,7 @@ func (s *Storage) DealSafetiesFilled(ctx context.Context, dealID uint32) (bool, 
 
 		for _, s := range sizes {
 			if sizes[0] != s {
+				logger.Warn("inconsistent order sizes", slog.Any("sizes", sizes))
 				return false, fmt.Errorf("sizes should be equal across safety orders: %v", sizes)
 			}
 		}
@@ -1125,14 +1324,18 @@ func (s *Storage) DealSafetiesFilled(ctx context.Context, dealID uint32) (bool, 
 	for _, s := range statuses {
 		if s.HLStatus != hyperliquid.OrderStatusValueFilled {
 			// no need to return an error, false is a valid exit
+			logger.Debug("status not filled", slog.String("order_id", s.OrderId.Hex()), slog.String("status", string(s.HLStatus)))
 			return false, nil
 		}
 	}
 
+	logger.Debug("deal safeties filled")
 	return true, nil
 }
 
 func (s *Storage) LoadHyperliquidSubmission(ctx context.Context, ident recomma.OrderIdentifier) (recomma.Action, bool, error) {
+	logger := s.logger.WithGroup("LoadHyperliquidSubmission").With(slog.Any("ident", ident))
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1145,9 +1348,11 @@ func (s *Storage) LoadHyperliquidSubmission(ctx context.Context, ident recomma.O
 		OrderID: oidHex,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
+		logger.Debug("submission not found")
 		return recomma.Action{}, false, nil
 	}
 	if err != nil {
+		logger.Warn("fetch submission failed", slog.String("error", err.Error()))
 		return recomma.Action{}, false, err
 	}
 
@@ -1166,6 +1371,7 @@ func (s *Storage) LoadHyperliquidSubmission(ctx context.Context, ident recomma.O
 	if len(row.CreatePayload) > 0 {
 		var decoded hyperliquid.CreateOrderRequest
 		if err := json.Unmarshal(row.CreatePayload, &decoded); err != nil {
+			logger.Warn("decode create payload failed", slog.String("error", err.Error()))
 			return recomma.Action{}, false, err
 		}
 		action.Create = decoded
@@ -1174,6 +1380,7 @@ func (s *Storage) LoadHyperliquidSubmission(ctx context.Context, ident recomma.O
 	if len(row.ModifyPayloads) > 0 {
 		var decoded []hyperliquid.ModifyOrderRequest
 		if err := json.Unmarshal(row.ModifyPayloads, &decoded); err != nil {
+			logger.Warn("decode modify payload failed", slog.String("error", err.Error()))
 			return recomma.Action{}, false, err
 		}
 		if len(decoded) > 0 {
@@ -1185,6 +1392,7 @@ func (s *Storage) LoadHyperliquidSubmission(ctx context.Context, ident recomma.O
 	if len(row.CancelPayload) > 0 {
 		var decoded hyperliquid.CancelOrderRequestByCloid
 		if err := json.Unmarshal(row.CancelPayload, &decoded); err != nil {
+			logger.Warn("decode cancel payload failed", slog.String("error", err.Error()))
 			return recomma.Action{}, false, err
 		}
 		action.Cancel = decoded
@@ -1195,26 +1403,53 @@ func (s *Storage) LoadHyperliquidSubmission(ctx context.Context, ident recomma.O
 		action.Reason = "modify history empty"
 	}
 
+	logger.Debug("loaded submission", slog.Any("action_type", action.Type))
 	return action, true, nil
 }
 
 func (s *Storage) LoadHyperliquidStatus(ctx context.Context, ident recomma.OrderIdentifier) (*hyperliquid.WsOrder, bool, error) {
+	logger := s.logger.WithGroup("LoadHyperliquidStatus").With(slog.Any("ident", ident))
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.loadLatestHyperliquidStatusLocked(ctx, ident)
+	status, found, err := s.loadLatestHyperliquidStatusLocked(ctx, ident)
+	if err != nil {
+		logger.Warn("load status failed", slog.String("error", err.Error()))
+		return nil, false, err
+	}
+	if !found {
+		logger.Debug("status not found")
+		return nil, false, nil
+	}
+	logger.Debug("status loaded")
+	return status, true, nil
 }
 
 func (s *Storage) LoadHyperliquidRequest(ctx context.Context, ident recomma.OrderIdentifier) (*hyperliquid.CreateOrderRequest, bool, error) {
+	logger := s.logger.WithGroup("LoadHyperliquidRequest").With(slog.Any("ident", ident))
+
 	action, found, err := s.LoadHyperliquidSubmission(ctx, ident)
-	if err != nil || !found {
-		return nil, found, err
+	if err != nil {
+		logger.Warn("load submission failed", slog.String("error", err.Error()))
+		return nil, false, err
 	}
+	if !found {
+		logger.Debug("submission not found")
+		return nil, false, nil
+	}
+	logger.Debug("request loaded")
 	return &action.Create, true, nil
 }
 
 func (s *Storage) RecordBot(ctx context.Context, bot tc.Bot, syncedAt time.Time) error {
+	logger := s.logger.WithGroup("RecordBot").With(
+		slog.Int("bot_id", bot.Id),
+		slog.Time("synced_at", syncedAt),
+	)
+
 	raw, err := json.Marshal(bot)
 	if err != nil {
+		logger.Warn("marshal bot failed", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -1227,30 +1462,46 @@ func (s *Storage) RecordBot(ctx context.Context, bot tc.Bot, syncedAt time.Time)
 		LastSyncedUtc: syncedAt.UTC().UnixMilli(),
 	}
 
-	return s.queries.UpsertBot(ctx, params)
+	if err := s.queries.UpsertBot(ctx, params); err != nil {
+		logger.Warn("upsert bot failed", slog.String("error", err.Error()))
+		return err
+	}
+	logger.Debug("bot recorded")
+	return nil
 }
 
 func (s *Storage) LoadBot(ctx context.Context, botID int) (*tc.Bot, time.Time, bool, error) {
+	logger := s.logger.WithGroup("LoadBot").With(slog.Int("bot_id", botID))
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	row, err := s.queries.FetchBot(ctx, int64(botID))
 	if errors.Is(err, sql.ErrNoRows) {
+		logger.Debug("bot not found")
 		return nil, time.Time{}, false, nil
 	}
 	if err != nil {
+		logger.Warn("fetch bot failed", slog.String("error", err.Error()))
 		return nil, time.Time{}, false, err
 	}
 
 	var decoded tc.Bot
 	if err := json.Unmarshal(row.Payload, &decoded); err != nil {
+		logger.Warn("decode bot failed", slog.String("error", err.Error()))
 		return nil, time.Time{}, false, err
 	}
 
+	logger.Debug("bot loaded")
 	return &decoded, time.UnixMilli(row.LastSyncedUtc).UTC(), true, nil
 }
 
 func (s *Storage) TouchBot(ctx context.Context, botID int, syncedAt time.Time) error {
+	logger := s.logger.WithGroup("TouchBot").With(
+		slog.Int("bot_id", botID),
+		slog.Time("synced_at", syncedAt),
+	)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1259,12 +1510,23 @@ func (s *Storage) TouchBot(ctx context.Context, botID int, syncedAt time.Time) e
 		BotID:         int64(botID),
 	}
 
-	return s.queries.UpdateBotSync(ctx, params)
+	if err := s.queries.UpdateBotSync(ctx, params); err != nil {
+		logger.Warn("update bot sync failed", slog.String("error", err.Error()))
+		return err
+	}
+	logger.Debug("bot sync touched")
+	return nil
 }
 
 func (s *Storage) RecordThreeCommasDeal(ctx context.Context, deal tc.Deal) error {
+	logger := s.logger.WithGroup("RecordThreeCommasDeal").With(
+		slog.Int("deal_id", deal.Id),
+		slog.Int("bot_id", deal.BotId),
+	)
+
 	raw, err := json.Marshal(deal)
 	if err != nil {
+		logger.Warn("marshal deal failed", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -1279,57 +1541,84 @@ func (s *Storage) RecordThreeCommasDeal(ctx context.Context, deal tc.Deal) error
 		Payload:      raw,
 	}
 
-	return s.queries.UpsertDeal(ctx, params)
+	if err := s.queries.UpsertDeal(ctx, params); err != nil {
+		logger.Warn("upsert deal failed", slog.String("error", err.Error()))
+		return err
+	}
+
+	logger.Debug("deal recorded")
+	return nil
 }
 
 func (s *Storage) LoadThreeCommasDeal(ctx context.Context, dealID int) (*tc.Deal, bool, error) {
+	logger := s.logger.WithGroup("LoadThreeCommasDeal").With(slog.Int("deal_id", dealID))
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	payload, err := s.queries.FetchDeal(ctx, int64(dealID))
 	if errors.Is(err, sql.ErrNoRows) {
+		logger.Debug("deal not found")
 		return nil, false, nil
 	}
 	if err != nil {
+		logger.Warn("fetch deal failed", slog.String("error", err.Error()))
 		return nil, false, err
 	}
 
 	var decoded tc.Deal
 	if err := json.Unmarshal(payload, &decoded); err != nil {
+		logger.Warn("decode deal failed", slog.String("error", err.Error()))
 		return nil, false, err
 	}
 
+	logger.Debug("deal loaded")
 	return &decoded, true, nil
 }
 
 func (s *Storage) ListDealIDs(ctx context.Context) ([]int64, error) {
+	logger := s.logger.WithGroup("ListDealIDs")
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.queries.ListDealIDs(ctx)
+	ids, err := s.queries.ListDealIDs(ctx)
+	if err != nil {
+		logger.Warn("list deal ids failed", slog.String("error", err.Error()))
+		return nil, err
+	}
+	logger.Debug("listed deal ids", slog.Int("count", len(ids)))
+	return ids, nil
 }
 
 func (s *Storage) LoadTakeProfitForDeal(ctx context.Context, dealID uint32) (*orderid.OrderId, *tc.BotEvent, error) {
+	logger := s.logger.WithGroup("LoadTakeProfitForDeal").With(slog.Uint64("deal_id", uint64(dealID)))
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	row, err := s.queries.GetTPForDeal(ctx, int64(dealID))
 	if errors.Is(err, sql.ErrNoRows) {
+		logger.Debug("take profit not found")
 		return nil, nil, sql.ErrNoRows
 	}
 	if err != nil {
+		logger.Warn("query take profit failed", slog.String("error", err.Error()))
 		return nil, nil, fmt.Errorf("load take profit for deal %d: %w", dealID, err)
 	}
 
 	oid, err := orderid.FromHexString(row.OrderID)
 	if err != nil {
+		logger.Warn("decode order id failed", slog.String("order_id", row.OrderID), slog.String("error", err.Error()))
 		return nil, nil, fmt.Errorf("decode orderid %q: %w", row.OrderID, err)
 	}
 
 	var evt tc.BotEvent
 	if err := json.Unmarshal(row.Payload, &evt); err != nil {
+		logger.Warn("decode bot event failed", slog.String("error", err.Error()))
 		return nil, nil, fmt.Errorf("decode take profit bot event: %w", err)
 	}
 
+	logger.Debug("take profit loaded")
 	return oid, &evt, nil
 }

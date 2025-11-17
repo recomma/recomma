@@ -357,7 +357,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			// logger := slog.Default()
-			store := newTestStorageWithLogger(t, nil)
+			store := newTestStorage(t)
 			want := tc.setup(t, store)
 
 			got, err := store.ListLatestHyperliquidSafetyStatuses(context.Background(), tc.dealID)

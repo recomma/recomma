@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"sort"
 	"testing"
 	"time"
@@ -24,13 +23,13 @@ import (
 func newTestStorage(t *testing.T) *Storage {
 	t.Helper()
 
-	return newTestStorageWithLogger(t, nil)
+	return newTestStorageWithOptions(t)
 }
 
-func newTestStorageWithLogger(t *testing.T, logger *slog.Logger) *Storage {
+func newTestStorageWithOptions(t *testing.T, opts ...StorageOption) *Storage {
 	t.Helper()
 
-	store, err := New(":memory:", WithLogger(logger))
+	store, err := New(":memory:", opts...)
 	if err != nil {
 		t.Fatalf("open sqlite storage: %v", err)
 	}

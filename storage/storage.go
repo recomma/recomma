@@ -46,6 +46,7 @@ type Storage struct {
 	queries *sqlcgen.Queries
 	mu      sync.Mutex
 	stream  api.StreamPublisher
+	logger  *slog.Logger
 }
 
 // VenueAssignment represents a venue configured for a bot.
@@ -66,6 +67,14 @@ func WithStreamPublisher(stream api.StreamPublisher) StorageOption {
 }
 
 func WithLogger(logger *slog.Logger) StorageOption {
+	return func(s *Storage) {
+		if logger != nil {
+			s.logger = logger
+		}
+	}
+}
+
+func WithQueryLogger(logger *slog.Logger) StorageOption {
 	return func(s *Storage) {
 		if logger != nil {
 			wrapped := loggingDB{inner: s.db, logger: logger}
@@ -99,6 +108,7 @@ func New(path string, opts ...StorageOption) (*Storage, error) {
 	s := &Storage{
 		db:      db,
 		queries: sqlcgen.New(db),
+		logger:  slog.New(slog.DiscardHandler),
 	}
 
 	for _, opt := range opts {
@@ -716,8 +726,11 @@ func (s *Storage) LoadThreeCommasBotEvent(ctx context.Context, oid orderid.Order
 }
 
 func (s *Storage) RecordHyperliquidOrderRequest(ctx context.Context, ident recomma.OrderIdentifier, req hyperliquid.CreateOrderRequest, boteventRowId int64) error {
+	logger := s.logger.WithGroup("RecordHyperliquidOrderRequest").With(slog.Any("ident", ident))
+	logger.Debug("request", slog.Any("req", req))
 	raw, err := json.Marshal(req)
 	if err != nil {
+		logger.Warn("could not marshal req", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -738,6 +751,7 @@ func (s *Storage) RecordHyperliquidOrderRequest(ctx context.Context, ident recom
 	}
 
 	if err := s.queries.UpsertHyperliquidCreate(ctx, params); err != nil {
+		logger.Warn("Could not upsert", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -746,8 +760,11 @@ func (s *Storage) RecordHyperliquidOrderRequest(ctx context.Context, ident recom
 }
 
 func (s *Storage) AppendHyperliquidModify(ctx context.Context, ident recomma.OrderIdentifier, req hyperliquid.ModifyOrderRequest, boteventRowId int64) error {
+	logger := s.logger.WithGroup("AppendHyperliquidModify").With(slog.Any("ident", ident))
+	logger.Debug("request", slog.Any("req", req))
 	raw, err := json.Marshal(req)
 	if err != nil {
+		logger.Warn("could not marshal req", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -768,6 +785,7 @@ func (s *Storage) AppendHyperliquidModify(ctx context.Context, ident recomma.Ord
 	}
 
 	if err := s.queries.AppendHyperliquidModify(ctx, params); err != nil {
+		logger.Warn("Could not upsert", slog.String("error", err.Error()))
 		return err
 	}
 

@@ -231,14 +231,12 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/prometheus/procfs v0.17.0 h1:FuLQ+05u4ZI+SS/w9+BWEM2TXiHKsUQ9TADiRH7DuK0=
 github.com/prometheus/procfs v0.17.0/go.mod h1:oPQLaDAMRbA+u8H5Pbfq+dl3VDAvHxMUOVhe0wYB2zw=
-github.com/recomma/3commas-mock v0.2.0 h1:TMeU6QAwZmLTA89szkVNukPbbP2QuGcmsQLzDwDuFi4=
-github.com/recomma/3commas-mock v0.2.0/go.mod h1:7SPm+0HCBJhk3hUGX5ubDcAg9b6fD6rEr2yrfx0jbLA=
 github.com/recomma/3commas-mock v0.2.1 h1:bWNYMtdj4uywzNj06WMUuQS+XNKTplIG0NyxyvmoZLI=
 github.com/recomma/3commas-mock v0.2.1/go.mod h1:ormTmU5geaRWX5atuUCl5OYqxXR4ndE8OXgZQfaI1yw=
 github.com/recomma/3commas-sdk-go v0.4.0 h1:kdhIwhlQJG3yj7b8TeU8Sl4cza24dKhXZm13TqM05pw=
 github.com/recomma/3commas-sdk-go v0.4.0/go.mod h1:gRdQ8KeyIuTCTqS+Ue0LftnPeMSUGo/AbHX7Msa/X9U=
-github.com/recomma/hyperliquid-mock v0.1.1 h1:90Q3rLs9dAITr1OepXAdxCWWfJmmU04bc9Yih+3c6l4=
-github.com/recomma/hyperliquid-mock v0.1.1/go.mod h1:AfLvbKJEiwObrLX1qnlsi3VjFevXT4oa0HCFdtfcM2g=
+github.com/recomma/hyperliquid-mock v0.2.0 h1:nmBdIa1qscuUNMFMC7IpdLFooPC7Z/iGXCWUVGh+uc8=
+github.com/recomma/hyperliquid-mock v0.2.0/go.mod h1:AfLvbKJEiwObrLX1qnlsi3VjFevXT4oa0HCFdtfcM2g=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
 github.com/rivo/uniseg v0.4.7 h1:WUdvkW8uEhrYfLC4ZzdpI2ztxP1I582+49Oc5Mq64VQ=

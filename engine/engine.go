@@ -444,6 +444,7 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 					latestCopy := *latestForEmission
 					identAction, scaleResult, emit, err = e.applyScaling(ctx, ident, &latestCopy, identAction, orderLogger)
 					if err != nil {
+						orderLogger.Warn("cannot apply scaling", slog.Int("bot-event-id", int(oid.BotEventID)), slog.String("venue", ident.Venue()), slog.String("error", err.Error()))
 						return fmt.Errorf("scale order %d for venue %s: %w", oid.BotEventID, ident.Venue(), err)
 					}
 					if !emit {

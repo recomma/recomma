@@ -628,7 +628,9 @@ func TestHyperLiquidEmitterRoundsHalfEven(t *testing.T) {
 	}
 
 	err := emitter.Emit(ctx, work)
-	require.NotContains(t, err.Error(), "float_to_wire causes rounding")
+	if err != nil {
+		require.NotContains(t, err.Error(), "float_to_wire causes rounding")
+	}
 }
 
 func TestRoundHalfEven(t *testing.T) {

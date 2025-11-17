@@ -760,6 +760,8 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 		hl.WithStatusRefresherLogger(a.Logger),
 		hl.WithStatusRefresherTracker(a.FillTracker),
 	)
+
+	// TODO: needs to become venue aware!
 	if err := statusRefresher.Refresh(ctx); err != nil {
 		a.Logger.Warn("status refresher failed", slog.String("error", err.Error()))
 	}

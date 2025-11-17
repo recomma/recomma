@@ -115,6 +115,68 @@ func TestStorageMultiVenueIsolation(t *testing.T) {
 	require.NotNil(t, betaEvent, "expected beta submission event")
 }
 
+func TestStorageRecordsStatusForAliasWithoutSubmission(t *testing.T) {
+	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+	logger := slog.New(handler)
+	store := newTestStorageWithOptions(t, WithLogger(logger))
+	ctx := context.Background()
+
+	oid := orderid.OrderId{BotID: 11, DealID: 22, BotEventID: 33}
+	wallet := "alias-wallet"
+
+	primaryIdent := recomma.NewOrderIdentifier("hyperliquid:testing", wallet, oid)
+	aliasIdent := recomma.NewOrderIdentifier("hyperliquid:default", wallet, oid)
+
+	emptyFlags := json.RawMessage(`{}`)
+	require.NoError(t, store.queries.UpsertVenue(ctx, sqlcgen.UpsertVenueParams{
+		ID:          primaryIdent.Venue(),
+		Type:        "hyperliquid",
+		DisplayName: "Primary Venue",
+		Wallet:      wallet,
+		Flags:       emptyFlags,
+	}))
+	createReq := hyperliquid.CreateOrderRequest{
+		Coin:          "DOGE",
+		IsBuy:         false,
+		Price:         0.165,
+		Size:          155,
+		ClientOrderID: primaryIdent.OrderId.HexAsPointer(),
+		ReduceOnly:    true,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
+		},
+	}
+
+	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, primaryIdent, createReq, 0))
+
+	now := time.Now().UnixMilli()
+	status := hyperliquid.WsOrder{
+		Order: hyperliquid.WsBasicOrder{
+			Coin:      "DOGE",
+			Side:      "A",
+			LimitPx:   "0.170",
+			Sz:        "310",
+			Oid:       now,
+			Cloid:     aliasIdent.OrderId.HexAsPointer(),
+			OrigSz:    "310",
+			Timestamp: now,
+		},
+		Status:          hyperliquid.OrderStatusValueOpen,
+		StatusTimestamp: now,
+	}
+
+	require.NoError(t, store.RecordHyperliquidStatus(ctx, aliasIdent, status))
+
+	latestStatus, foundStatus, err := store.LoadHyperliquidStatus(ctx, aliasIdent)
+	require.NoError(t, err)
+	require.True(t, foundStatus, "expected alias status to be recorded")
+	require.NotNil(t, latestStatus)
+
+	_, foundReq, err := store.LoadHyperliquidRequest(ctx, aliasIdent)
+	require.NoError(t, err)
+	require.True(t, foundReq, "alias status should imply a stored submission for that venue")
+}
+
 func TestHasPrimaryVenueAssignment(t *testing.T) {
 	store := newTestStorage(t)
 	ctx := context.Background()

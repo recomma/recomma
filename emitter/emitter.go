@@ -520,6 +520,10 @@ func (e *HyperLiquidEmitter) submitModify(
 			// HL allows ~1 action per 10s when address-limited.
 			e.applyCooldown(10 * time.Second)
 		}
+		// We received an empty response, we should query HL and ask if the Modify happened before we throw an error
+		if strings.Contains(err.Error(), "missing response.data field in successful response") {
+			return nil, fmt.Errorf("modify error was successful but returned an error: %w", err)
+		}
 		logger.Warn("could not modify order", slog.String("error", err.Error()), slog.Any("action", req))
 		return nil, fmt.Errorf("could not modify order: %w", err)
 	}

@@ -196,19 +196,20 @@ func NewE2ETestHarness(t *testing.T, ctx context.Context, opts ...E2EHarnessOpti
 
 	if harnessCfg.enableStorageLogger {
 		storage.WithLogger(app.Logger)(app.Store)
+		storage.WithQueryLogger(app.Logger)(app.Store)
 	}
 
 	return &E2ETestHarness{
-		t:               t,
-		App:             app,
-		ThreeCommasMock: tcMock,
-		HyperliquidMock: hlMock,
-		Store:           app.Store,
-		HTTPClient:      &http.Client{Timeout: 10 * time.Second},
-		HLPrivateKey:    privateKey,
-		HLWallet:        wallet,
-		VenueID:         venueID,
-		testSecrets:     testSecrets,
+		t:                t,
+		App:              app,
+		ThreeCommasMock:  tcMock,
+		HyperliquidMock:  hlMock,
+		Store:            app.Store,
+		HTTPClient:       &http.Client{Timeout: 10 * time.Second},
+		HLPrivateKey:     privateKey,
+		HLWallet:         wallet,
+		VenueID:          venueID,
+		testSecrets:      testSecrets,
 		AdditionalVenues: additional,
 	}
 }
@@ -383,6 +384,7 @@ func (h *E2ETestHarness) TriggerDealProduction(ctx context.Context) {
 
 	h.App.ProduceActiveDealsOnce(ctx)
 }
+
 // WithStorageLogger enables verbose SQL logging for the harness storage instance.
 func WithStorageLogger() E2EHarnessOption {
 	return func(cfg *harnessConfig) {

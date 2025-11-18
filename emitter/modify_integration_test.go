@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	mockserver "github.com/recomma/hyperliquid-mock/server"
+	"github.com/recomma/recomma/hl"
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
@@ -19,12 +20,14 @@ func TestHyperLiquidEmitterModifyOrder(t *testing.T) {
 
 	ctx := context.Background()
 	exchange, ts := newMockExchangeWithServer(t, nil)
+	info := hl.NewInfo(ctx, hl.ClientConfig{BaseURL: ts.URL(), Wallet: "0xabc"})
+	cache := hl.NewOrderIdCache(info)
 	store := newModifyTestStore(t)
 
 	assignment, err := store.ResolveDefaultAlias(ctx)
 	require.NoError(t, err)
 
-	emitter := NewHyperLiquidEmitter(exchange, assignment.VenueID, nil, store)
+	emitter := NewHyperLiquidEmitter(exchange, assignment.VenueID, nil, store, cache)
 
 	// Create initial order
 	oid := orderid.OrderId{BotID: 1, DealID: 2, BotEventID: 3}
@@ -107,12 +110,14 @@ func TestHyperLiquidEmitterModifyThenFill(t *testing.T) {
 
 	ctx := context.Background()
 	exchange, ts := newMockExchangeWithServer(t, nil)
+	info := hl.NewInfo(ctx, hl.ClientConfig{BaseURL: ts.URL(), Wallet: "0xabc"})
+	cache := hl.NewOrderIdCache(info)
 	store := newModifyTestStore(t)
 
 	assignment, err := store.ResolveDefaultAlias(ctx)
 	require.NoError(t, err)
 
-	emitter := NewHyperLiquidEmitter(exchange, assignment.VenueID, nil, store)
+	emitter := NewHyperLiquidEmitter(exchange, assignment.VenueID, nil, store, cache)
 
 	oid := orderid.OrderId{BotID: 10, DealID: 20, BotEventID: 30}
 	ident := defaultIdentifier(t, store, ctx, oid)
@@ -177,12 +182,14 @@ func TestHyperLiquidEmitterModifyThenCancel(t *testing.T) {
 
 	ctx := context.Background()
 	exchange, ts := newMockExchangeWithServer(t, nil)
+	info := hl.NewInfo(ctx, hl.ClientConfig{BaseURL: ts.URL(), Wallet: "0xabc"})
+	cache := hl.NewOrderIdCache(info)
 	store := newModifyTestStore(t)
 
 	assignment, err := store.ResolveDefaultAlias(ctx)
 	require.NoError(t, err)
 
-	emitter := NewHyperLiquidEmitter(exchange, assignment.VenueID, nil, store)
+	emitter := NewHyperLiquidEmitter(exchange, assignment.VenueID, nil, store, cache)
 
 	oid := orderid.OrderId{BotID: 100, DealID: 200, BotEventID: 300}
 	ident := defaultIdentifier(t, store, ctx, oid)
@@ -259,12 +266,14 @@ func TestHyperLiquidEmitterMultipleModifications(t *testing.T) {
 
 	ctx := context.Background()
 	exchange, ts := newMockExchangeWithServer(t, nil)
+	info := hl.NewInfo(ctx, hl.ClientConfig{BaseURL: ts.URL(), Wallet: "0xabc"})
+	cache := hl.NewOrderIdCache(info)
 	store := newModifyTestStore(t)
 
 	assignment, err := store.ResolveDefaultAlias(ctx)
 	require.NoError(t, err)
 
-	emitter := NewHyperLiquidEmitter(exchange, assignment.VenueID, nil, store)
+	emitter := NewHyperLiquidEmitter(exchange, assignment.VenueID, nil, store, cache)
 
 	oid := orderid.OrderId{BotID: 500, DealID: 600, BotEventID: 700}
 	ident := defaultIdentifier(t, store, ctx, oid)
@@ -360,12 +369,14 @@ func TestHyperLiquidEmitterModifyReduceOnlyOrder(t *testing.T) {
 
 	ctx := context.Background()
 	exchange, ts := newMockExchangeWithServer(t, nil)
+	info := hl.NewInfo(ctx, hl.ClientConfig{BaseURL: ts.URL(), Wallet: "0xabc"})
+	cache := hl.NewOrderIdCache(info)
 	store := newModifyTestStore(t)
 
 	assignment, err := store.ResolveDefaultAlias(ctx)
 	require.NoError(t, err)
 
-	emitter := NewHyperLiquidEmitter(exchange, assignment.VenueID, nil, store)
+	emitter := NewHyperLiquidEmitter(exchange, assignment.VenueID, nil, store, cache)
 
 	// Create a reduce-only order (e.g., take profit)
 	oid := orderid.OrderId{BotID: 1000, DealID: 2000, BotEventID: 3000}

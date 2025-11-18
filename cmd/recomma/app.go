@@ -684,7 +684,7 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 			gateRegistry[gateKey] = gate
 		}
 
-		submitter := emitter.NewHyperLiquidEmitter(exchange, venueIdent, wsClient, a.Store,
+		submitter := emitter.NewHyperLiquidEmitter(exchange, venueIdent, wsClient, a.Store, hl.NewOrderIdCache(constraintsInfo),
 			emitter.WithHyperLiquidRateGate(gate),
 			emitter.WithHyperLiquidEmitterConfig(emitter.HyperLiquidEmitterConfig{
 				InitialIOCOffsetBps: a.Config.HyperliquidIOCInitialOffsetBps,
@@ -723,8 +723,7 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 		return fmt.Errorf("sync primary venue assignments: %w", err)
 	}
 
-	constraints := hl.NewOrderIdCache(constraintsInfo)
-	a.OrderScaler = orderscaler.New(a.Store, constraints, a.Logger, orderscaler.WithMaxMultiplier(a.Config.OrderScalerMaxMultiplier))
+	a.OrderScaler = orderscaler.New(a.Store, hl.NewOrderIdCache(constraintsInfo), a.Logger, orderscaler.WithMaxMultiplier(a.Config.OrderScalerMaxMultiplier))
 
 	statusRefresher := hl.NewStatusRefresher(a.StatusClients, a.Store,
 		hl.WithStatusRefresherLogger(a.Logger),

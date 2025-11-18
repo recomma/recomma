@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/recomma/recomma/hl"
 	"github.com/recomma/recomma/hl/ws"
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
@@ -115,6 +116,11 @@ type iocRetryOrderId struct {
 	lastError string
 }
 
+// Constraints resolves Hyperliquid rounding requirements.
+type Constraints interface {
+	Resolve(ctx context.Context, coin string) (hl.CoinConstraints, error)
+}
+
 type HyperLiquidEmitter struct {
 	exchange     hyperliquidExchange
 	store        *storage.Storage
@@ -124,9 +130,10 @@ type HyperLiquidEmitter struct {
 	wsMu         sync.RWMutex
 	wsClients    map[recomma.VenueID]*ws.Client
 	primaryVenue recomma.VenueID
+	constraints  Constraints
 }
 
-func NewHyperLiquidEmitter(exchange hyperliquidExchange, primaryVenue recomma.VenueID, wsClient *ws.Client, store *storage.Storage, opts ...HyperLiquidEmitterOption) *HyperLiquidEmitter {
+func NewHyperLiquidEmitter(exchange hyperliquidExchange, primaryVenue recomma.VenueID, wsClient *ws.Client, store *storage.Storage, constraints Constraints, opts ...HyperLiquidEmitterOption) *HyperLiquidEmitter {
 	emitter := &HyperLiquidEmitter{
 		exchange:     exchange,
 		store:        store,
@@ -134,6 +141,7 @@ func NewHyperLiquidEmitter(exchange hyperliquidExchange, primaryVenue recomma.Ve
 		logger:       slog.Default().WithGroup("hl-emitter"),
 		cfg:          defaultHyperLiquidEmitterConfig,
 		primaryVenue: primaryVenue,
+		constraints:  constraints,
 	}
 
 	if wsClient != nil && primaryVenue != "" {
@@ -333,6 +341,11 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 	switch w.Action.Type {
 	case recomma.ActionCreate:
 		order := e.setMarketPrice(ctx, wsClient, w.Action.Create)
+		constrainedPrice, err := e.constrainPrice(ctx, order.Coin, order.Price)
+		if err != nil {
+			logger.Warn("could not constrain price", slog.String("error", err.Error()))
+		}
+		order.Price = constrainedPrice
 		w.Action.Create = order
 
 		if wsClient != nil {
@@ -390,6 +403,11 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 
 			order := e.setMarketPrice(ctx, wsClient, w.Action.Create)
 			order = e.applyIOCOffset(order, attempt)
+			constrainedPrice, err := e.constrainPrice(ctx, order.Coin, order.Price)
+			if err != nil {
+				logger.Warn("could not constrain price", slog.String("error", err.Error()))
+			}
+			order.Price = constrainedPrice
 			w.Action.Create = order
 
 			status, err := e.exchange.Order(ctx, w.Action.Create, nil)
@@ -470,6 +488,11 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 
 	case recomma.ActionModify:
 		order := e.setMarketPrice(ctx, wsClient, w.Action.Modify.Order)
+		constrainedPrice, err := e.constrainPrice(ctx, order.Coin, order.Price)
+		if err != nil {
+			logger.Warn("could not constrain price", slog.String("error", err.Error()))
+		}
+		order.Price = constrainedPrice
 		w.Action.Modify.Order = order
 		status, err := e.submitModify(ctx, logger, w, w.Action.Modify)
 		if err != nil {
@@ -504,6 +527,15 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 	}
 
 	return nil
+}
+
+func (e *HyperLiquidEmitter) constrainPrice(ctx context.Context, coin string, price float64) (float64, error) {
+	constraints, err := e.constraints.Resolve(ctx, coin)
+	if err != nil {
+		return 0, fmt.Errorf("resolve constraints: %w", err)
+	}
+
+	return constraints.RoundPrice(price), nil
 }
 
 func (e *HyperLiquidEmitter) submitModify(

@@ -21,11 +21,14 @@ func TestHyperLiquidEmitterModifyOrder(t *testing.T) {
 	exchange, ts := newMockExchangeWithServer(t, nil)
 	store := newModifyTestStore(t)
 
-	emitter := NewHyperLiquidEmitter(exchange, "hyperliquid:default", nil, store)
+	assignment, err := store.ResolveDefaultAlias(ctx)
+	require.NoError(t, err)
+
+	emitter := NewHyperLiquidEmitter(exchange, assignment.VenueID, nil, store)
 
 	// Create initial order
 	oid := orderid.OrderId{BotID: 1, DealID: 2, BotEventID: 3}
-	ident := storage.DefaultHyperliquidIdentifier(oid)
+	ident := defaultIdentifier(t, store, ctx, oid)
 	cloid := oid.Hex()
 	originalOrder := hyperliquid.CreateOrderRequest{
 		Coin:          "BTC",
@@ -106,10 +109,13 @@ func TestHyperLiquidEmitterModifyThenFill(t *testing.T) {
 	exchange, ts := newMockExchangeWithServer(t, nil)
 	store := newModifyTestStore(t)
 
-	emitter := NewHyperLiquidEmitter(exchange, "hyperliquid:default", nil, store)
+	assignment, err := store.ResolveDefaultAlias(ctx)
+	require.NoError(t, err)
+
+	emitter := NewHyperLiquidEmitter(exchange, assignment.VenueID, nil, store)
 
 	oid := orderid.OrderId{BotID: 10, DealID: 20, BotEventID: 30}
-	ident := storage.DefaultHyperliquidIdentifier(oid)
+	ident := defaultIdentifier(t, store, ctx, oid)
 	cloid := oid.Hex()
 	order := hyperliquid.CreateOrderRequest{
 		Coin:          "ETH",
@@ -173,10 +179,13 @@ func TestHyperLiquidEmitterModifyThenCancel(t *testing.T) {
 	exchange, ts := newMockExchangeWithServer(t, nil)
 	store := newModifyTestStore(t)
 
-	emitter := NewHyperLiquidEmitter(exchange, "hyperliquid:default", nil, store)
+	assignment, err := store.ResolveDefaultAlias(ctx)
+	require.NoError(t, err)
+
+	emitter := NewHyperLiquidEmitter(exchange, assignment.VenueID, nil, store)
 
 	oid := orderid.OrderId{BotID: 100, DealID: 200, BotEventID: 300}
-	ident := storage.DefaultHyperliquidIdentifier(oid)
+	ident := defaultIdentifier(t, store, ctx, oid)
 	cloid := oid.Hex()
 	order := hyperliquid.CreateOrderRequest{
 		Coin:          "SOL",
@@ -252,10 +261,13 @@ func TestHyperLiquidEmitterMultipleModifications(t *testing.T) {
 	exchange, ts := newMockExchangeWithServer(t, nil)
 	store := newModifyTestStore(t)
 
-	emitter := NewHyperLiquidEmitter(exchange, "hyperliquid:default", nil, store)
+	assignment, err := store.ResolveDefaultAlias(ctx)
+	require.NoError(t, err)
+
+	emitter := NewHyperLiquidEmitter(exchange, assignment.VenueID, nil, store)
 
 	oid := orderid.OrderId{BotID: 500, DealID: 600, BotEventID: 700}
-	ident := storage.DefaultHyperliquidIdentifier(oid)
+	ident := defaultIdentifier(t, store, ctx, oid)
 	cloid := oid.Hex()
 	order := hyperliquid.CreateOrderRequest{
 		Coin:          "ARB",
@@ -350,11 +362,14 @@ func TestHyperLiquidEmitterModifyReduceOnlyOrder(t *testing.T) {
 	exchange, ts := newMockExchangeWithServer(t, nil)
 	store := newModifyTestStore(t)
 
-	emitter := NewHyperLiquidEmitter(exchange, "hyperliquid:default", nil, store)
+	assignment, err := store.ResolveDefaultAlias(ctx)
+	require.NoError(t, err)
+
+	emitter := NewHyperLiquidEmitter(exchange, assignment.VenueID, nil, store)
 
 	// Create a reduce-only order (e.g., take profit)
 	oid := orderid.OrderId{BotID: 1000, DealID: 2000, BotEventID: 3000}
-	ident := storage.DefaultHyperliquidIdentifier(oid)
+	ident := defaultIdentifier(t, store, ctx, oid)
 	cloid := oid.Hex()
 	order := hyperliquid.CreateOrderRequest{
 		Coin:          "BTC",

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
+	api "github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/orderid"
 	hyperliquid "github.com/sonirico/go-hyperliquid"
 	"github.com/stretchr/testify/require"
@@ -65,7 +66,9 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 			ClientOrderID: oid.HexAsPointer(),
 		}
 
-		if err := store.RecordHyperliquidOrderRequest(context.Background(), DefaultHyperliquidIdentifier(oid), req, inserted); err != nil {
+		ctx := context.Background()
+		ident := defaultIdentifier(t, store, ctx, oid)
+		if err := store.RecordHyperliquidOrderRequest(ctx, ident, req, inserted); err != nil {
 			t.Fatalf("RecordHyperliquidOrderRequest: %v", err)
 		}
 
@@ -74,7 +77,9 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 
 	recordStatus := func(t *testing.T, store *Storage, oid orderid.OrderId, status hyperliquid.WsOrder) {
 		t.Helper()
-		if err := store.RecordHyperliquidStatus(context.Background(), DefaultHyperliquidIdentifier(oid), status); err != nil {
+		ctx := context.Background()
+		ident := defaultIdentifier(t, store, ctx, oid)
+		if err := store.RecordHyperliquidStatus(ctx, ident, status); err != nil {
 			t.Fatalf("RecordHyperliquidStatus: %v", err)
 		}
 	}
@@ -92,6 +97,11 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 			setup: func(t *testing.T, store *Storage) []HyperliquidSafetyStatus {
 				base := time.Date(2024, time.March, 10, 15, 0, 0, 0, time.UTC)
 				botID := uint32(42)
+
+				createPrimaryVenue(t, store)
+
+				// mark it as primary so the alias resolver prefers it
+				require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
 
 				oid1 := orderid.OrderId{
 					BotID:      botID,
@@ -190,6 +200,11 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 				base := time.Date(2024, time.March, 10, 16, 0, 0, 0, time.UTC)
 				botID := uint32(43)
 
+				createPrimaryVenue(t, store)
+
+				// mark it as primary so the alias resolver prefers it
+				require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
+
 				oid1 := orderid.OrderId{
 					BotID:      botID,
 					DealID:     9002,
@@ -282,12 +297,17 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 			setup: func(t *testing.T, store *Storage) []HyperliquidSafetyStatus {
 				base := time.Date(2024, time.March, 10, 17, 0, 0, 0, time.UTC)
 
+				createPrimaryVenue(t, store)
+
 				otherDeal := uint32(9100)
 				otherOid := orderid.OrderId{
 					BotID:      50,
 					DealID:     otherDeal,
 					BotEventID: 1,
 				}
+
+				require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), otherOid.BotID, "hyperliquid:test", true))
+
 				insertSafetyEvent(t, store, otherOid, base, order{
 					position:  1,
 					ordersize: 1,
@@ -313,6 +333,7 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 					DealID:     9003,
 					BotEventID: 2,
 				}
+				require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), oidTakeProfit.BotID, "hyperliquid:test", true))
 				created := base
 				takeProfit := tc.BotEvent{
 					CreatedAt:     created,
@@ -393,4 +414,18 @@ func TestStorageListLatestHyperliquidSafetyStatuses(t *testing.T) {
 
 		})
 	}
+}
+
+func createPrimaryVenue(t *testing.T, store *Storage) {
+	t.Helper()
+	// we need to create an actual test venue
+	ctx := context.Background()
+	flags := map[string]interface{}{"is_primary": true}
+	_, err := store.UpsertVenue(ctx, "hyperliquid:test", api.VenueUpsertRequest{
+		Type:        "hyperliquid",
+		DisplayName: "Test Venue",
+		Wallet:      "0xfeed",
+		Flags:       &flags,
+	})
+	require.NoError(t, err)
 }

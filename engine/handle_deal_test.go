@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
 	"testing"
 	"time"
@@ -52,7 +53,7 @@ func newHarness(t *testing.T, botID, dealID uint32, opts ...EngineOption) *harne
 	t.Helper()
 
 	// storage.WithLogger(slog.Default())
-	store, err := storage.New(":memory:")
+	store, err := storage.New(":memory:", storage.WithLogger(slog.Default()))
 	require.NoError(t, err)
 
 	em := &capturingEmitter{}
@@ -153,7 +154,8 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 				}
 
 				createReq := adapter.ToCreateOrderRequest(h.deal.ToCurrency, be, activeOid)
-				require.NoError(t, h.store.RecordHyperliquidOrderRequest(h.ctx, storage.DefaultHyperliquidIdentifier(activeOid), createReq, inserted))
+				ident := defaultIdentifier(t, h.store, h.ctx, activeOid)
+				require.NoError(t, h.store.RecordHyperliquidOrderRequest(h.ctx, ident, createReq, inserted))
 			},
 			wantActions: []recomma.ActionType{recomma.ActionCancel},
 			wantStatuses: []tc.MarketOrderStatusString{
@@ -175,7 +177,8 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 				}
 
 				createReq := adapter.ToCreateOrderRequest(h.deal.ToCurrency, be, activeOid)
-				require.NoError(t, h.store.RecordHyperliquidOrderRequest(h.ctx, storage.DefaultHyperliquidIdentifier(activeOid), createReq, inserted))
+				ident := defaultIdentifier(t, h.store, h.ctx, activeOid)
+				require.NoError(t, h.store.RecordHyperliquidOrderRequest(h.ctx, ident, createReq, inserted))
 			},
 			wantActions: []recomma.ActionType{recomma.ActionModify},
 			wantStatuses: []tc.MarketOrderStatusString{
@@ -358,6 +361,20 @@ func TestProcessDeal_TakeProfitSizedFromTracker(t *testing.T) {
 	h := newHarness(t, botID, dealID)
 	defer h.store.Close()
 
+	// we need to create an actual test venue
+	ctx := context.Background()
+	flags := map[string]interface{}{"is_primary": true}
+	_, err := h.store.UpsertVenue(ctx, "hyperliquid:test", api.VenueUpsertRequest{
+		Type:        "hyperliquid",
+		DisplayName: "Test Venue",
+		Wallet:      "0xfeed",
+		Flags:       &flags,
+	})
+	require.NoError(t, err)
+
+	// mark it as primary so the alias resolver prefers it
+	require.NoError(t, h.store.UpsertBotVenueAssignment(ctx, h.key.BotID, "hyperliquid:test", true))
+
 	require.NoError(t, h.store.RecordThreeCommasDeal(h.ctx, tc.Deal{
 		Id:         int(dealID),
 		BotId:      int(botID),
@@ -373,9 +390,10 @@ func TestProcessDeal_TakeProfitSizedFromTracker(t *testing.T) {
 		testutil.WithSize(5),
 		testutil.WithOrderType(tc.MarketOrderDealOrderTypeBase),
 	)
-	_, err := h.store.RecordThreeCommasBotEvent(h.ctx, baseOid, baseEvent)
+	_, err = h.store.RecordThreeCommasBotEvent(h.ctx, baseOid, baseEvent)
 	require.NoError(t, err)
-	require.NoError(t, h.store.RecordHyperliquidStatus(h.ctx, storage.DefaultHyperliquidIdentifier(baseOid), makeWsStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 5, 0, 10, base.Add(time.Second))))
+	ident := defaultIdentifier(t, h.store, h.ctx, baseOid)
+	require.NoError(t, h.store.RecordHyperliquidStatus(h.ctx, ident, makeWsStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 5, 0, 10, base.Add(time.Second))))
 
 	tracker := filltracker.New(h.store, nil)
 	require.NoError(t, tracker.Rebuild(h.ctx))
@@ -495,4 +513,11 @@ func makeWsStatus(oid orderid.OrderId, coin, side string, status hyperliquid.Ord
 
 func formatFloat(v float64) string {
 	return strconv.FormatFloat(v, 'f', -1, 64)
+}
+
+func defaultIdentifier(t *testing.T, store *storage.Storage, ctx context.Context, oid orderid.OrderId) recomma.OrderIdentifier {
+	t.Helper()
+	assignment, err := store.ResolveDefaultAlias(ctx)
+	require.NoError(t, err)
+	return recomma.NewOrderIdentifier(assignment.VenueID, assignment.Wallet, oid)
 }

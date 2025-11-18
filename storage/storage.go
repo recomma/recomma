@@ -391,14 +391,6 @@ func isUniqueConstraintError(err error) bool {
 	return strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
-// DefaultHyperliquidIdentifier returns the default venue identifier used when
-// no explicit venue configuration has been supplied. Callers that operate in a
-// single-venue environment can use this helper to preserve the previous
-// behaviour without hard-coding the venue metadata.
-func DefaultHyperliquidIdentifier(oid orderid.OrderId) recomma.OrderIdentifier {
-	return recomma.NewOrderIdentifier(defaultHyperliquidVenueID, defaultHyperliquidWallet, oid)
-}
-
 func ensureIdentifier(ident recomma.OrderIdentifier) recomma.OrderIdentifier {
 	if ident.VenueID == "" {
 		ident.VenueID = defaultHyperliquidVenueID
@@ -459,6 +451,29 @@ func (s *Storage) defaultVenueAssignmentLocked(ctx context.Context) (VenueAssign
 		slog.String("wallet", primary.Wallet),
 	)
 	return primary, nil
+}
+
+// ResolveDefaultAlias returns the venue assignment that should act as the
+// default Hyperliquid alias. The assignment may point to the sentinel
+// `hyperliquid:default` venue or any user-configured venue flagged as the
+// primary Hyperliquid destination.
+func (s *Storage) ResolveDefaultAlias(ctx context.Context) (VenueAssignment, error) {
+	logger := s.logger.WithGroup("ResolveDefaultAlias")
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	assignment, err := s.defaultVenueAssignmentLocked(ctx)
+	if err != nil {
+		logger.Warn("resolve default alias failed", slog.String("error", err.Error()))
+		return VenueAssignment{}, err
+	}
+
+	logger.Debug("default alias resolved",
+		slog.String("venue_id", string(assignment.VenueID)),
+		slog.String("wallet", assignment.Wallet),
+	)
+	return assignment, nil
 }
 
 func (s *Storage) findPrimaryHyperliquidVenueLocked(ctx context.Context) (VenueAssignment, error) {
@@ -977,6 +992,10 @@ func (s *Storage) RecordHyperliquidCancel(ctx context.Context, ident recomma.Ord
 }
 
 func (s *Storage) RecordHyperliquidStatus(ctx context.Context, ident recomma.OrderIdentifier, status hyperliquid.WsOrder) error {
+	if ident.VenueID == defaultHyperliquidVenueID {
+		// we should not persist data for the default venue, it's an alias
+		return nil
+	}
 	logger := s.logger.WithGroup("RecordHyperliquidStatus").With(slog.Any("ident", ident))
 	logger.Debug("status", slog.Any("payload", status))
 
@@ -1241,14 +1260,21 @@ type HyperliquidSafetyStatus struct {
 	HLEventTime      time.Time
 }
 
+// TODO: make multi-venue aware
 func (s *Storage) ListLatestHyperliquidSafetyStatuses(ctx context.Context, dealID uint32) ([]HyperliquidSafetyStatus, error) {
 	logger := s.logger.WithGroup("ListLatestHyperliquidSafetyStatuses").With(slog.Uint64("deal_id", uint64(dealID)))
+
+	assignment, err := s.ResolveDefaultAlias(ctx)
+	if err != nil {
+		logger.Warn("could not resolve default alias", slog.String("error", err.Error()))
+		return nil, err
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	rows, err := s.queries.ListLatestHyperliquidSafetyStatuses(ctx, sqlcgen.ListLatestHyperliquidSafetyStatusesParams{
-		VenueID: string(defaultHyperliquidVenueID),
+		VenueID: string(assignment.VenueID),
 		DealID:  int64(dealID),
 		Wallet:  nil,
 	})

@@ -9,7 +9,6 @@ import (
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	api "github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/orderid"
-	"github.com/recomma/recomma/recomma"
 	"github.com/stretchr/testify/require"
 )
 
@@ -221,7 +220,7 @@ func TestRecordScaledOrderPublishesEvent(t *testing.T) {
 	require.NoError(t, err)
 
 	oid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
-	ident := recomma.NewOrderIdentifier("hyperliquid:default", "default", oid)
+	ident := defaultIdentifier(t, store, ctx, oid)
 	params := RecordScaledOrderParams{
 		Identifier:   ident,
 		DealID:       dealID,
@@ -283,7 +282,7 @@ func TestRecordScaledOrderUsesAppliedMultiplier(t *testing.T) {
 
 	applied := 1.5
 	oid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 7}
-	ident := recomma.NewOrderIdentifier("hyperliquid:default", "default", oid)
+	ident := defaultIdentifier(t, store, ctx, oid)
 	params := RecordScaledOrderParams{
 		Identifier:        ident,
 		DealID:            dealID,
@@ -339,7 +338,7 @@ func TestScaledOrderAuditHistory(t *testing.T) {
 	require.NoError(t, err)
 
 	oid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 101}
-	ident := recomma.NewOrderIdentifier("hyperliquid:default", "default", oid)
+	ident := defaultIdentifier(t, store, ctx, oid)
 	later := base.Add(2 * time.Second)
 	earlier := base.Add(1 * time.Second)
 	submittedID := "hl-order-1"
@@ -375,7 +374,7 @@ func TestScaledOrderAuditHistory(t *testing.T) {
 	require.NoError(t, err)
 
 	otherOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 202}
-	otherIdent := recomma.NewOrderIdentifier("hyperliquid:default", "default", otherOid)
+	otherIdent := defaultIdentifier(t, store, ctx, otherOid)
 	audit3, err := store.InsertScaledOrderAudit(ctx, ScaledOrderAuditParams{
 		Identifier:          otherIdent,
 		DealID:              dealID,

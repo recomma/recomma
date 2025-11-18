@@ -381,7 +381,17 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 		var emissions []emissionPlan
 
 		if shouldEmit {
-			targets := resolveOrderTargets(oid, assignments, storedIdents, action.Type)
+			var defaultAssignment *storage.VenueAssignment
+			if len(assignments) == 0 && len(storedIdents) == 0 {
+				assignment, err := e.store.ResolveDefaultAlias(ctx)
+				if err != nil {
+					orderLogger.Warn("resolve default alias failed", slog.String("error", err.Error()))
+				} else {
+					defaultAssignment = &assignment
+				}
+			}
+
+			targets := resolveOrderTargets(oid, assignments, storedIdents, action.Type, defaultAssignment)
 			if len(targets) > 0 {
 				var latestCopy *recomma.BotEvent
 				if latestEvent != nil {
@@ -737,6 +747,7 @@ func resolveOrderTargets(
 	assignments []storage.VenueAssignment,
 	stored []recomma.OrderIdentifier,
 	actionType recomma.ActionType,
+	defaultAssignment *storage.VenueAssignment,
 ) []recomma.OrderIdentifier {
 	targets := make(map[recomma.OrderIdentifier]bool)
 	for _, ident := range stored {
@@ -750,8 +761,8 @@ func resolveOrderTargets(
 		}
 	}
 
-	if len(targets) == 0 {
-		ident := storage.DefaultHyperliquidIdentifier(oid)
+	if len(targets) == 0 && defaultAssignment != nil {
+		ident := recomma.NewOrderIdentifier(defaultAssignment.VenueID, defaultAssignment.Wallet, oid)
 		targets[ident] = len(stored) > 0
 	}
 

@@ -10,6 +10,7 @@ import (
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/adapter"
+	"github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
@@ -33,12 +34,17 @@ func TestServiceRebuildAggregatesExecutedOrders(t *testing.T) {
 		coin   = "ETH"
 	)
 
+	createPrimaryVenue(t, store)
+
+	// mark it as primary so the alias resolver prefers it
+	require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
+
 	recordDeal(t, store, dealID, botID, coin)
 
 	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
-	baseIdent := defaultIdentifier(t, store, botID, baseOid)
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
 	takeProfitOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
-	takeProfitIdent := defaultIdentifier(t, store, botID, takeProfitOid)
+	takeProfitIdent := defaultIdentifier(t, store, ctx, botID, takeProfitOid)
 
 	baseEvent := tc.BotEvent{
 		CreatedAt:   time.Now().Add(-5 * time.Minute),
@@ -100,12 +106,17 @@ func TestServiceUpdateStatusAdjustsPosition(t *testing.T) {
 		coin   = "DOGE"
 	)
 
+	createPrimaryVenue(t, store)
+
+	// mark it as primary so the alias resolver prefers it
+	require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
+
 	recordDeal(t, store, dealID, botID, coin)
 
 	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
 	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
-	baseIdent := defaultIdentifier(t, store, botID, baseOid)
-	tpIdent := defaultIdentifier(t, store, botID, tpOid)
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
+	tpIdent := defaultIdentifier(t, store, ctx, botID, tpOid)
 	now := time.Now()
 
 	require.NoError(t, recordEvent(store, baseOid, tc.BotEvent{
@@ -167,10 +178,15 @@ func TestReconcileTakeProfits(t *testing.T) {
 		coin   = "ARB"
 	)
 
+	createPrimaryVenue(t, store)
+
+	// mark it as primary so the alias resolver prefers it
+	require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
+
 	recordDeal(t, store, dealID, botID, coin)
 
 	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
-	tpIdent := defaultIdentifier(t, store, botID, tpOid)
+	tpIdent := defaultIdentifier(t, store, ctx, botID, tpOid)
 	now := time.Now()
 
 	require.NoError(t, recordEvent(store, tpOid, tc.BotEvent{
@@ -218,10 +234,15 @@ func TestApplyScaledOrderUpdatesSnapshot(t *testing.T) {
 		coin   = "SOL"
 	)
 
+	createPrimaryVenue(t, store)
+
+	// mark it as primary so the alias resolver prefers it
+	require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
+
 	recordDeal(t, store, dealID, botID, coin)
 
 	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
-	baseIdent := defaultIdentifier(t, store, botID, baseOid)
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
 	now := time.Now().UTC()
 
 	baseEvent := tc.BotEvent{
@@ -272,14 +293,26 @@ func TestReconcileTakeProfitsCancelsWhenFlat(t *testing.T) {
 		coin   = "APT"
 	)
 
+	flags := map[string]interface{}{"is_primary": true}
+	_, err := store.UpsertVenue(ctx, "hyperliquid:test", api.VenueUpsertRequest{
+		Type:        "hyperliquid",
+		DisplayName: "Test Venue",
+		Wallet:      "0xfeed",
+		Flags:       &flags,
+	})
+	require.NoError(t, err)
+
+	// mark it as primary so the alias resolver prefers it
+	require.NoError(t, store.UpsertBotVenueAssignment(ctx, botID, "hyperliquid:test", true))
+
 	recordDeal(t, store, dealID, botID, coin)
 
 	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
 	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
-	baseIdent := defaultIdentifier(t, store, botID, baseOid)
-	tpIdent := defaultIdentifier(t, store, botID, tpOid)
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
+	tpIdent := defaultIdentifier(t, store, ctx, botID, tpOid)
 	closeOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 3}
-	closeIdent := defaultIdentifier(t, store, botID, closeOid)
+	closeIdent := defaultIdentifier(t, store, ctx, botID, closeOid)
 	now := time.Now()
 
 	baseEvent := tc.BotEvent{
@@ -362,12 +395,17 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 		logger := newTestLogger()
 		tracker := New(store, logger)
 
+		createPrimaryVenue(t, store)
+
+		// mark it as primary so the alias resolver prefers it
+		require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
+
 		recordDeal(t, store, dealID, botID, coin)
 
 		baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
 		tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
-		baseIdent := defaultIdentifier(t, store, botID, baseOid)
-		tpIdent := defaultIdentifier(t, store, botID, tpOid)
+		baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
+		tpIdent := defaultIdentifier(t, store, ctx, botID, tpOid)
 		now := time.Now()
 
 		require.NoError(t, recordEvent(store, baseOid, tc.BotEvent{
@@ -429,12 +467,17 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 		logger := newTestLogger()
 		tracker := New(store, logger)
 
+		createPrimaryVenue(t, store)
+
+		// mark it as primary so the alias resolver prefers it
+		require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
+
 		recordDeal(t, store, dealID+1, botID, coin)
 
 		baseOid := orderid.OrderId{BotID: botID, DealID: dealID + 1, BotEventID: 1}
 		tpOid := orderid.OrderId{BotID: botID, DealID: dealID + 1, BotEventID: 2}
-		baseIdent := defaultIdentifier(t, store, botID, baseOid)
-		tpIdent := defaultIdentifier(t, store, botID, tpOid)
+		baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
+		tpIdent := defaultIdentifier(t, store, ctx, botID, tpOid)
 		now := time.Now()
 
 		// Base fill establishes net qty 15.
@@ -502,12 +545,17 @@ func TestEnsureTakeProfitRecreatesAfterStaleSubmission(t *testing.T) {
 		coin   = "OP"
 	)
 
+	createPrimaryVenue(t, store)
+
+	// mark it as primary so the alias resolver prefers it
+	require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
+
 	recordDeal(t, store, dealID, botID, coin)
 
 	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
 	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
-	baseIdent := defaultIdentifier(t, store, botID, baseOid)
-	tpIdent := defaultIdentifier(t, store, botID, tpOid)
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
+	tpIdent := defaultIdentifier(t, store, ctx, botID, tpOid)
 	now := time.Now()
 
 	baseEvent := tc.BotEvent{
@@ -579,12 +627,17 @@ func TestReconcileTakeProfitsRecreatesAfterCancelWithMissingOrderId(t *testing.T
 		coin   = "ARB"
 	)
 
+	createPrimaryVenue(t, store)
+
+	// mark it as primary so the alias resolver prefers it
+	require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
+
 	recordDeal(t, store, dealID, botID, coin)
 
 	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
 	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
-	baseIdent := defaultIdentifier(t, store, botID, baseOid)
-	tpIdent := defaultIdentifier(t, store, botID, tpOid)
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
+	tpIdent := defaultIdentifier(t, store, ctx, botID, tpOid)
 	now := time.Now()
 
 	baseEvent := tc.BotEvent{
@@ -735,7 +788,7 @@ func recordStatus(store *storage.Storage, ident recomma.OrderIdentifier, status 
 	return store.RecordHyperliquidStatus(context.Background(), ident, status)
 }
 
-func defaultIdentifier(t *testing.T, store *storage.Storage, botID uint32, oid orderid.OrderId) recomma.OrderIdentifier {
+func defaultIdentifier(t *testing.T, store *storage.Storage, ctx context.Context, botID uint32, oid orderid.OrderId) recomma.OrderIdentifier {
 	t.Helper()
 
 	assignments, err := store.ListVenuesForBot(context.Background(), botID)
@@ -765,4 +818,18 @@ func makeStatus(oid orderid.OrderId, coin, side string, status hyperliquid.Order
 
 func formatFloat(v float64) string {
 	return strconv.FormatFloat(v, 'f', -1, 64)
+}
+
+func createPrimaryVenue(t *testing.T, store *storage.Storage) {
+	t.Helper()
+	// we need to create an actual test venue
+	ctx := context.Background()
+	flags := map[string]interface{}{"is_primary": true}
+	_, err := store.UpsertVenue(ctx, "hyperliquid:test", api.VenueUpsertRequest{
+		Type:        "hyperliquid",
+		DisplayName: "Test Venue",
+		Wallet:      "0xfeed",
+		Flags:       &flags,
+	})
+	require.NoError(t, err)
 }

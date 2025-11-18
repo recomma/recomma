@@ -177,6 +177,7 @@ The second version makes it **impossible** to write a test that ignores auto-wak
 - Hyperliquid emitter enforces rate limiting and retries price discovery; queue backlog is expected while ratelimited.
 - SSE buffers are finite; dropping events logs a warning—apply backpressure by consuming streams promptly.
 - Keep generated files checked in; CI relies on repo consistency without rerunning `go generate`.
+- The default Hyperliquid venue must be resolved via `storage.ResolveDefaultAlias`; do not hard-code `hyperliquid:default` or its wallet—always derive the identifier from storage before emitting work or recording submissions.
 
 ## Commits
 Prefer smaller commits instead of one massive one. This allows to track the changes more easily.

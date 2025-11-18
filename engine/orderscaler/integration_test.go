@@ -70,7 +70,7 @@ func TestOrderScalerEmitsScaledOrderThroughEmitter(t *testing.T) {
 	cache := hl.NewOrderIdCache(info)
 
 	scaler := New(store, cache, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	ident := recomma.NewOrderIdentifier("hyperliquid:default", "default", oid)
+	ident := defaultIdentifier(t, store, ctx, oid)
 	req := BuildRequest(ident, event, order)
 
 	result, err := scaler.Scale(ctx, req, &order)

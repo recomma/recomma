@@ -33,6 +33,11 @@ func TestFillTrackerWithHyperliquidStatusUpdates(t *testing.T) {
 		coin   = "BTC"
 	)
 
+	createPrimaryVenue(t, store)
+
+	// mark it as primary so the alias resolver prefers it
+	require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
+
 	// Record deal
 	recordDeal(t, store, dealID, botID, coin)
 
@@ -70,7 +75,7 @@ func TestFillTrackerWithHyperliquidStatusUpdates(t *testing.T) {
 	_, err := exchange.Order(ctx, order, nil)
 	require.NoError(t, err)
 
-	baseIdent := storage.DefaultHyperliquidIdentifier(baseOid)
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
 
 	// Get initial status and record it
 	initialStatus := makeStatusFromMockOrder(ts, baseOid, coin)
@@ -107,6 +112,11 @@ func TestFillTrackerPartialFillsFromHyperliquid(t *testing.T) {
 		coin   = "ETH"
 	)
 
+	createPrimaryVenue(t, store)
+
+	// mark it as primary so the alias resolver prefers it
+	require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
+
 	recordDeal(t, store, dealID, botID, coin)
 
 	oid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
@@ -140,7 +150,7 @@ func TestFillTrackerPartialFillsFromHyperliquid(t *testing.T) {
 	_, err := exchange.Order(ctx, order, nil)
 	require.NoError(t, err)
 
-	ident := storage.DefaultHyperliquidIdentifier(oid)
+	ident := defaultIdentifier(t, store, ctx, botID, oid)
 
 	// Initial status
 	initialStatus := makeStatusFromMockOrder(ts, oid, coin)
@@ -188,6 +198,11 @@ func TestFillTrackerTakeProfitCancellation(t *testing.T) {
 		coin   = "SOL"
 	)
 
+	createPrimaryVenue(t, store)
+
+	// mark it as primary so the alias resolver prefers it
+	require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
+
 	recordDeal(t, store, dealID, botID, coin)
 
 	// Create and fill base order
@@ -222,7 +237,7 @@ func TestFillTrackerTakeProfitCancellation(t *testing.T) {
 	require.NoError(t, err)
 	simulateOrderFill(t, ts, baseCloid, 100)
 
-	baseIdent := storage.DefaultHyperliquidIdentifier(baseOid)
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
 
 	baseStatus := makeStatusFromMockOrder(ts, baseOid, coin)
 	require.NoError(t, recordStatus(store, baseIdent, baseStatus))
@@ -258,7 +273,7 @@ func TestFillTrackerTakeProfitCancellation(t *testing.T) {
 	_, err = exchange.Order(ctx, tpOrder, nil)
 	require.NoError(t, err)
 
-	tpIdent := storage.DefaultHyperliquidIdentifier(tpOid)
+	tpIdent := defaultIdentifier(t, store, ctx, botID, tpOid)
 
 	tpStatus := makeStatusFromMockOrder(ts, tpOid, coin)
 	require.NoError(t, recordStatus(store, tpIdent, tpStatus))
@@ -297,6 +312,11 @@ func TestFillTrackerMultipleOrdersFromHyperliquid(t *testing.T) {
 		botID  = uint32(8000)
 		coin   = "ARB"
 	)
+
+	createPrimaryVenue(t, store)
+
+	// mark it as primary so the alias resolver prefers it
+	require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
 
 	recordDeal(t, store, dealID, botID, coin)
 	exchange := newHyperliquidMockExchange(t, ts.URL())
@@ -340,7 +360,7 @@ func TestFillTrackerMultipleOrdersFromHyperliquid(t *testing.T) {
 			},
 		}
 
-		ident := storage.DefaultHyperliquidIdentifier(oid)
+		ident := defaultIdentifier(t, store, ctx, botID, oid)
 
 		_, err := exchange.Order(ctx, order, nil)
 		require.NoError(t, err)
@@ -357,7 +377,7 @@ func TestFillTrackerMultipleOrdersFromHyperliquid(t *testing.T) {
 		cloid := oid.Hex()
 		simulateOrderFill(t, ts, cloid, o.price)
 
-		ident := storage.DefaultHyperliquidIdentifier(oid)
+		ident := defaultIdentifier(t, store, ctx, botID, oid)
 
 		filledStatus := makeStatusFromMockOrder(ts, oid, coin)
 		require.NoError(t, recordStatus(store, ident, filledStatus))

@@ -28,7 +28,6 @@ import (
 	"github.com/recomma/recomma/internal/origin"
 	"github.com/recomma/recomma/internal/vault"
 	rlog "github.com/recomma/recomma/log"
-	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/ratelimit"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
@@ -151,7 +150,7 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 	if opts.Store != nil {
 		store = opts.Store
 	} else {
-		store, err = storage.New(cfg.StoragePath, storage.WithStreamPublisher(streamController))
+		store, err = storage.New(cfg.StoragePath, storage.WithStreamPublisher(streamController), storage.WithLogger(logger))
 		if err != nil {
 			return nil, fmt.Errorf("storage init failed: %w", err)
 		}
@@ -559,9 +558,12 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 		return errors.New("primary hyperliquid venue missing api_url")
 	}
 
-	defaultIdentifier := storage.DefaultHyperliquidIdentifier(orderid.OrderId{})
-	defaultHyperliquidIdent := defaultIdentifier.VenueID
-	defaultHyperliquidWallet := defaultIdentifier.Wallet
+	defaultAssignment, err := a.Store.ResolveDefaultAlias(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve default alias: %w", err)
+	}
+	defaultHyperliquidIdent := defaultAssignment.VenueID
+	defaultHyperliquidWallet := defaultAssignment.Wallet
 
 	defaultVenueWallet := primaryWallet
 	if shouldUseSentinelDefaultHyperliquidWallet(
@@ -578,17 +580,8 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 		defaultAliasWallet = defaultHyperliquidWallet
 	}
 
-	defaultVenueConfigured := false
-	for _, venue := range secrets.Secrets.Venues {
-		if recomma.VenueID(strings.TrimSpace(venue.ID)) == defaultHyperliquidIdent {
-			defaultVenueConfigured = true
-			break
-		}
-	}
-
 	primaryIdent := recomma.VenueID(primaryVenueID)
 	a.PrimaryVenue = primaryIdent
-	shouldBootstrapDefaultWs := !defaultVenueConfigured && defaultHyperliquidIdent != "" && defaultHyperliquidIdent != primaryIdent && defaultAliasWallet != defaultHyperliquidWallet
 
 	gateRegistry := make(map[rateGateKey]emitter.RateGate)
 	var venueOrder []recomma.VenueID
@@ -698,29 +691,6 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 			}),
 			emitter.WithHyperLiquidEmitterLogger(emitterLogger.With(slog.String("venue", venueID), slog.String("wallet", wallet))),
 		)
-
-		if shouldBootstrapDefaultWs && venueIdent == primaryIdent {
-			aliasClient, err := ws.New(ctx, a.Store, a.FillTracker, defaultHyperliquidIdent, defaultAliasWallet, wsURL)
-			if err != nil {
-				return fmt.Errorf("create default hyperliquid websocket: %w", err)
-			}
-			registerHyperliquidWsClient(a.WsClients, aliasClient, defaultHyperliquidIdent)
-			submitter.RegisterWsClient(defaultHyperliquidIdent, aliasClient)
-			a.StatusClients[defaultHyperliquidIdent] = info
-
-			alias := aliasClient
-			a.venueClosers = append(a.venueClosers, func() {
-				if err := alias.Close(); err != nil {
-					runtimeLogger.Debug("websocket close failed", slog.String("venue", string(defaultHyperliquidIdent)), slog.String("error", err.Error()))
-				}
-			})
-
-			runtimeLogger.Info("default hyperliquid alias configured",
-				slog.String("venue", string(defaultHyperliquidIdent)),
-				slog.String("wallet", defaultAliasWallet),
-				slog.String("api_url", apiURL),
-			)
-		}
 
 		registerHyperliquidEmitter(a.OrderEmitter, submitter, venueIdent, primaryIdent, defaultHyperliquidIdent)
 

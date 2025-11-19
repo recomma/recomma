@@ -200,6 +200,44 @@ func TestOrderScalerConfigEvents(t *testing.T) {
 	require.NotNil(t, overrideEvt.ScalerConfig.Override)
 }
 
+func TestRecordScaledOrderAllowsRepeatedStackIndex(t *testing.T) {
+	store := newTestStorage(t)
+	ctx := context.Background()
+
+	botID := uint32(6001)
+	now := time.Now().UTC()
+	require.NoError(t, store.RecordBot(ctx, tc.Bot{Id: int(botID)}, now))
+
+	createPrimaryVenue(t, store)
+
+	oid := orderid.OrderId{BotID: botID, DealID: 7002, BotEventID: 9003}
+	ident := defaultIdentifier(t, store, ctx, oid)
+
+	params := RecordScaledOrderParams{
+		Identifier:   ident,
+		DealID:       oid.DealID,
+		BotID:        oid.BotID,
+		OriginalSize: 10,
+		ScaledSize:   12.5,
+		StackIndex:   0,
+		OrderSide:    "buy",
+		CreatedAt:    now,
+	}
+
+	_, _, err := store.RecordScaledOrder(ctx, params)
+	require.NoError(t, err)
+
+	params.ScaledSize = 15.0
+	params.CreatedAt = now.Add(1 * time.Minute)
+
+	_, _, err = store.RecordScaledOrder(ctx, params)
+	require.NoError(t, err, "second record should not hit unique constraint")
+
+	records, err := store.ListScaledOrdersByOrderId(ctx, oid)
+	require.NoError(t, err)
+	require.Len(t, records, 2, "both scaled order audits should be stored")
+}
+
 func TestRecordScaledOrderPublishesEvent(t *testing.T) {
 	stream := &captureStream{}
 	store := newTestStorageWithStream(t, stream)

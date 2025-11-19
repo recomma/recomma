@@ -1059,3 +1059,71 @@ func TestLoadTakeProfitForDeal(t *testing.T) {
 		require.WithinDuration(t, base, gotEvent.CreatedAt, 0)
 	})
 }
+
+func TestListOrdersSurfacesLatestModify(t *testing.T) {
+	store := newTestStorage(t)
+	ctx := context.Background()
+
+	createPrimaryVenue(t, store)
+
+	now := time.Now().UTC()
+	require.NoError(t, store.RecordBot(ctx, tc.Bot{Id: 42}, now))
+
+	oid := orderid.OrderId{BotID: 42, DealID: 4200, BotEventID: 7777}
+	event := tc.BotEvent{
+		CreatedAt: now,
+		Action:    tc.BotEventActionPlace,
+		Coin:      "DOGE",
+		Type:      tc.SELL,
+		Status:    tc.Active,
+		Price:     0.17,
+		Size:      155,
+		OrderType: tc.MarketOrderDealOrderTypeTakeProfit,
+	}
+	_, err := store.RecordThreeCommasBotEvent(ctx, oid, event)
+	require.NoError(t, err)
+
+	ident := defaultIdentifier(t, store, ctx, oid)
+
+	createReq := hyperliquid.CreateOrderRequest{
+		Coin:          "DOGE",
+		IsBuy:         false,
+		Price:         0.17,
+		Size:          155,
+		ReduceOnly:    true,
+		OrderType:     hyperliquid.OrderType{Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc}},
+		ClientOrderID: oid.HexAsPointer(),
+	}
+	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, ident, createReq, 1))
+
+	modifyReq := hyperliquid.ModifyOrderRequest{
+		Cloid: &hyperliquid.Cloid{Value: oid.Hex()},
+		Order: hyperliquid.CreateOrderRequest{
+			Coin:          "DOGE",
+			IsBuy:         false,
+			Price:         0.182,
+			Size:          155,
+			ReduceOnly:    true,
+			OrderType:     hyperliquid.OrderType{Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc}},
+			ClientOrderID: oid.HexAsPointer(),
+		},
+	}
+	require.NoError(t, store.AppendHyperliquidModify(ctx, ident, modifyReq, 2))
+
+	orders, _, err := store.ListOrders(ctx, api.ListOrdersOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, orders)
+
+	var target api.OrderItem
+	for _, order := range orders {
+		if order.OrderId == oid {
+			target = order
+			break
+		}
+	}
+	require.Equal(t, oid, target.OrderId)
+
+	modifySubmission, ok := target.LatestSubmission.(*hyperliquid.ModifyOrderRequest)
+	require.True(t, ok, "expected modify submission to be surfaced")
+	require.InDelta(t, modifyReq.Order.Price, modifySubmission.Order.Price, 1e-9)
+}

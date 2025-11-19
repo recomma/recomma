@@ -385,6 +385,42 @@ func (h *E2ETestHarness) TriggerDealProduction(ctx context.Context) {
 	h.App.ProduceActiveDealsOnce(ctx)
 }
 
+// WaitForOrderQueueIdle waits until the order work queue drains or times out.
+func (h *E2ETestHarness) WaitForOrderQueueIdle(timeout time.Duration) {
+	h.t.Helper()
+
+	if h.App == nil || h.App.OrderQueue == nil {
+		h.t.Fatal("order queue not initialized")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	const idleConfirmations = 3
+	idleTicks := 0
+
+	for {
+		if h.App.OrderQueue.Len() == 0 {
+			idleTicks++
+			if idleTicks >= idleConfirmations {
+				return
+			}
+		} else {
+			idleTicks = 0
+		}
+
+		select {
+		case <-ctx.Done():
+			h.t.Fatal("timeout waiting for order queue to drain")
+		case <-ticker.C:
+		}
+	}
+}
+
 // WithStorageLogger enables verbose SQL logging for the harness storage instance.
 func WithStorageLogger() E2EHarnessOption {
 	return func(cfg *harnessConfig) {

@@ -392,6 +392,13 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 			}
 
 			targets := resolveOrderTargets(oid, assignments, storedIdents, action.Type, defaultAssignment)
+			if len(targets) == 0 && (action.Type == recomma.ActionModify || action.Type == recomma.ActionCancel) {
+				orderLogger.Warn("no submission targets for action",
+					slog.String("action_type", action.Type.String()),
+					slog.Int("stored_identifiers", len(storedIdents)),
+					slog.Int("assignments", len(assignments)),
+				)
+			}
 			if len(targets) > 0 {
 				var latestCopy *recomma.BotEvent
 				if latestEvent != nil {
@@ -479,6 +486,11 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 				} else if latestForEmission != nil {
 					work.BotEvent = *latestForEmission
 				}
+				orderLogger.Debug("queueing order work",
+					slog.String("action_type", identAction.Type.String()),
+					slog.String("venue", ident.Venue()),
+					slog.String("wallet", ident.Wallet),
+				)
 				if err := e.emitter.Emit(ctx, work); err != nil {
 					e.logger.Warn("could not submit order", slog.Any("orderid", oid), slog.String("venue", ident.Venue()), slog.Any("action", work.Action), slog.String("error", err.Error()))
 				}
@@ -596,6 +608,7 @@ func sameSnapshot(a, b *recomma.BotEvent) bool {
 }
 
 const qtyTolerance = 1e-6
+const priceTolerance = 1e-6
 
 func nearlyEqual(a, b float64) bool {
 	return math.Abs(a-b) <= qtyTolerance
@@ -639,10 +652,24 @@ func (e *Engine) adjustActionWithTracker(
 	// Single-venue scenario: check if the one TP already matches global position
 	if !skipExisting && len(snapshot.ActiveTakeProfits) == 1 {
 		active := snapshot.ActiveTakeProfits[0]
-		if active.ReduceOnly && nearlyEqual(active.RemainingQty, desiredQty) {
+		targetPrice := latest.Price
+		switch action.Type {
+		case recomma.ActionCreate:
+			if targetPrice == 0 {
+				targetPrice = action.Create.Price
+			}
+		case recomma.ActionModify:
+			if targetPrice == 0 {
+				targetPrice = action.Modify.Order.Price
+			}
+		}
+		priceMatches := targetPrice > 0 && math.Abs(active.LimitPrice-targetPrice) <= priceTolerance
+		if active.ReduceOnly && nearlyEqual(active.RemainingQty, desiredQty) && priceMatches {
 			logger.Debug("take profit already matches position",
 				slog.Float64("desired_qty", desiredQty),
 				slog.Float64("existing_qty", active.RemainingQty),
+				slog.Float64("existing_price", active.LimitPrice),
+				slog.Float64("desired_price", targetPrice),
 				slog.String("venue", active.Identifier.Venue()),
 			)
 			return recomma.Action{Type: recomma.ActionNone, Reason: "take-profit already matches position"}, false

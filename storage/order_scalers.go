@@ -392,7 +392,7 @@ func (s *Storage) InsertScaledOrderAudit(ctx context.Context, params ScaledOrder
 		payloadType = &pt
 	}
 
-	orderID := fmt.Sprintf("%s#%d", params.Identifier.OrderId.Hex(), params.StackIndex)
+	orderID := fmt.Sprintf("%s#%d#%d", params.Identifier.OrderId.Hex(), params.StackIndex, createdAt.UTC().UnixNano())
 
 	// Use venue and wallet from the identifier instead of defaultVenueAssignmentLocked
 	venueID := params.Identifier.VenueID

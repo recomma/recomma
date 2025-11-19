@@ -34,6 +34,10 @@ const (
 	hyperliquidModifyPayloadType = "hyperliquid.modify.v1"
 	hyperliquidCancelPayloadType = "hyperliquid.cancel.v1"
 	hyperliquidStatusPayloadType = "hyperliquid.status.v1"
+
+	hyperliquidSubmissionActionCreate = "create"
+	hyperliquidSubmissionActionModify = "modify"
+	hyperliquidSubmissionActionCancel = "cancel"
 )
 
 var errPrimaryHyperliquidVenueNotFound = errors.New("storage: primary hyperliquid venue not found")
@@ -399,6 +403,49 @@ func ensureIdentifier(ident recomma.OrderIdentifier) recomma.OrderIdentifier {
 		ident.Wallet = defaultHyperliquidWallet
 	}
 	return ident
+}
+
+func decodeCreateRequest(raw []byte) (*hyperliquid.CreateOrderRequest, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var decoded hyperliquid.CreateOrderRequest
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return nil, err
+	}
+	return &decoded, nil
+}
+
+func decodeLatestModifyRequest(history []byte, fallback []byte) (*hyperliquid.ModifyOrderRequest, error) {
+	if len(history) > 0 {
+		var decoded []hyperliquid.ModifyOrderRequest
+		if err := json.Unmarshal(history, &decoded); err != nil {
+			return nil, err
+		}
+		if len(decoded) > 0 {
+			last := decoded[len(decoded)-1]
+			return &last, nil
+		}
+	}
+	if len(fallback) > 0 {
+		var decoded hyperliquid.ModifyOrderRequest
+		if err := json.Unmarshal(fallback, &decoded); err != nil {
+			return nil, err
+		}
+		return &decoded, nil
+	}
+	return nil, nil
+}
+
+func decodeCancelRequest(raw []byte) (*hyperliquid.CancelOrderRequestByCloid, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var decoded hyperliquid.CancelOrderRequestByCloid
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return nil, err
+	}
+	return &decoded, nil
 }
 
 func (s *Storage) defaultVenueAssignmentLocked(ctx context.Context) (VenueAssignment, error) {
@@ -951,6 +998,21 @@ func (s *Storage) AppendHyperliquidModify(ctx context.Context, ident recomma.Ord
 		return err
 	}
 
+	if row, err := s.queries.FetchHyperliquidSubmission(ctx, sqlcgen.FetchHyperliquidSubmissionParams{
+		VenueID: ident.Venue(),
+		Wallet:  ident.Wallet,
+		OrderID: oidHex,
+	}); err == nil {
+		logger.Info("modify persisted",
+			slog.String("order_id", oidHex),
+			slog.Float64("price", req.Order.Price),
+			slog.Float64("size", req.Order.Size),
+			slog.String("action_kind", row.ActionKind),
+		)
+	} else {
+		logger.Warn("verify modify fetch failed", slog.String("error", err.Error()))
+	}
+
 	s.publishHyperliquidSubmissionLocked(ctx, ident, req, boteventRowId)
 	logger.Debug("order upserted")
 	return nil
@@ -1383,48 +1445,68 @@ func (s *Storage) LoadHyperliquidSubmission(ctx context.Context, ident recomma.O
 	}
 
 	var action recomma.Action
-	switch row.ActionKind {
-	case "create":
+	actionKind := strings.ToLower(strings.TrimSpace(row.ActionKind))
+
+	switch actionKind {
+	case hyperliquidSubmissionActionCreate:
 		action.Type = recomma.ActionCreate
-	case "modify":
+	case hyperliquidSubmissionActionModify:
 		action.Type = recomma.ActionModify
-	case "cancel":
+	case hyperliquidSubmissionActionCancel:
 		action.Type = recomma.ActionCancel
 	default:
 		action.Type = recomma.ActionNone
 	}
 
-	if len(row.CreatePayload) > 0 {
-		var decoded hyperliquid.CreateOrderRequest
-		if err := json.Unmarshal(row.CreatePayload, &decoded); err != nil {
-			logger.Warn("decode create payload failed", slog.String("error", err.Error()))
+	createReq, err := decodeCreateRequest(row.CreatePayload)
+	if err != nil {
+		logger.Warn("decode create payload failed", slog.String("error", err.Error()))
+		return recomma.Action{}, false, err
+	}
+	if createReq == nil && actionKind == hyperliquidSubmissionActionCreate {
+		createReq, err = decodeCreateRequest(row.PayloadBlob)
+		if err != nil {
+			logger.Warn("decode fallback create payload failed", slog.String("error", err.Error()))
 			return recomma.Action{}, false, err
 		}
-		action.Create = decoded
+	}
+	if createReq != nil {
+		action.Create = *createReq
 	}
 
-	if len(row.ModifyPayloads) > 0 {
-		var decoded []hyperliquid.ModifyOrderRequest
-		if err := json.Unmarshal(row.ModifyPayloads, &decoded); err != nil {
-			logger.Warn("decode modify payload failed", slog.String("error", err.Error()))
+	modifyReq, err := decodeLatestModifyRequest(row.ModifyPayloads, nil)
+	if err != nil {
+		logger.Warn("decode modify payload failed", slog.String("error", err.Error()))
+		return recomma.Action{}, false, err
+	}
+	if modifyReq == nil && actionKind == hyperliquidSubmissionActionModify {
+		modifyReq, err = decodeLatestModifyRequest(nil, row.PayloadBlob)
+		if err != nil {
+			logger.Warn("decode fallback modify payload failed", slog.String("error", err.Error()))
 			return recomma.Action{}, false, err
 		}
-		if len(decoded) > 0 {
-			last := decoded[len(decoded)-1]
-			action.Modify = last
-		}
+	}
+	if modifyReq != nil {
+		action.Modify = *modifyReq
 	}
 
-	if len(row.CancelPayload) > 0 {
-		var decoded hyperliquid.CancelOrderRequestByCloid
-		if err := json.Unmarshal(row.CancelPayload, &decoded); err != nil {
-			logger.Warn("decode cancel payload failed", slog.String("error", err.Error()))
+	cancelReq, err := decodeCancelRequest(row.CancelPayload)
+	if err != nil {
+		logger.Warn("decode cancel payload failed", slog.String("error", err.Error()))
+		return recomma.Action{}, false, err
+	}
+	if cancelReq == nil && actionKind == hyperliquidSubmissionActionCancel {
+		cancelReq, err = decodeCancelRequest(row.PayloadBlob)
+		if err != nil {
+			logger.Warn("decode fallback cancel payload failed", slog.String("error", err.Error()))
 			return recomma.Action{}, false, err
 		}
-		action.Cancel = decoded
+	}
+	if cancelReq != nil {
+		action.Cancel = *cancelReq
 	}
 
-	if action.Type == recomma.ActionModify && len(row.ModifyPayloads) == 0 {
+	if action.Type == recomma.ActionModify && modifyReq == nil {
 		action.Type = recomma.ActionNone
 		action.Reason = "modify history empty"
 	}

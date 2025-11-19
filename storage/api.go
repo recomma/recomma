@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"sort"
 	"strconv"
@@ -483,6 +484,9 @@ FROM threecommas_botevents`)
 	}
 
 	for oidHex, indexes := range byOrderId {
+		rowLogger := s.logger.WithGroup("ListOrders:submission").With(
+			slog.String("order_id", oidHex),
+		)
 		if len(indexes) == 0 {
 			continue
 		}
@@ -501,32 +505,43 @@ FROM threecommas_botevents`)
 				return nil, nil, fmt.Errorf("fetch submission for %s: %w", oidHex, err)
 			}
 		} else {
-			switch strings.ToLower(strings.TrimSpace(submissionRow.ActionKind)) {
-			case "create":
-				if len(submissionRow.CreatePayload) > 0 {
-					var decoded hyperliquid.CreateOrderRequest
-					if err := json.Unmarshal(submissionRow.CreatePayload, &decoded); err != nil {
-						return nil, nil, fmt.Errorf("decode create submission for %s: %w", oidHex, err)
-					}
-					submission = &decoded
+			actionKind := strings.ToLower(strings.TrimSpace(submissionRow.ActionKind))
+			switch actionKind {
+			case hyperliquidSubmissionActionCreate:
+				req, err := decodeCreateRequest(submissionRow.CreatePayload)
+				if err != nil {
+					return nil, nil, fmt.Errorf("decode create submission for %s: %w", oidHex, err)
 				}
-			case "modify":
-				if len(submissionRow.ModifyPayloads) > 0 {
-					var decoded []hyperliquid.ModifyOrderRequest
-					if err := json.Unmarshal(submissionRow.ModifyPayloads, &decoded); err != nil {
-						return nil, nil, fmt.Errorf("decode modify submission for %s: %w", oidHex, err)
-					}
-					if len(decoded) > 0 {
-						submission = &decoded[len(decoded)-1]
+				if req == nil {
+					req, err = decodeCreateRequest(submissionRow.PayloadBlob)
+					if err != nil {
+						return nil, nil, fmt.Errorf("decode fallback create submission for %s: %w", oidHex, err)
 					}
 				}
-			case "cancel":
-				if len(submissionRow.CancelPayload) > 0 {
-					var decoded hyperliquid.CancelOrderRequestByCloid
-					if err := json.Unmarshal(submissionRow.CancelPayload, &decoded); err != nil {
-						return nil, nil, fmt.Errorf("decode cancel submission for %s: %w", oidHex, err)
+				if req != nil {
+					submission = req
+				}
+			case hyperliquidSubmissionActionModify:
+				req, err := decodeLatestModifyRequest(submissionRow.ModifyPayloads, submissionRow.PayloadBlob)
+				if err != nil {
+					return nil, nil, fmt.Errorf("decode modify submission for %s: %w", oidHex, err)
+				}
+				if req != nil {
+					submission = req
+				}
+			case hyperliquidSubmissionActionCancel:
+				req, err := decodeCancelRequest(submissionRow.CancelPayload)
+				if err != nil {
+					return nil, nil, fmt.Errorf("decode cancel submission for %s: %w", oidHex, err)
+				}
+				if req == nil {
+					req, err = decodeCancelRequest(submissionRow.PayloadBlob)
+					if err != nil {
+						return nil, nil, fmt.Errorf("decode fallback cancel submission for %s: %w", oidHex, err)
 					}
-					submission = &decoded
+				}
+				if req != nil {
+					submission = req
 				}
 			}
 
@@ -536,6 +551,30 @@ FROM threecommas_botevents`)
 			}
 
 			selectedIdent = recomma.NewOrderIdentifier(recomma.VenueID(submissionRow.VenueID), submissionRow.Wallet, oidCopy)
+
+			switch v := submission.(type) {
+			case *hyperliquid.CreateOrderRequest:
+				rowLogger.Info("latest submission decoded",
+					slog.String("kind", actionKind),
+					slog.Float64("price", v.Price),
+					slog.Float64("size", v.Size),
+					slog.String("coin", v.Coin),
+				)
+			case *hyperliquid.ModifyOrderRequest:
+				rowLogger.Info("latest submission decoded",
+					slog.String("kind", actionKind),
+					slog.Float64("price", v.Order.Price),
+					slog.Float64("size", v.Order.Size),
+					slog.String("coin", v.Order.Coin),
+				)
+			case *hyperliquid.CancelOrderRequestByCloid:
+				rowLogger.Info("latest submission decoded",
+					slog.String("kind", actionKind),
+					slog.String("coin", v.Coin),
+				)
+			default:
+				rowLogger.Info("latest submission decoded", slog.String("kind", actionKind))
+			}
 		}
 
 		if selectedIdent == (recomma.OrderIdentifier{}) {

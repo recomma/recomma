@@ -12,6 +12,7 @@ import (
 	"github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/recomma"
 	"github.com/sonirico/go-hyperliquid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,7 +35,7 @@ func TestE2E_TakeProfitScalingHandlesRepeatedUpdates(t *testing.T) {
 		secondTPPrice = 0.182
 	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	t.Cleanup(cancel)
 
 	harness := NewE2ETestHarness(t, ctx)
@@ -52,6 +53,7 @@ func TestE2E_TakeProfitScalingHandlesRepeatedUpdates(t *testing.T) {
 	harness.TriggerDealProduction(ctx)
 	harness.WaitForDealProcessing(uint32(dealID), 5*time.Second)
 	harness.WaitForOrderInDatabase(15 * time.Second)
+	harness.WaitForOrderQueueIdle(10 * time.Second)
 
 	baseOrder := waitForOrderByType(t, harness, ctx, tc.MarketOrderDealOrderTypeBase, 5*time.Second)
 	recordFillForOrder(t, harness, ctx, baseOrder, basePrice)
@@ -59,12 +61,14 @@ func TestE2E_TakeProfitScalingHandlesRepeatedUpdates(t *testing.T) {
 	// Append the first take-profit event now that the position is long.
 	appendTakeProfitEvent(t, harness, dealID, baseCoin, firstTPPrice, baseSize)
 	harness.TriggerDealProduction(ctx)
+	harness.WaitForOrderQueueIdle(10 * time.Second)
 
 	assertTakeProfitSubmissionPrice(t, harness, ctx, firstTPPrice, 15*time.Second)
 
 	// Emit another take-profit event with the same fingerprint but a new price.
 	appendTakeProfitEvent(t, harness, dealID, baseCoin, secondTPPrice, baseSize)
 	harness.TriggerDealProduction(ctx)
+	harness.WaitForOrderQueueIdle(10 * time.Second)
 
 	// Expect storage submissions to reflect the latest take-profit size/price.
 	// The bug leaves the submission stuck at the original price, so this check
@@ -162,7 +166,10 @@ func assertTakeProfitSubmissionPrice(
 ) {
 	t.Helper()
 
-	require.Eventuallyf(t, func() bool {
+	var lastObserved float64
+	var lastSubmission interface{}
+
+	ok := assert.Eventuallyf(t, func() bool {
 		order, ok := findOrderByType(harness, ctx, tc.MarketOrderDealOrderTypeTakeProfit)
 		if !ok {
 			return false
@@ -171,8 +178,13 @@ func assertTakeProfitSubmissionPrice(
 		if !ok {
 			return false
 		}
+		lastObserved = price
+		lastSubmission = order.LatestSubmission
 		return math.Abs(price-expected) < 1e-6
 	}, timeout, 200*time.Millisecond, "waiting for take-profit submission to reach %.5f", expected)
+	if !ok {
+		require.FailNowf(t, "timed out waiting for submission", "last observed %.5f (type %T)", lastObserved, lastSubmission)
+	}
 }
 
 func findOrderByType(

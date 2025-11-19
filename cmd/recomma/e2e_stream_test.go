@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,33 +51,53 @@ func TestE2E_OrderStreamPublishesLifecycleEvents(t *testing.T) {
 	harness.Start(ctx)
 
 	streamCtx, streamCancel := context.WithCancel(ctx)
-	defer streamCancel()
-
 	eventsCh, err := harness.App.StreamController.Subscribe(streamCtx, api.StreamFilter{})
 	require.NoError(t, err)
+
+	targetEvents := make(chan api.StreamEvent, 16)
+	var streamWG sync.WaitGroup
+	streamWG.Add(1)
+	go func() {
+		defer streamWG.Done()
+		defer close(targetEvents)
+
+		for evt := range eventsCh {
+			if evt.OrderID.DealID != uint32(targetDealID) {
+				continue
+			}
+
+			select {
+			case targetEvents <- evt:
+			case <-streamCtx.Done():
+				return
+			}
+		}
+	}()
+
+	t.Cleanup(func() {
+		streamCancel()
+		streamWG.Wait()
+	})
 
 	harness.TriggerDealProduction(ctx)
 	harness.WaitForDealProcessing(targetDealID, 5*time.Second)
 	harness.WaitForDealProcessing(noiseDealID, 5*time.Second)
 	harness.WaitForOrderInDatabase(5 * time.Second)
+	harness.WaitForOrderQueueIdle(10 * time.Second)
 
 	var (
-		lastSeq        int64 = -1
-		sequenceSeen   bool
-		gotSubmission  bool
-		gotStatus      bool
-		streamCanceled bool
+		lastSeq       int64 = -1
+		sequenceSeen  bool
+		gotSubmission bool
+		gotStatus     bool
 	)
 
-	require.Eventually(t, func() bool {
+	timeout := time.After(10 * time.Second)
+	for !(gotSubmission && gotStatus) {
 		select {
-		case evt, ok := <-eventsCh:
+		case evt, ok := <-targetEvents:
 			if !ok {
-				streamCanceled = true
-				return false
-			}
-			if evt.OrderID.DealID != uint32(targetDealID) {
-				return gotSubmission && gotStatus
+				require.FailNow(t, "stream closed before required events arrived")
 			}
 
 			if evt.Sequence == nil {
@@ -102,10 +123,8 @@ func TestE2E_OrderStreamPublishesLifecycleEvents(t *testing.T) {
 			default:
 				// Ignore unrelated events.
 			}
-		default:
+		case <-timeout:
+			require.FailNow(t, "timed out waiting for order lifecycle events")
 		}
-		return gotSubmission && gotStatus
-	}, 10*time.Second, 50*time.Millisecond, "timed out waiting for stream events")
-
-	require.False(t, streamCanceled, "stream closed before required events arrived")
+	}
 }

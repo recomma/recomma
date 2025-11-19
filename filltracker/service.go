@@ -300,7 +300,9 @@ func (s *Service) cancelTakeProfitBySnapshot(
 		},
 	}
 
-	s.emitOrderWork(ctx, submitter, work, "cancelled take profit for flat position", snapshot, tp.RemainingQty)
+	if s.emitOrderWork(ctx, submitter, work, "cancelled take profit for flat position", snapshot, tp.RemainingQty) {
+		s.markOrderCancelled(ident)
+	}
 }
 
 func (s *Service) reconcileActiveTakeProfitBySnapshot(
@@ -364,8 +366,34 @@ func (s *Service) reconcileActiveTakeProfitBySnapshot(
 		return true
 	}
 
+	s.markOrderCancelled(ident)
 	s.ensureTakeProfit(ctx, submitter, snapshot, desiredQty, &ident, snapshot.LastTakeProfitEvent, true)
 	return true
+}
+
+func (s *Service) markOrderCancelled(ident recomma.OrderIdentifier) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, ok := s.orders[ident]
+	if !ok {
+		return
+	}
+
+	now := time.Now().UTC()
+	state.remainingQty = 0
+	if state.originalQty > 0 && state.filledQty < state.originalQty {
+		state.filledQty = state.originalQty
+	}
+	state.status = hyperliquid.OrderStatusValueCanceled
+	state.statusObserved = now
+	state.lastUpdate = now
+
+	if deal, ok := s.deals[ident.OrderId.DealID]; ok {
+		deal.orders[ident] = state
+		deal.lastUpdate = now
+		deal.recompute()
+	}
 }
 
 func (s *Service) ensureTakeProfit(

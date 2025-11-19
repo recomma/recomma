@@ -758,7 +758,7 @@ func (s *Storage) RecordThreeCommasBotEvent(ctx context.Context, oid orderid.Ord
 	if err != nil {
 		// this means it's a duplicate, no need to let us know except in DEBUG
 		if errors.Is(err, sql.ErrNoRows) {
-			logger.Warn("insert duplicate botevent", slog.String("error", err.Error()))
+			// logger.Debug("insert duplicate botevent", slog.String("error", err.Error()))
 			return 0, sql.ErrNoRows
 		}
 		logger.Warn("insert botevent failed", slog.String("error", err.Error()))
@@ -810,7 +810,7 @@ func (s *Storage) RecordThreeCommasBotEventLog(ctx context.Context, oid orderid.
 	lastInsertId, err = s.queries.InsertThreeCommasBotEventLog(ctx, params)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			logger.Warn("insert duplicate botevent", slog.String("error", err.Error()))
+			// logger.Debug("insert duplicate botevent", slog.String("error", err.Error()))
 			return 0, sql.ErrNoRows
 		}
 		logger.Warn("insert botevent log failed", slog.String("error", err.Error()))

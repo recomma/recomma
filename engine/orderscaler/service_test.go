@@ -135,7 +135,7 @@ func TestServiceScalePreservesTakeProfitStackRatios(t *testing.T) {
 			Size:          1.0,
 			OrderType:     tc.MarketOrderDealOrderTypeTakeProfit,
 			OrderSize:     2,
-			OrderPosition: 1,
+			OrderPosition: 0,
 		},
 		{
 			CreatedAt:     baseTime.Add(100 * time.Millisecond),
@@ -145,7 +145,7 @@ func TestServiceScalePreservesTakeProfitStackRatios(t *testing.T) {
 			Size:          1.05,
 			OrderType:     tc.MarketOrderDealOrderTypeTakeProfit,
 			OrderSize:     2,
-			OrderPosition: 2,
+			OrderPosition: 1,
 		},
 	}
 

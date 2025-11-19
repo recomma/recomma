@@ -328,13 +328,16 @@ func BuildRequest(ident recomma.OrderIdentifier, evt tc.BotEvent, order hyperliq
 	if order.IsBuy {
 		side = "buy"
 	}
-	stackIndex := 0
-	if evt.OrderPosition > 0 {
-		stackIndex = evt.OrderPosition - 1
+	stackIndex := evt.OrderPosition
+	if stackIndex < 0 {
+		stackIndex = 0
 	}
 	stackSize := evt.OrderSize
 	if stackSize <= 0 {
 		stackSize = 1
+	}
+	if stackIndex >= stackSize {
+		stackIndex = stackSize - 1
 	}
 
 	price := order.Price

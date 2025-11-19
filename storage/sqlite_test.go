@@ -1012,6 +1012,54 @@ func TestRecordThreeCommasBotEventDuplicateReturnsPreviousInsertID(t *testing.T)
 	require.NotEqual(t, first, second, "expected unique ids")
 }
 
+func TestListTakeProfitStackSizesUsesLegSizes(t *testing.T) {
+	store := newTestStorage(t)
+	ctx := context.Background()
+
+	const (
+		dealID    = 9001
+		stackSize = 3
+	)
+
+	base := time.Date(2025, time.January, 2, 15, 4, 5, 0, time.UTC)
+	latestSizes := []float64{155, 210, 365}
+
+	for pos := 0; pos < stackSize; pos++ {
+		old := tc.BotEvent{
+			CreatedAt:     base.Add(time.Duration(pos) * time.Minute),
+			Action:        tc.BotEventActionPlace,
+			Coin:          "DOGE",
+			Type:          tc.SELL,
+			Status:        "Active",
+			Price:         0.15 + float64(pos)*0.01,
+			Size:          42, // placeholder; overwritten by newer revision
+			OrderType:     tc.MarketOrderDealOrderTypeTakeProfit,
+			OrderSize:     0,
+			OrderPosition: pos,
+			Text:          fmt.Sprintf("tp leg %d initial", pos),
+		}
+		oldOid := orderid.OrderId{BotID: 77, DealID: dealID, BotEventID: uint32(pos*2 + 1)}
+		inserted, err := store.RecordThreeCommasBotEvent(ctx, oldOid, old)
+		require.NoError(t, err)
+		require.NotZero(t, inserted)
+
+		newer := old
+		newer.CreatedAt = base.Add(time.Hour + time.Duration(pos)*time.Minute)
+		newer.Size = latestSizes[pos]
+		newer.Text = fmt.Sprintf("tp leg %d latest", pos)
+
+		newOid := orderid.OrderId{BotID: 77, DealID: dealID, BotEventID: uint32(pos*2 + 2)}
+		inserted, err = store.RecordThreeCommasBotEvent(ctx, newOid, newer)
+		require.NoError(t, err)
+		require.NotZero(t, inserted)
+	}
+
+	target := orderid.OrderId{BotID: 77, DealID: dealID}
+	got, err := store.ListTakeProfitStackSizes(ctx, target, stackSize)
+	require.NoError(t, err)
+	require.Equal(t, latestSizes, got)
+}
+
 func TestLoadTakeProfitForDeal(t *testing.T) {
 	store := newTestStorage(t)
 	ctx := context.Background()

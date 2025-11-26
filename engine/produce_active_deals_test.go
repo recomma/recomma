@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -168,4 +169,52 @@ func TestProduceActiveDeals_TableDriven(t *testing.T) {
 				"diff (-want +got):\n%s", cmp.Diff(tcse.wantKeys, got, sortWK))
 		})
 	}
+}
+
+func TestProduceActiveDealsAdvancesSyncWatermark(t *testing.T) {
+	t.Skip("3Commas does not bump deal.UpdatedAt, so the engine intentionally keeps the minimum watermark; enable once API behavior changes")
+	t.Parallel()
+
+	ctx := context.Background()
+	store, err := storage.New(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	const botID = 16601261
+
+	oldSync := time.Date(2025, time.November, 18, 1, 59, 27, 0, time.UTC)
+	require.NoError(t, store.RecordBot(ctx, tc.Bot{Id: botID}, oldSync))
+
+	dealUpdated := oldSync.Add(4 * time.Hour)
+	client := &fakeClient{
+		listBotsResp: []tc.Bot{
+			{
+				Id:        botID,
+				UpdatedAt: dealUpdated,
+			},
+		},
+		dealsByBot: map[int][]tc.Deal{
+			botID: {
+				{
+					Id:        2386805693,
+					BotId:     botID,
+					CreatedAt: dealUpdated.Add(-time.Minute),
+					UpdatedAt: dealUpdated,
+				},
+			},
+		},
+		dealsErrByBot: map[int]error{},
+	}
+
+	q := &fakeQueue{}
+	em := &fakeEmitter{}
+	e := NewEngine(client, WithStorage(store), WithEmitter(em))
+
+	err = e.ProduceActiveDeals(ctx, q)
+	require.NoError(t, err)
+
+	_, syncedAt, found, err := store.LoadBot(ctx, botID)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.True(t, syncedAt.After(oldSync), "expected bot sync watermark to advance after new deals were fetched")
 }

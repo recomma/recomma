@@ -686,6 +686,7 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 
 		submitter := emitter.NewHyperLiquidEmitter(exchange, venueIdent, wsClient, a.Store, hl.NewOrderIdCache(constraintsInfo),
 			emitter.WithHyperLiquidRateGate(gate),
+			emitter.WithHyperLiquidStatusClient(info),
 			emitter.WithHyperLiquidEmitterConfig(emitter.HyperLiquidEmitterConfig{
 				InitialIOCOffsetBps: a.Config.HyperliquidIOCInitialOffsetBps,
 			}),

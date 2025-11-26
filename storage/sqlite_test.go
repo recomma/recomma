@@ -1060,6 +1060,36 @@ func TestListTakeProfitStackSizesUsesLegSizes(t *testing.T) {
 	require.Equal(t, latestSizes, got)
 }
 
+func TestListTakeProfitStackSizesDoesNotErrorWhenStackIncomplete(t *testing.T) {
+	store := newTestStorage(t)
+	ctx := context.Background()
+
+	const (
+		dealID    = 4242
+		stackSize = 3
+	)
+
+	event := tc.BotEvent{
+		CreatedAt:     time.Date(2025, time.November, 19, 3, 0, 0, 0, time.UTC),
+		Action:        tc.BotEventActionPlace,
+		Coin:          "DOGE",
+		Type:          tc.SELL,
+		Status:        "Active",
+		Size:          250,
+		OrderType:     tc.MarketOrderDealOrderTypeTakeProfit,
+		OrderSize:     stackSize,
+		OrderPosition: 0,
+		Text:          "only first leg persisted",
+	}
+
+	oid := orderid.OrderId{BotID: 16601256, DealID: dealID, BotEventID: 1}
+	_, err := store.RecordThreeCommasBotEvent(ctx, oid, event)
+	require.NoError(t, err)
+
+	_, err = store.ListTakeProfitStackSizes(ctx, orderid.OrderId{BotID: 16601256, DealID: dealID}, stackSize)
+	require.NoError(t, err, "expected storage to tolerate partially-synced TP stacks")
+}
+
 func TestLoadTakeProfitForDeal(t *testing.T) {
 	store := newTestStorage(t)
 	ctx := context.Background()

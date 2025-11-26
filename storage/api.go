@@ -484,9 +484,11 @@ FROM threecommas_botevents`)
 	}
 
 	for oidHex, indexes := range byOrderId {
-		rowLogger := s.logger.WithGroup("ListOrders:submission").With(
-			slog.String("order_id", oidHex),
-		)
+		// useful for intense debugging
+		// rowLogger := s.logger.WithGroup("ListOrders:submission").With(
+		// 	slog.String("order_id", oidHex),
+		// )
+		rowLogger := slog.New(slog.DiscardHandler)
 		if len(indexes) == 0 {
 			continue
 		}

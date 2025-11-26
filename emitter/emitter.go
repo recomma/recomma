@@ -98,6 +98,10 @@ type hyperliquidExchange interface {
 	ModifyOrder(ctx context.Context, req hyperliquid.ModifyOrderRequest) (hyperliquid.OrderStatus, error)
 }
 
+type hyperliquidStatusClient interface {
+	QueryOrderByCloid(ctx context.Context, cloid string) (*hyperliquid.OrderQueryResult, error)
+}
+
 type HyperLiquidEmitterConfig struct {
 	MaxIOCRetries       int
 	InitialIOCOffsetBps float64
@@ -109,7 +113,10 @@ var defaultHyperLiquidEmitterConfig = HyperLiquidEmitterConfig{
 	MaxIOCRetries: 3,
 }
 
-const iocRetryBumpRatio = 0.0005
+const (
+	iocRetryBumpRatio                 = 0.0005
+	missingModifyResponseDataFragment = "missing response.data field in successful response"
+)
 
 type iocRetryOrderId struct {
 	count     int
@@ -131,6 +138,7 @@ type HyperLiquidEmitter struct {
 	wsClients    map[recomma.VenueID]*ws.Client
 	primaryVenue recomma.VenueID
 	constraints  Constraints
+	statusClient hyperliquidStatusClient
 }
 
 func NewHyperLiquidEmitter(exchange hyperliquidExchange, primaryVenue recomma.VenueID, wsClient *ws.Client, store *storage.Storage, constraints Constraints, opts ...HyperLiquidEmitterOption) *HyperLiquidEmitter {
@@ -179,6 +187,14 @@ func WithHyperLiquidRateGate(gate RateGate) HyperLiquidEmitterOption {
 	return func(e *HyperLiquidEmitter) {
 		if gate != nil {
 			e.gate = gate
+		}
+	}
+}
+
+func WithHyperLiquidStatusClient(client hyperliquidStatusClient) HyperLiquidEmitterOption {
+	return func(e *HyperLiquidEmitter) {
+		if client != nil {
+			e.statusClient = client
 		}
 	}
 }
@@ -544,7 +560,11 @@ func (e *HyperLiquidEmitter) submitModify(
 	w recomma.OrderWork,
 	req hyperliquid.ModifyOrderRequest,
 ) (*hyperliquid.OrderStatus, error) {
-	status, err := e.exchange.ModifyOrder(ctx, req)
+	resp, err := e.exchange.ModifyOrder(ctx, req)
+	var status *hyperliquid.OrderStatus
+	if err == nil {
+		status = &resp
+	}
 	if err != nil {
 		// If HL rate limits (address-based or IP-based), apply a cooldown.
 		if strings.Contains(err.Error(), "429") || strings.Contains(strings.ToLower(err.Error()), "rate limit") {
@@ -552,17 +572,65 @@ func (e *HyperLiquidEmitter) submitModify(
 			// HL allows ~1 action per 10s when address-limited.
 			e.applyCooldown(10 * time.Second)
 		}
-		// We received an empty response, we should query HL and ask if the Modify happened before we throw an error
-		if strings.Contains(err.Error(), "missing response.data field in successful response") {
-			return nil, fmt.Errorf("modify error was successful but returned an error: %w", err)
+		// We received an empty response, attempt to verify via the info client before failing.
+		if strings.Contains(err.Error(), missingModifyResponseDataFragment) {
+			status, err = e.confirmModifyViaStatus(ctx, w, req)
+			if err == nil {
+				logger.Info("modify verified via info fallback after empty response", slog.String("cloid", req.Cloid.Value))
+			} else {
+				return nil, fmt.Errorf("modify error was successful but returned an error: %w", err)
+			}
+		} else {
+			logger.Warn("could not modify order", slog.String("error", err.Error()), slog.Any("action", req))
+			return nil, fmt.Errorf("could not modify order: %w", err)
 		}
-		logger.Warn("could not modify order", slog.String("error", err.Error()), slog.Any("action", req))
-		return nil, fmt.Errorf("could not modify order: %w", err)
 	}
 	if err := e.store.AppendHyperliquidModify(ctx, w.Identifier, req, w.BotEvent.RowID); err != nil {
 		logger.Warn("could not add to store", slog.String("error", err.Error()))
 	}
-	return &status, nil
+	return status, nil
+}
+
+func (e *HyperLiquidEmitter) confirmModifyViaStatus(
+	ctx context.Context,
+	w recomma.OrderWork,
+	req hyperliquid.ModifyOrderRequest,
+) (*hyperliquid.OrderStatus, error) {
+	if e.statusClient == nil {
+		return nil, fmt.Errorf("status client unavailable for venue %s", w.Identifier.Venue())
+	}
+	if req.Cloid == nil {
+		return nil, errors.New("modify verification requires cloid")
+	}
+
+	result, err := e.statusClient.QueryOrderByCloid(ctx, req.Cloid.Value)
+	if err != nil {
+		return nil, fmt.Errorf("query order status: %w", err)
+	}
+
+	wsOrder, err := hl.OrderQueryResultToWsOrder(w.OrderId, result)
+	if err != nil {
+		return nil, fmt.Errorf("convert queried order: %w", err)
+	}
+	if wsOrder == nil {
+		return nil, fmt.Errorf("order status unavailable for %s", req.Cloid.Value)
+	}
+
+	if !ordersMatch(wsOrder, &req.Order, req.Order) {
+		return nil, fmt.Errorf("queried order does not match desired state")
+	}
+
+	res := &hyperliquid.OrderStatus{
+		Resting: &hyperliquid.OrderStatusResting{
+			Oid:    wsOrder.Order.Oid,
+			Status: string(wsOrder.Status),
+		},
+	}
+	if wsOrder.Order.Cloid != nil {
+		res.Resting.ClientID = wsOrder.Order.Cloid
+	}
+
+	return res, nil
 }
 
 func requestedOrderSize(action recomma.Action) float64 {

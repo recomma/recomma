@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -77,6 +78,23 @@ type recordingRateGate struct {
 	waitCalls int
 	cooldowns []time.Duration
 	waitErr   error
+}
+
+type stubStatusClient struct {
+	mu         sync.Mutex
+	result     *hyperliquid.OrderQueryResult
+	err        error
+	queriedIDs []string
+}
+
+func (s *stubStatusClient) QueryOrderByCloid(_ context.Context, cloid string) (*hyperliquid.OrderQueryResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.queriedIDs = append(s.queriedIDs, cloid)
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.result, nil
 }
 
 func (g *recordingRateGate) Wait(context.Context) error {
@@ -282,12 +300,11 @@ func TestHyperLiquidEmitterIOCRetriesWarnOnFailure(t *testing.T) {
 }
 
 func TestHyperLiquidEmitterTreatsMissingResponseDataAsSuccess(t *testing.T) {
-	// TODO: fix this!
-	t.Skip()
 	t.Parallel()
 
 	ctx := context.Background()
 	exchange := &missingDataExchange{}
+	statusClient := &stubStatusClient{}
 	store := newTestStore(t)
 	ts := mockserver.NewTestServer(t)
 	info := hl.NewInfo(context.Background(), hl.ClientConfig{BaseURL: ts.URL(), Wallet: "0xabc"})
@@ -296,11 +313,32 @@ func TestHyperLiquidEmitterTreatsMissingResponseDataAsSuccess(t *testing.T) {
 	assignment, err := store.ResolveDefaultAlias(ctx)
 	require.NoError(t, err)
 
-	emitter := NewHyperLiquidEmitter(exchange, assignment.VenueID, nil, store, cache)
-
 	oid := orderid.OrderId{BotID: 123, DealID: 456, BotEventID: 789}
 	ident := recomma.NewOrderIdentifier(assignment.VenueID, "0xabc", oid)
 	cloid := oid.Hex()
+
+	statusClient.result = &hyperliquid.OrderQueryResult{
+		Status: hyperliquid.OrderQueryStatusSuccess,
+		Order: hyperliquid.OrderQueryResponse{
+			Status:          hyperliquid.OrderStatusValueOpen,
+			StatusTimestamp: time.Now().UnixMilli(),
+			Order: hyperliquid.QueriedOrder{
+				Coin:      "DOGE",
+				Side:      "S",
+				LimitPx:   fmt.Sprintf("%.3f", 0.172),
+				Sz:        strconv.FormatFloat(310, 'f', -1, 64),
+				Oid:       123456,
+				Cloid:     &cloid,
+				OrigSz:    strconv.FormatFloat(310, 'f', -1, 64),
+				Tif:       hyperliquid.TifGtc,
+				ReduceOnly: true,
+			},
+		},
+	}
+
+	emitter := NewHyperLiquidEmitter(exchange, assignment.VenueID, nil, store, cache,
+		WithHyperLiquidStatusClient(statusClient),
+	)
 
 	createReq := hyperliquid.CreateOrderRequest{
 		Coin:          "DOGE",
@@ -339,6 +377,71 @@ func TestHyperLiquidEmitterTreatsMissingResponseDataAsSuccess(t *testing.T) {
 
 	err = emitter.Emit(ctx, work)
 	require.NoError(t, err, "modify should succeed even when exchange omits response.data")
+	require.Equal(t, []string{cloid}, statusClient.queriedIDs)
+}
+
+type filledOrderExchange struct {
+	stubExchange
+}
+
+func (f *filledOrderExchange) ModifyOrder(ctx context.Context, req hyperliquid.ModifyOrderRequest) (hyperliquid.OrderStatus, error) {
+	return hyperliquid.OrderStatus{}, fmt.Errorf("failed to modify order: Cannot modify canceled or filled order")
+}
+
+func TestHyperLiquidEmitterTreatsFilledModifyErrorAsTerminalSuccess(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	exchange := &filledOrderExchange{}
+	store := newTestStore(t)
+	ts := mockserver.NewTestServer(t)
+	info := hl.NewInfo(context.Background(), hl.ClientConfig{BaseURL: ts.URL(), Wallet: "0xabc"})
+	cache := hl.NewOrderIdCache(info)
+
+	assignment, err := store.ResolveDefaultAlias(ctx)
+	require.NoError(t, err)
+
+	emitter := NewHyperLiquidEmitter(exchange, assignment.VenueID, nil, store, cache)
+
+	oid := orderid.OrderId{BotID: 321, DealID: 654, BotEventID: 987}
+	ident := recomma.NewOrderIdentifier(assignment.VenueID, "0xabc", oid)
+	cloid := oid.Hex()
+
+	createReq := hyperliquid.CreateOrderRequest{
+		Coin:          "DOGE",
+		IsBuy:         true,
+		Price:         0.16122,
+		Size:          249,
+		ClientOrderID: &cloid,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
+		},
+	}
+	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, ident, createReq, 0))
+
+	modifyReq := hyperliquid.ModifyOrderRequest{
+		Cloid: &hyperliquid.Cloid{Value: cloid},
+		Order: hyperliquid.CreateOrderRequest{
+			Coin:          "DOGE",
+			IsBuy:         true,
+			Price:         0.16122,
+			Size:          249,
+			ClientOrderID: &cloid,
+			OrderType: hyperliquid.OrderType{
+				Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
+			},
+		},
+	}
+
+	work := recomma.OrderWork{
+		Identifier: ident,
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionModify, Modify: modifyReq},
+		BotEvent:   recomma.BotEvent{RowID: 99},
+	}
+
+	err = emitter.Emit(ctx, work)
+	require.NoError(t, err, "modify after fill should be treated as terminal success")
 }
 
 func TestHyperLiquidEmitterUsesInjectedRateGate(t *testing.T) {

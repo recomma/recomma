@@ -7,10 +7,10 @@ import (
 	"github.com/sonirico/go-hyperliquid"
 )
 
-// orderResultToWsOrder converts an order status query result into the WsOrder
-// format used by websocket updates. Returns nil when the result does not
-// contain a valid order payload (e.g. unknown CLOID).
-func orderResultToWsOrder(oid orderid.OrderId, result *hyperliquid.OrderQueryResult) (*hyperliquid.WsOrder, error) {
+// OrderQueryResultToWsOrder converts an order status query result into the
+// WsOrder format used by websocket updates. Returns nil when the result does
+// not contain a valid order payload (e.g. unknown CLOID).
+func OrderQueryResultToWsOrder(oid orderid.OrderId, result *hyperliquid.OrderQueryResult) (*hyperliquid.WsOrder, error) {
 	if result == nil {
 		return nil, fmt.Errorf("order query result is nil")
 	}

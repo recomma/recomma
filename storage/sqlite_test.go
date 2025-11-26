@@ -1086,8 +1086,10 @@ func TestListTakeProfitStackSizesDoesNotErrorWhenStackIncomplete(t *testing.T) {
 	_, err := store.RecordThreeCommasBotEvent(ctx, oid, event)
 	require.NoError(t, err)
 
-	_, err = store.ListTakeProfitStackSizes(ctx, orderid.OrderId{BotID: 16601256, DealID: dealID}, stackSize)
+	got, err := store.ListTakeProfitStackSizes(ctx, orderid.OrderId{BotID: 16601256, DealID: dealID}, stackSize)
 	require.NoError(t, err, "expected storage to tolerate partially-synced TP stacks")
+	require.Len(t, got, 1)
+	require.InDelta(t, event.Size, got[0], 1e-9)
 }
 
 func TestLoadTakeProfitForDeal(t *testing.T) {

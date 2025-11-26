@@ -129,6 +129,12 @@ func (s *Service) Scale(ctx context.Context, req Request, order *hyperliquid.Cre
 			if req.StackIndex >= 0 && req.StackIndex < len(stackRounded) {
 				roundedSize = stackRounded[req.StackIndex]
 			}
+		} else if len(stackSizes) > 0 {
+			s.logger.Debug("partial stack sizes resolved",
+				slog.Uint64("deal_id", uint64(req.OrderId.DealID)),
+				slog.Int("stack_index", req.StackIndex),
+				slog.Int("stack_size", req.StackSize),
+				slog.Int("resolved", len(stackSizes)))
 		}
 	}
 

@@ -482,6 +482,88 @@ func TestReconcileTakeProfitsDropsCancelledTakeProfits(t *testing.T) {
 	require.Empty(t, secondEmitter.Actions(), "take-profit cancels should not be re-enqueued once pruned")
 }
 
+func TestMarkOrderCancelledDoesNotFabricateFilledQty(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := newTestStore(t)
+	logger := newTestLogger()
+	tracker := New(store, logger)
+
+	const (
+		dealID = uint32(9052)
+		botID  = uint32(70)
+		coin   = "SEI"
+	)
+
+	createPrimaryVenue(t, store)
+
+	require.NoError(t, store.UpsertBotVenueAssignment(ctx, botID, "hyperliquid:test", true))
+	recordDeal(t, store, dealID, botID, coin)
+
+	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
+	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
+	tpIdent := defaultIdentifier(t, store, ctx, botID, tpOid)
+	now := time.Now()
+
+	baseEvent := tc.BotEvent{
+		CreatedAt: now.Add(-8 * time.Minute),
+		Action:    tc.BotEventActionExecute,
+		Coin:      coin,
+		Type:      tc.BUY,
+		Status:    tc.Filled,
+		Price:     1.05,
+		Size:      4,
+		OrderType: tc.MarketOrderDealOrderTypeBase,
+		IsMarket:  true,
+		Text:      "base fill",
+	}
+	require.NoError(t, recordEvent(store, baseOid, baseEvent))
+	require.NoError(t, recordStatus(store, baseIdent, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 4, 0, 1.05, now.Add(-7*time.Minute))))
+
+	tpEvent := tc.BotEvent{
+		CreatedAt: now.Add(-6 * time.Minute),
+		Action:    tc.BotEventActionPlace,
+		Coin:      coin,
+		Type:      tc.SELL,
+		Status:    tc.Active,
+		Price:     1.15,
+		Size:      4,
+		OrderType: tc.MarketOrderDealOrderTypeTakeProfit,
+		Text:      "tp placed",
+	}
+	require.NoError(t, recordEvent(store, tpOid, tpEvent))
+	tpStatus := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueOpen, 4, 4, 1.15, now.Add(-5*time.Minute))
+	require.NoError(t, recordStatus(store, tpIdent, tpStatus))
+
+	require.NoError(t, tracker.Rebuild(ctx))
+
+	snapshot, ok := tracker.Snapshot(dealID)
+	require.True(t, ok)
+	require.InDelta(t, 0, snapshot.Position.TotalSellQty, 1e-6, "unfilled take profit should not contribute to sells")
+	require.InDelta(t, baseEvent.Size, snapshot.Position.NetQty, 1e-6, "base position should remain long before cancel")
+
+	tracker.markOrderCancelled(tpIdent)
+
+	cancelledSnapshot, ok := tracker.Snapshot(dealID)
+	require.True(t, ok)
+	require.InDelta(t, 0, cancelledSnapshot.Position.TotalSellQty, 1e-6, "cancelling should not fabricate fills")
+	require.InDelta(t, baseEvent.Size, cancelledSnapshot.Position.NetQty, 1e-6, "net position should remain long after cancel")
+
+	var tpSnapshot *OrderSnapshot
+	for i := range cancelledSnapshot.Orders {
+		if cancelledSnapshot.Orders[i].OrderId.Hex() == tpOid.Hex() {
+			tpSnapshot = &cancelledSnapshot.Orders[i]
+			break
+		}
+	}
+	require.NotNil(t, tpSnapshot, "expected to track cancelled take-profit")
+	require.Equal(t, hyperliquid.OrderStatusValueCanceled, tpSnapshot.Status)
+	require.InDelta(t, 0, tpSnapshot.FilledQty, 1e-6, "filled quantity must stay at actual fill size")
+	require.InDelta(t, 0, tpSnapshot.RemainingQty, 1e-6, "cancelled orders should have no remaining qty")
+}
+
 func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 	t.Parallel()
 

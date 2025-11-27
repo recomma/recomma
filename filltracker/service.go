@@ -382,9 +382,6 @@ func (s *Service) markOrderCancelled(ident recomma.OrderIdentifier) {
 
 	now := time.Now().UTC()
 	state.remainingQty = 0
-	if state.originalQty > 0 && state.filledQty < state.originalQty {
-		state.filledQty = state.originalQty
-	}
 	state.status = hyperliquid.OrderStatusValueCanceled
 	state.statusObserved = now
 	state.lastUpdate = now

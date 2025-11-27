@@ -363,19 +363,10 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 		missingTargets := missingAssignmentTargets(oid, assignments, storedIdents)
 		replayAvailable := hasLocalOrder && len(missingTargets) > 0 && latestEvent != nil && latestEvent.Status == tc.Active
 
-		forceSkipExisting := replayAvailable && action.Type == recomma.ActionModify
-		if forceSkipExisting {
-			orderLogger.Debug("skipping modify emission for existing venues; replay pending")
-			shouldEmit = false
-		}
-
 		if fillSnapshot != nil && latestEvent != nil {
-			adjusted, emit := e.adjustActionWithTracker(currency, oid, *latestEvent, action, fillSnapshot, orderLogger, forceSkipExisting)
+			adjusted, emit := e.adjustActionWithTracker(currency, oid, *latestEvent, action, fillSnapshot, orderLogger, false)
 			action = adjusted
 			shouldEmit = emit
-			if forceSkipExisting {
-				shouldEmit = false
-			}
 		}
 
 		var emissions []emissionPlan

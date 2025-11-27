@@ -264,7 +264,7 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 			},
 		},
 		{
-			name: "replay skips modify emission for existing venue",
+			name: "replay emits modify for existing venue while creating missing",
 			events: []tc.BotEvent{
 				activeEvent,
 				modifyEvent,
@@ -298,8 +298,11 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 				primaryIdent := recomma.NewOrderIdentifier(defaultVenue, "hl-primary-wallet", activeOid)
 				require.NoError(t, h.store.RecordHyperliquidOrderRequest(ctx, primaryIdent, createReq, inserted))
 			},
-			wantActions: []recomma.ActionType{recomma.ActionCreate},
-			wantVenues:  []recomma.VenueID{recomma.VenueID("hyperliquid:secondary")},
+			wantActions: []recomma.ActionType{recomma.ActionModify, recomma.ActionCreate},
+			wantVenues: []recomma.VenueID{
+				recomma.VenueID("hyperliquid:default"),
+				recomma.VenueID("hyperliquid:secondary"),
+			},
 			wantStatuses: []tc.MarketOrderStatusString{
 				tc.MarketOrderStatusString(tc.Active),
 				tc.MarketOrderStatusString(tc.Active),
@@ -345,6 +348,84 @@ func TestProcessDeal_TableDriven(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestProcessDeal_ReplayDoesNotSuppressModifyEmission(t *testing.T) {
+	t.Parallel()
+
+	const (
+		botID  = uint32(4242)
+		dealID = uint32(9001)
+	)
+
+	base := time.Date(2025, 6, 7, 8, 9, 10, 0, time.UTC)
+
+	activeEvent, activeOid := testutil.NewBotEvent(t, base, botID, dealID)
+	modifyEvent, _ := testutil.NewBotEvent(
+		t,
+		base.Add(45*time.Second),
+		botID,
+		dealID,
+		testutil.WithType(tc.MarketOrderOrderType(tc.SELL)),
+	)
+
+	h := newHarness(t, botID, dealID)
+	defer h.store.Close()
+
+	ctx := h.ctx
+
+	require.NoError(t, h.store.EnsureDefaultVenueWallet(ctx, "hl-primary-wallet"))
+
+	const (
+		defaultVenue    = recomma.VenueID("hyperliquid:default")
+		secondaryVenue  = recomma.VenueID("hyperliquid:secondary")
+		secondaryWallet = "hl-secondary-wallet"
+	)
+
+	_, err := h.store.UpsertVenue(ctx, string(secondaryVenue), api.VenueUpsertRequest{
+		Type:        "hyperliquid",
+		DisplayName: "Secondary Hyperliquid Venue",
+		Wallet:      secondaryWallet,
+	})
+	require.NoError(t, err)
+	require.NoError(t, h.store.UpsertBotVenueAssignment(ctx, h.key.BotID, defaultVenue, true))
+	require.NoError(t, h.store.UpsertBotVenueAssignment(ctx, h.key.BotID, secondaryVenue, false))
+
+	inserted, err := h.store.RecordThreeCommasBotEvent(ctx, activeOid, activeEvent)
+	require.NoError(t, err)
+	require.NotZero(t, inserted)
+
+	be := recomma.BotEvent{RowID: inserted, BotEvent: activeEvent}
+	createReq := adapter.ToCreateOrderRequest(h.deal.ToCurrency, be, activeOid)
+	primaryIdent := recomma.NewOrderIdentifier(defaultVenue, "hl-primary-wallet", activeOid)
+	require.NoError(t, h.store.RecordHyperliquidOrderRequest(ctx, primaryIdent, createReq, inserted))
+
+	err = h.engine.processDeal(ctx, h.key, h.deal.ToCurrency, []tc.BotEvent{activeEvent, modifyEvent})
+	require.NoError(t, err)
+
+	require.Len(t, h.emitter.items, 2)
+
+	modifyEmission := h.emitter.items[0]
+	createReplay := h.emitter.items[1]
+
+	require.Equal(t, recomma.ActionModify, modifyEmission.Action.Type)
+	require.Equal(t, defaultVenue, modifyEmission.Identifier.VenueID)
+	require.Equal(t, recomma.ActionCreate, createReplay.Action.Type)
+	require.Equal(t, secondaryVenue, createReplay.Identifier.VenueID)
+
+	for _, emission := range h.emitter.items {
+		if emission.Identifier.VenueID == secondaryVenue {
+			require.Equal(t, recomma.ActionCreate, emission.Action.Type)
+		}
+	}
+
+	// The modification should be recorded alongside the replay to missing venues.
+	fp := modifyEvent.FingerprintAsID()
+	history, err := h.store.ListEventsForOrder(ctx, h.key.BotID, h.key.DealID, fp)
+	require.NoError(t, err)
+	require.Len(t, history, 2)
+	require.Equal(t, tc.MarketOrderStatusString(tc.Active), history[0].Status)
+	require.Equal(t, tc.MarketOrderStatusString(tc.Active), history[1].Status)
 }
 
 func TestProcessDeal_TakeProfitSizedFromTracker(t *testing.T) {

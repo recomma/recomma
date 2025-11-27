@@ -363,19 +363,10 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 		missingTargets := missingAssignmentTargets(oid, assignments, storedIdents)
 		replayAvailable := hasLocalOrder && len(missingTargets) > 0 && latestEvent != nil && latestEvent.Status == tc.Active
 
-		forceSkipExisting := replayAvailable && action.Type == recomma.ActionModify
-		if forceSkipExisting {
-			orderLogger.Debug("skipping modify emission for existing venues; replay pending")
-			shouldEmit = false
-		}
-
 		if fillSnapshot != nil && latestEvent != nil {
-			adjusted, emit := e.adjustActionWithTracker(currency, oid, *latestEvent, action, fillSnapshot, orderLogger, forceSkipExisting)
+			adjusted, emit := e.adjustActionWithTracker(currency, oid, *latestEvent, action, fillSnapshot, orderLogger, false)
 			action = adjusted
 			shouldEmit = emit
-			if forceSkipExisting {
-				shouldEmit = false
-			}
 		}
 
 		var emissions []emissionPlan
@@ -392,6 +383,8 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 			}
 
 			targets := resolveOrderTargets(oid, assignments, storedIdents, action.Type, defaultAssignment)
+			// resolveOrderTargets only returns identifiers with prior submissions for modify/cancel actions;
+			// newly assigned venues without a submission are handled by the replay block below.
 			if len(targets) == 0 && (action.Type == recomma.ActionModify || action.Type == recomma.ActionCancel) {
 				orderLogger.Warn("no submission targets for action",
 					slog.String("action_type", action.Type.String()),

@@ -1092,6 +1092,50 @@ func TestListTakeProfitStackSizesDoesNotErrorWhenStackIncomplete(t *testing.T) {
 	require.InDelta(t, event.Size, got[0], 1e-9)
 }
 
+func TestListTakeProfitStackSizesNormalizesDealStepIds(t *testing.T) {
+	store := newTestStorage(t)
+	ctx := context.Background()
+
+	const (
+		botID     = uint32(5511)
+		dealID    = uint32(7788)
+		stackSize = 2
+	)
+
+	base := time.Date(2025, time.December, 5, 17, 0, 0, 0, time.UTC)
+	f32 := func(v float32) *float32 { return &v }
+	i := func(v int) *int { return &v }
+
+	deal := tc.Deal{
+		Id:              int(dealID),
+		BotId:           int(botID),
+		CreatedAt:       base,
+		UpdatedAt:       base,
+		BaseOrderVolume: "200",
+		TakeProfitSteps: []struct {
+			AmountPercentage   *float32                     `json:"amount_percentage,omitempty"`
+			Editable           *bool                        `json:"editable,omitempty"`
+			ExecutionTimestamp nullable.Nullable[time.Time] `json:"execution_timestamp,omitempty"`
+			Id                 *int                         `json:"id,omitempty"`
+			InitialAmount      *string                      `json:"initial_amount,omitempty"`
+			PanicSellable      *bool                        `json:"panic_sellable,omitempty"`
+			Price              *string                      `json:"price,omitempty"`
+			ProfitPercentage   *float32                     `json:"profit_percentage,omitempty"`
+			Status             *string                      `json:"status,omitempty"`
+			TradeId            *int                         `json:"trade_id,omitempty"`
+		}{
+			{Id: i(1), AmountPercentage: f32(40)},
+			{Id: i(2), AmountPercentage: f32(60)},
+		},
+	}
+
+	require.NoError(t, store.RecordThreeCommasDeal(ctx, deal))
+
+	got, err := store.ListTakeProfitStackSizes(ctx, orderid.OrderId{BotID: botID, DealID: dealID}, stackSize)
+	require.NoError(t, err)
+	require.Equal(t, []float64{80, 120}, got)
+}
+
 func TestLoadTakeProfitForDeal(t *testing.T) {
 	store := newTestStorage(t)
 	ctx := context.Background()

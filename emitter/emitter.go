@@ -420,11 +420,11 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 
 			order := e.setMarketPrice(ctx, wsClient, w.Action.Create)
 			order = e.applyIOCOffset(order, attempt)
-			constrainedPrice, err := e.constrainPrice(ctx, order.Coin, order.Price)
-			if err != nil {
+			if constrainedPrice, err := e.constrainPrice(ctx, order.Coin, order.Price); err != nil {
 				logger.Warn("could not constrain price", slog.String("error", err.Error()))
+			} else {
+				order.Price = constrainedPrice
 			}
-			order.Price = constrainedPrice
 			w.Action.Create = order
 
 			status, err := e.exchange.Order(ctx, w.Action.Create, nil)

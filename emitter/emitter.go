@@ -116,6 +116,7 @@ var defaultHyperLiquidEmitterConfig = HyperLiquidEmitterConfig{
 const (
 	iocRetryBumpRatio                 = 0.0005
 	missingModifyResponseDataFragment = "missing response.data field in successful response"
+	cannotModifyFilledFragment        = "cannot modify canceled or filled order"
 )
 
 type iocRetryOrderId struct {
@@ -566,8 +567,9 @@ func (e *HyperLiquidEmitter) submitModify(
 		status = &resp
 	}
 	if err != nil {
+		errMsg := strings.ToLower(err.Error())
 		// If HL rate limits (address-based or IP-based), apply a cooldown.
-		if strings.Contains(err.Error(), "429") || strings.Contains(strings.ToLower(err.Error()), "rate limit") {
+		if strings.Contains(err.Error(), "429") || strings.Contains(errMsg, "rate limit") {
 			logger.Debug("hit ratelimit, cooldown of 10s applied")
 			// HL allows ~1 action per 10s when address-limited.
 			e.applyCooldown(10 * time.Second)
@@ -580,6 +582,13 @@ func (e *HyperLiquidEmitter) submitModify(
 			} else {
 				return nil, fmt.Errorf("modify error was successful but returned an error: %w", err)
 			}
+		} else if strings.Contains(errMsg, cannotModifyFilledFragment) {
+			cloid := ""
+			if req.Cloid != nil {
+				cloid = req.Cloid.Value
+			}
+			logger.Info("modify skipped because order already filled or canceled", slog.String("cloid", cloid))
+			err = nil
 		} else {
 			logger.Warn("could not modify order", slog.String("error", err.Error()), slog.Any("action", req))
 			return nil, fmt.Errorf("could not modify order: %w", err)

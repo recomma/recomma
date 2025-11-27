@@ -358,11 +358,11 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 	switch w.Action.Type {
 	case recomma.ActionCreate:
 		order := e.setMarketPrice(ctx, wsClient, w.Action.Create)
-		constrainedPrice, err := e.constrainPrice(ctx, order.Coin, order.Price)
-		if err != nil {
+		if constrainedPrice, err := e.constrainPrice(ctx, order.Coin, order.Price); err != nil {
 			logger.Warn("could not constrain price", slog.String("error", err.Error()))
+		} else {
+			order.Price = constrainedPrice
 		}
-		order.Price = constrainedPrice
 		w.Action.Create = order
 
 		if wsClient != nil {
@@ -505,11 +505,11 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 
 	case recomma.ActionModify:
 		order := e.setMarketPrice(ctx, wsClient, w.Action.Modify.Order)
-		constrainedPrice, err := e.constrainPrice(ctx, order.Coin, order.Price)
-		if err != nil {
+		if constrainedPrice, err := e.constrainPrice(ctx, order.Coin, order.Price); err != nil {
 			logger.Warn("could not constrain price", slog.String("error", err.Error()))
+		} else {
+			order.Price = constrainedPrice
 		}
-		order.Price = constrainedPrice
 		w.Action.Modify.Order = order
 		status, err := e.submitModify(ctx, logger, w, w.Action.Modify)
 		if err != nil {

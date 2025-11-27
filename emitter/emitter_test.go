@@ -61,6 +61,17 @@ func (c constraintsStub) Resolve(context.Context, string) (hl.CoinConstraints, e
 	return c.constraint, nil
 }
 
+type failingConstraints struct {
+	err error
+}
+
+func (f failingConstraints) Resolve(context.Context, string) (hl.CoinConstraints, error) {
+	if f.err != nil {
+		return hl.CoinConstraints{}, f.err
+	}
+	return hl.CoinConstraints{}, fmt.Errorf("constraint resolution failed")
+}
+
 type missingDataExchange struct {
 	stubExchange
 	lastModify hyperliquid.ModifyOrderRequest
@@ -842,6 +853,48 @@ func TestHyperLiquidEmitterAppliesConstraintsBeforeSubmitting(t *testing.T) {
 	exchange.mu.Unlock()
 
 	require.InDelta(t, expected, gotPrice, 1e-9, "emitter must snap price to constraints before submission")
+}
+
+func TestHyperLiquidEmitterKeepsOriginalPriceWhenConstraintsFail(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := newTestStore(t)
+	exchange := &stubExchange{}
+
+	origPrice := 0.4567
+	failure := failingConstraints{err: fmt.Errorf("constraint cache miss")}
+
+	emitter := NewHyperLiquidEmitter(exchange, "", nil, store, failure)
+
+	oid := orderid.OrderId{BotID: 11, DealID: 22, BotEventID: 33}
+	cloid := oid.Hex()
+	order := hyperliquid.CreateOrderRequest{
+		Coin:          "DOGE",
+		IsBuy:         true,
+		Price:         origPrice,
+		Size:          100,
+		ClientOrderID: &cloid,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
+		},
+	}
+
+	work := recomma.OrderWork{
+		Identifier: defaultIdentifier(t, store, ctx, oid),
+		OrderId:    oid,
+		Action:     recomma.Action{Type: recomma.ActionCreate, Create: order},
+		BotEvent:   recomma.BotEvent{RowID: 7},
+	}
+
+	require.NoError(t, emitter.Emit(ctx, work), "constraint lookup failure should not abort the create")
+
+	exchange.mu.Lock()
+	require.Len(t, exchange.orders, 1)
+	got := exchange.orders[0].Price
+	exchange.mu.Unlock()
+
+	require.InDelta(t, origPrice, got, 1e-9, "original price must be preserved when constraints fail")
 }
 
 func newTestStore(t *testing.T) *storage.Storage {

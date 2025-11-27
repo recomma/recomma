@@ -129,6 +129,12 @@ func (s *Service) Scale(ctx context.Context, req Request, order *hyperliquid.Cre
 			if req.StackIndex >= 0 && req.StackIndex < len(stackRounded) {
 				roundedSize = stackRounded[req.StackIndex]
 			}
+		} else if len(stackSizes) > 0 {
+			s.logger.Debug("partial stack sizes resolved",
+				slog.Uint64("deal_id", uint64(req.OrderId.DealID)),
+				slog.Int("stack_index", req.StackIndex),
+				slog.Int("stack_size", req.StackSize),
+				slog.Int("resolved", len(stackSizes)))
 		}
 	}
 
@@ -328,13 +334,16 @@ func BuildRequest(ident recomma.OrderIdentifier, evt tc.BotEvent, order hyperliq
 	if order.IsBuy {
 		side = "buy"
 	}
-	stackIndex := 0
-	if evt.OrderPosition > 0 {
-		stackIndex = evt.OrderPosition - 1
+	stackIndex := evt.OrderPosition
+	if stackIndex < 0 {
+		stackIndex = 0
 	}
 	stackSize := evt.OrderSize
 	if stackSize <= 0 {
 		stackSize = 1
+	}
+	if stackIndex >= stackSize {
+		stackIndex = stackSize - 1
 	}
 
 	price := order.Price

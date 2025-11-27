@@ -10,6 +10,7 @@ import (
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/adapter"
+	"github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
@@ -33,12 +34,17 @@ func TestServiceRebuildAggregatesExecutedOrders(t *testing.T) {
 		coin   = "ETH"
 	)
 
+	createPrimaryVenue(t, store)
+
+	// mark it as primary so the alias resolver prefers it
+	require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
+
 	recordDeal(t, store, dealID, botID, coin)
 
 	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
-	baseIdent := defaultIdentifier(t, store, botID, baseOid)
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
 	takeProfitOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
-	takeProfitIdent := defaultIdentifier(t, store, botID, takeProfitOid)
+	takeProfitIdent := defaultIdentifier(t, store, ctx, botID, takeProfitOid)
 
 	baseEvent := tc.BotEvent{
 		CreatedAt:   time.Now().Add(-5 * time.Minute),
@@ -100,12 +106,17 @@ func TestServiceUpdateStatusAdjustsPosition(t *testing.T) {
 		coin   = "DOGE"
 	)
 
+	createPrimaryVenue(t, store)
+
+	// mark it as primary so the alias resolver prefers it
+	require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
+
 	recordDeal(t, store, dealID, botID, coin)
 
 	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
 	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
-	baseIdent := defaultIdentifier(t, store, botID, baseOid)
-	tpIdent := defaultIdentifier(t, store, botID, tpOid)
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
+	tpIdent := defaultIdentifier(t, store, ctx, botID, tpOid)
 	now := time.Now()
 
 	require.NoError(t, recordEvent(store, baseOid, tc.BotEvent{
@@ -167,10 +178,15 @@ func TestReconcileTakeProfits(t *testing.T) {
 		coin   = "ARB"
 	)
 
+	createPrimaryVenue(t, store)
+
+	// mark it as primary so the alias resolver prefers it
+	require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
+
 	recordDeal(t, store, dealID, botID, coin)
 
 	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
-	tpIdent := defaultIdentifier(t, store, botID, tpOid)
+	tpIdent := defaultIdentifier(t, store, ctx, botID, tpOid)
 	now := time.Now()
 
 	require.NoError(t, recordEvent(store, tpOid, tc.BotEvent{
@@ -218,10 +234,15 @@ func TestApplyScaledOrderUpdatesSnapshot(t *testing.T) {
 		coin   = "SOL"
 	)
 
+	createPrimaryVenue(t, store)
+
+	// mark it as primary so the alias resolver prefers it
+	require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
+
 	recordDeal(t, store, dealID, botID, coin)
 
 	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
-	baseIdent := defaultIdentifier(t, store, botID, baseOid)
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
 	now := time.Now().UTC()
 
 	baseEvent := tc.BotEvent{
@@ -272,14 +293,26 @@ func TestReconcileTakeProfitsCancelsWhenFlat(t *testing.T) {
 		coin   = "APT"
 	)
 
+	flags := map[string]interface{}{"is_primary": true}
+	_, err := store.UpsertVenue(ctx, "hyperliquid:test", api.VenueUpsertRequest{
+		Type:        "hyperliquid",
+		DisplayName: "Test Venue",
+		Wallet:      "0xfeed",
+		Flags:       &flags,
+	})
+	require.NoError(t, err)
+
+	// mark it as primary so the alias resolver prefers it
+	require.NoError(t, store.UpsertBotVenueAssignment(ctx, botID, "hyperliquid:test", true))
+
 	recordDeal(t, store, dealID, botID, coin)
 
 	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
 	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
-	baseIdent := defaultIdentifier(t, store, botID, baseOid)
-	tpIdent := defaultIdentifier(t, store, botID, tpOid)
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
+	tpIdent := defaultIdentifier(t, store, ctx, botID, tpOid)
 	closeOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 3}
-	closeIdent := defaultIdentifier(t, store, botID, closeOid)
+	closeIdent := defaultIdentifier(t, store, ctx, botID, closeOid)
 	now := time.Now()
 
 	baseEvent := tc.BotEvent{
@@ -346,6 +379,191 @@ func TestReconcileTakeProfitsCancelsWhenFlat(t *testing.T) {
 	require.Equal(t, tpIdent, work.Identifier)
 }
 
+func TestReconcileTakeProfitsDropsCancelledTakeProfits(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := newTestStore(t)
+	logger := newTestLogger()
+	tracker := New(store, logger)
+
+	const (
+		dealID = uint32(9051)
+		botID  = uint32(69)
+		coin   = "OP"
+	)
+
+	flags := map[string]interface{}{"is_primary": true}
+	_, err := store.UpsertVenue(ctx, "hyperliquid:test", api.VenueUpsertRequest{
+		Type:        "hyperliquid",
+		DisplayName: "Test Venue",
+		Wallet:      "0xdeadbeef",
+		Flags:       &flags,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, store.UpsertBotVenueAssignment(ctx, botID, "hyperliquid:test", true))
+
+	recordDeal(t, store, dealID, botID, coin)
+
+	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
+	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
+	closeOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 3}
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
+	tpIdent := defaultIdentifier(t, store, ctx, botID, tpOid)
+	closeIdent := defaultIdentifier(t, store, ctx, botID, closeOid)
+	now := time.Now()
+
+	baseEvent := tc.BotEvent{
+		CreatedAt: now.Add(-12 * time.Minute),
+		Action:    tc.BotEventActionExecute,
+		Coin:      coin,
+		Type:      tc.BUY,
+		Status:    tc.Filled,
+		Price:     2.1,
+		Size:      8,
+		OrderType: tc.MarketOrderDealOrderTypeBase,
+		IsMarket:  true,
+		Text:      "base fill",
+	}
+	require.NoError(t, recordEvent(store, baseOid, baseEvent))
+	require.NoError(t, recordStatus(store, baseIdent, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 8, 0, 2.1, now.Add(-11*time.Minute))))
+
+	tpEvent := tc.BotEvent{
+		CreatedAt: now.Add(-10 * time.Minute),
+		Action:    tc.BotEventActionPlace,
+		Coin:      coin,
+		Type:      tc.SELL,
+		Status:    tc.Active,
+		Price:     2.3,
+		Size:      8,
+		OrderType: tc.MarketOrderDealOrderTypeTakeProfit,
+		Text:      "tp placed",
+	}
+	require.NoError(t, recordEvent(store, tpOid, tpEvent))
+	tpStatus := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueOpen, 8, 8, 2.3, now.Add(-9*time.Minute))
+	require.NoError(t, recordStatus(store, tpIdent, tpStatus))
+
+	closeEvent := tc.BotEvent{
+		CreatedAt: now.Add(-8 * time.Minute),
+		Action:    tc.BotEventActionExecute,
+		Coin:      coin,
+		Type:      tc.SELL,
+		Status:    tc.Filled,
+		Price:     2.15,
+		Size:      8,
+		OrderType: tc.MarketOrderDealOrderTypeManualSafety,
+		Text:      "manual exit",
+	}
+	require.NoError(t, recordEvent(store, closeOid, closeEvent))
+	closeStatus := makeStatus(closeOid, coin, "S", hyperliquid.OrderStatusValueFilled, 8, 0, 2.15, now.Add(-7*time.Minute))
+	require.NoError(t, recordStatus(store, closeIdent, closeStatus))
+
+	require.NoError(t, tracker.Rebuild(ctx))
+
+	snapshot, ok := tracker.Snapshot(dealID)
+	require.True(t, ok)
+	require.Len(t, snapshot.ActiveTakeProfits, 1, "should have one active take-profit before reconciliation")
+	require.InDelta(t, 0, snapshot.Position.NetQty, 1e-6, "deal should already be flat")
+
+	firstEmitter := &stubEmitter{}
+	tracker.ReconcileTakeProfits(ctx, firstEmitter)
+
+	firstActions := firstEmitter.Actions()
+	require.Len(t, firstActions, 1, "expected a single cancel action")
+	require.Equal(t, recomma.ActionCancel, firstActions[0].Action.Type)
+
+	snapshotAfterCancel, ok := tracker.Snapshot(dealID)
+	require.True(t, ok)
+	require.Empty(t, snapshotAfterCancel.ActiveTakeProfits, "cancelled take-profit should be pruned to avoid repeat cancels")
+
+	secondEmitter := &stubEmitter{}
+	tracker.ReconcileTakeProfits(ctx, secondEmitter)
+	require.Empty(t, secondEmitter.Actions(), "take-profit cancels should not be re-enqueued once pruned")
+}
+
+func TestMarkOrderCancelledDoesNotFabricateFilledQty(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := newTestStore(t)
+	logger := newTestLogger()
+	tracker := New(store, logger)
+
+	const (
+		dealID = uint32(9052)
+		botID  = uint32(70)
+		coin   = "SEI"
+	)
+
+	createPrimaryVenue(t, store)
+
+	require.NoError(t, store.UpsertBotVenueAssignment(ctx, botID, "hyperliquid:test", true))
+	recordDeal(t, store, dealID, botID, coin)
+
+	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
+	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
+	tpIdent := defaultIdentifier(t, store, ctx, botID, tpOid)
+	now := time.Now()
+
+	baseEvent := tc.BotEvent{
+		CreatedAt: now.Add(-8 * time.Minute),
+		Action:    tc.BotEventActionExecute,
+		Coin:      coin,
+		Type:      tc.BUY,
+		Status:    tc.Filled,
+		Price:     1.05,
+		Size:      4,
+		OrderType: tc.MarketOrderDealOrderTypeBase,
+		IsMarket:  true,
+		Text:      "base fill",
+	}
+	require.NoError(t, recordEvent(store, baseOid, baseEvent))
+	require.NoError(t, recordStatus(store, baseIdent, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, 4, 0, 1.05, now.Add(-7*time.Minute))))
+
+	tpEvent := tc.BotEvent{
+		CreatedAt: now.Add(-6 * time.Minute),
+		Action:    tc.BotEventActionPlace,
+		Coin:      coin,
+		Type:      tc.SELL,
+		Status:    tc.Active,
+		Price:     1.15,
+		Size:      4,
+		OrderType: tc.MarketOrderDealOrderTypeTakeProfit,
+		Text:      "tp placed",
+	}
+	require.NoError(t, recordEvent(store, tpOid, tpEvent))
+	tpStatus := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueOpen, 4, 4, 1.15, now.Add(-5*time.Minute))
+	require.NoError(t, recordStatus(store, tpIdent, tpStatus))
+
+	require.NoError(t, tracker.Rebuild(ctx))
+
+	snapshot, ok := tracker.Snapshot(dealID)
+	require.True(t, ok)
+	require.InDelta(t, 0, snapshot.Position.TotalSellQty, 1e-6, "unfilled take profit should not contribute to sells")
+	require.InDelta(t, baseEvent.Size, snapshot.Position.NetQty, 1e-6, "base position should remain long before cancel")
+
+	tracker.markOrderCancelled(tpIdent)
+
+	cancelledSnapshot, ok := tracker.Snapshot(dealID)
+	require.True(t, ok)
+	require.InDelta(t, 0, cancelledSnapshot.Position.TotalSellQty, 1e-6, "cancelling should not fabricate fills")
+	require.InDelta(t, baseEvent.Size, cancelledSnapshot.Position.NetQty, 1e-6, "net position should remain long after cancel")
+
+	var tpSnapshot *OrderSnapshot
+	for i := range cancelledSnapshot.Orders {
+		if cancelledSnapshot.Orders[i].OrderId.Hex() == tpOid.Hex() {
+			tpSnapshot = &cancelledSnapshot.Orders[i]
+			break
+		}
+	}
+	require.NotNil(t, tpSnapshot, "expected to track cancelled take-profit")
+	require.Equal(t, hyperliquid.OrderStatusValueCanceled, tpSnapshot.Status)
+	require.InDelta(t, 0, tpSnapshot.FilledQty, 1e-6, "filled quantity must stay at actual fill size")
+	require.InDelta(t, 0, tpSnapshot.RemainingQty, 1e-6, "cancelled orders should have no remaining qty")
+}
+
 func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 	t.Parallel()
 
@@ -362,12 +580,17 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 		logger := newTestLogger()
 		tracker := New(store, logger)
 
+		createPrimaryVenue(t, store)
+
+		// mark it as primary so the alias resolver prefers it
+		require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
+
 		recordDeal(t, store, dealID, botID, coin)
 
 		baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
 		tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
-		baseIdent := defaultIdentifier(t, store, botID, baseOid)
-		tpIdent := defaultIdentifier(t, store, botID, tpOid)
+		baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
+		tpIdent := defaultIdentifier(t, store, ctx, botID, tpOid)
 		now := time.Now()
 
 		require.NoError(t, recordEvent(store, baseOid, tc.BotEvent{
@@ -429,12 +652,17 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 		logger := newTestLogger()
 		tracker := New(store, logger)
 
+		createPrimaryVenue(t, store)
+
+		// mark it as primary so the alias resolver prefers it
+		require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
+
 		recordDeal(t, store, dealID+1, botID, coin)
 
 		baseOid := orderid.OrderId{BotID: botID, DealID: dealID + 1, BotEventID: 1}
 		tpOid := orderid.OrderId{BotID: botID, DealID: dealID + 1, BotEventID: 2}
-		baseIdent := defaultIdentifier(t, store, botID, baseOid)
-		tpIdent := defaultIdentifier(t, store, botID, tpOid)
+		baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
+		tpIdent := defaultIdentifier(t, store, ctx, botID, tpOid)
 		now := time.Now()
 
 		// Base fill establishes net qty 15.
@@ -502,12 +730,17 @@ func TestEnsureTakeProfitRecreatesAfterStaleSubmission(t *testing.T) {
 		coin   = "OP"
 	)
 
+	createPrimaryVenue(t, store)
+
+	// mark it as primary so the alias resolver prefers it
+	require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
+
 	recordDeal(t, store, dealID, botID, coin)
 
 	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
 	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
-	baseIdent := defaultIdentifier(t, store, botID, baseOid)
-	tpIdent := defaultIdentifier(t, store, botID, tpOid)
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
+	tpIdent := defaultIdentifier(t, store, ctx, botID, tpOid)
 	now := time.Now()
 
 	baseEvent := tc.BotEvent{
@@ -543,7 +776,7 @@ func TestEnsureTakeProfitRecreatesAfterStaleSubmission(t *testing.T) {
 	require.True(t, create.ReduceOnly)
 	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, tpIdent, create, tpRowID))
 
-	canceled := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueCanceled, 10, 10, 37, now.Add(-7*time.Minute))
+	canceled := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValue("reduceOnlyCanceled"), 10, 10, 37, now.Add(-7*time.Minute))
 	require.NoError(t, recordStatus(store, tpIdent, canceled))
 
 	require.NoError(t, tracker.Rebuild(ctx))
@@ -579,12 +812,17 @@ func TestReconcileTakeProfitsRecreatesAfterCancelWithMissingOrderId(t *testing.T
 		coin   = "ARB"
 	)
 
+	createPrimaryVenue(t, store)
+
+	// mark it as primary so the alias resolver prefers it
+	require.NoError(t, store.UpsertBotVenueAssignment(context.Background(), botID, "hyperliquid:test", true))
+
 	recordDeal(t, store, dealID, botID, coin)
 
 	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
 	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
-	baseIdent := defaultIdentifier(t, store, botID, baseOid)
-	tpIdent := defaultIdentifier(t, store, botID, tpOid)
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
+	tpIdent := defaultIdentifier(t, store, ctx, botID, tpOid)
 	now := time.Now()
 
 	baseEvent := tc.BotEvent{
@@ -735,7 +973,7 @@ func recordStatus(store *storage.Storage, ident recomma.OrderIdentifier, status 
 	return store.RecordHyperliquidStatus(context.Background(), ident, status)
 }
 
-func defaultIdentifier(t *testing.T, store *storage.Storage, botID uint32, oid orderid.OrderId) recomma.OrderIdentifier {
+func defaultIdentifier(t *testing.T, store *storage.Storage, ctx context.Context, botID uint32, oid orderid.OrderId) recomma.OrderIdentifier {
 	t.Helper()
 
 	assignments, err := store.ListVenuesForBot(context.Background(), botID)
@@ -765,4 +1003,18 @@ func makeStatus(oid orderid.OrderId, coin, side string, status hyperliquid.Order
 
 func formatFloat(v float64) string {
 	return strconv.FormatFloat(v, 'f', -1, 64)
+}
+
+func createPrimaryVenue(t *testing.T, store *storage.Storage) {
+	t.Helper()
+	// we need to create an actual test venue
+	ctx := context.Background()
+	flags := map[string]interface{}{"is_primary": true}
+	_, err := store.UpsertVenue(ctx, "hyperliquid:test", api.VenueUpsertRequest{
+		Type:        "hyperliquid",
+		DisplayName: "Test Venue",
+		Wallet:      "0xfeed",
+		Flags:       &flags,
+	})
+	require.NoError(t, err)
 }

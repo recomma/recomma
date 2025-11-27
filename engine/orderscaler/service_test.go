@@ -42,7 +42,7 @@ func TestServiceScaleAppliesMultiplierAndRounding(t *testing.T) {
 	require.NoError(t, err)
 
 	oid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
-	ident := recomma.NewOrderIdentifier("hyperliquid:default", "default", oid)
+	ident := defaultIdentifier(t, store, ctx, oid)
 	event := tc.BotEvent{
 		CreatedAt: time.Now(),
 		Coin:      "BTC",
@@ -88,7 +88,7 @@ func TestServiceScaleRejectsBelowMinimum(t *testing.T) {
 	require.NoError(t, err)
 
 	oid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 5}
-	ident := recomma.NewOrderIdentifier("hyperliquid:default", "default", oid)
+	ident := defaultIdentifier(t, store, ctx, oid)
 	order := hyperliquid.CreateOrderRequest{Coin: "ETH", IsBuy: true, Price: 20.0, Size: 1.0}
 	event := tc.BotEvent{CreatedAt: time.Now(), Coin: "ETH", Price: 20.0, Size: 1.0}
 
@@ -135,7 +135,7 @@ func TestServiceScalePreservesTakeProfitStackRatios(t *testing.T) {
 			Size:          1.0,
 			OrderType:     tc.MarketOrderDealOrderTypeTakeProfit,
 			OrderSize:     2,
-			OrderPosition: 1,
+			OrderPosition: 0,
 		},
 		{
 			CreatedAt:     baseTime.Add(100 * time.Millisecond),
@@ -145,14 +145,14 @@ func TestServiceScalePreservesTakeProfitStackRatios(t *testing.T) {
 			Size:          1.05,
 			OrderType:     tc.MarketOrderDealOrderTypeTakeProfit,
 			OrderSize:     2,
-			OrderPosition: 2,
+			OrderPosition: 1,
 		},
 	}
 
 	var results []Result
 	for _, evt := range legEvents {
 		oid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: evt.FingerprintAsID()}
-		ident := recomma.NewOrderIdentifier("hyperliquid:default", "default", oid)
+		ident := defaultIdentifier(t, store, ctx, oid)
 		_, err := store.RecordThreeCommasBotEvent(ctx, oid, evt)
 		require.NoError(t, err)
 
@@ -179,4 +179,11 @@ func newTestStore(t *testing.T) *storage.Storage {
 		require.NoError(t, store.Close())
 	})
 	return store
+}
+
+func defaultIdentifier(t *testing.T, store *storage.Storage, ctx context.Context, oid orderid.OrderId) recomma.OrderIdentifier {
+	t.Helper()
+	assignment, err := store.ResolveDefaultAlias(ctx)
+	require.NoError(t, err)
+	return recomma.NewOrderIdentifier(assignment.VenueID, assignment.Wallet, oid)
 }

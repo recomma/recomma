@@ -30,7 +30,7 @@ func TestOrderResultToWsOrder(t *testing.T) {
 		},
 	}
 
-	wsOrder, err := orderResultToWsOrder(oid, result)
+	wsOrder, err := OrderQueryResultToWsOrder(oid, result)
 	require.NoError(t, err)
 	require.NotNil(t, wsOrder)
 	require.Equal(t, hyperliquid.OrderStatusValueFilled, wsOrder.Status)
@@ -48,7 +48,7 @@ func TestOrderResultToWsOrderUnknown(t *testing.T) {
 		Status: hyperliquid.OrderQueryStatusError,
 	}
 
-	wsOrder, err := orderResultToWsOrder(oid, result)
+	wsOrder, err := OrderQueryResultToWsOrder(oid, result)
 	require.NoError(t, err)
 	require.Nil(t, wsOrder)
 }

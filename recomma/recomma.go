@@ -69,6 +69,19 @@ const (
 	ActionCancel
 )
 
+func (t ActionType) String() string {
+	switch t {
+	case ActionCreate:
+		return "create"
+	case ActionModify:
+		return "modify"
+	case ActionCancel:
+		return "cancel"
+	default:
+		return "none"
+	}
+}
+
 type Action struct {
 	Type   ActionType
 	Create hyperliquid.CreateOrderRequest

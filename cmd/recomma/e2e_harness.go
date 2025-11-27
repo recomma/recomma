@@ -26,7 +26,7 @@ import (
 )
 
 // generateTestRSAKeyPEM generates an RSA private key and returns it as PEM-encoded bytes
-func generateTestRSAKeyPEM(t *testing.T) []byte {
+func generateTestRSAKeyPEM(t testing.TB) []byte {
 	t.Helper()
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -44,6 +44,13 @@ func generateTestRSAKeyPEM(t *testing.T) []byte {
 type harnessConfig struct {
 	additionalVenues    []additionalVenueSpec
 	enableStorageLogger bool
+}
+
+func unwrapTestingT(tb testing.TB) *testing.T {
+	if t, ok := tb.(*testing.T); ok {
+		return t
+	}
+	return &testing.T{}
 }
 
 type additionalVenueSpec struct {
@@ -67,7 +74,7 @@ func WithAdditionalHyperliquidVenue(id, displayName string) E2EHarnessOption {
 	}
 }
 
-func generateHyperliquidCredentials(t *testing.T) (*ecdsa.PrivateKey, string) {
+func generateHyperliquidCredentials(t testing.TB) (*ecdsa.PrivateKey, string) {
 	t.Helper()
 
 	privateKey, err := gethCrypto.GenerateKey()
@@ -82,7 +89,7 @@ func generateHyperliquidCredentials(t *testing.T) (*ecdsa.PrivateKey, string) {
 
 // E2ETestHarness manages all components for end-to-end testing
 type E2ETestHarness struct {
-	t *testing.T
+	t testing.TB
 
 	// Application under test
 	App *App
@@ -109,7 +116,7 @@ type E2ETestHarness struct {
 }
 
 // NewE2ETestHarness creates a new E2E test harness with all dependencies
-func NewE2ETestHarness(t *testing.T, ctx context.Context, opts ...E2EHarnessOption) *E2ETestHarness {
+func NewE2ETestHarness(t testing.TB, ctx context.Context, opts ...E2EHarnessOption) *E2ETestHarness {
 	t.Helper()
 	harnessCfg := harnessConfig{}
 	for _, opt := range opts {
@@ -119,8 +126,9 @@ func NewE2ETestHarness(t *testing.T, ctx context.Context, opts ...E2EHarnessOpti
 	}
 
 	// Create mock servers
-	tcMock := threecommasmock.NewTestServer(t)
-	hlMock := hlmock.NewTestServer(t)
+	mockT := unwrapTestingT(t)
+	tcMock := threecommasmock.NewTestServer(mockT)
+	hlMock := hlmock.NewTestServer(mockT)
 
 	// Generate ThreeCommas RSA credentials
 	rsaKeyPEM := generateTestRSAKeyPEM(t)
@@ -196,19 +204,20 @@ func NewE2ETestHarness(t *testing.T, ctx context.Context, opts ...E2EHarnessOpti
 
 	if harnessCfg.enableStorageLogger {
 		storage.WithLogger(app.Logger)(app.Store)
+		storage.WithQueryLogger(app.Logger)(app.Store)
 	}
 
 	return &E2ETestHarness{
-		t:               t,
-		App:             app,
-		ThreeCommasMock: tcMock,
-		HyperliquidMock: hlMock,
-		Store:           app.Store,
-		HTTPClient:      &http.Client{Timeout: 10 * time.Second},
-		HLPrivateKey:    privateKey,
-		HLWallet:        wallet,
-		VenueID:         venueID,
-		testSecrets:     testSecrets,
+		t:                t,
+		App:              app,
+		ThreeCommasMock:  tcMock,
+		HyperliquidMock:  hlMock,
+		Store:            app.Store,
+		HTTPClient:       &http.Client{Timeout: 10 * time.Second},
+		HLPrivateKey:     privateKey,
+		HLWallet:         wallet,
+		VenueID:          venueID,
+		testSecrets:      testSecrets,
 		AdditionalVenues: additional,
 	}
 }
@@ -383,6 +392,43 @@ func (h *E2ETestHarness) TriggerDealProduction(ctx context.Context) {
 
 	h.App.ProduceActiveDealsOnce(ctx)
 }
+
+// WaitForOrderQueueIdle waits until the order work queue drains or times out.
+func (h *E2ETestHarness) WaitForOrderQueueIdle(timeout time.Duration) {
+	h.t.Helper()
+
+	if h.App == nil || h.App.OrderQueue == nil {
+		h.t.Fatal("order queue not initialized")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	const idleConfirmations = 3
+	idleTicks := 0
+
+	for {
+		if h.App.OrderQueue.Len() == 0 {
+			idleTicks++
+			if idleTicks >= idleConfirmations {
+				return
+			}
+		} else {
+			idleTicks = 0
+		}
+
+		select {
+		case <-ctx.Done():
+			h.t.Fatal("timeout waiting for order queue to drain")
+		case <-ticker.C:
+		}
+	}
+}
+
 // WithStorageLogger enables verbose SQL logging for the harness storage instance.
 func WithStorageLogger() E2EHarnessOption {
 	return func(cfg *harnessConfig) {

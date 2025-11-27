@@ -566,6 +566,7 @@ func (e *HyperLiquidEmitter) submitModify(
 ) (*hyperliquid.OrderStatus, error) {
 	resp, err := e.exchange.ModifyOrder(ctx, req)
 	var status *hyperliquid.OrderStatus
+	shouldPersist := true
 	if err == nil {
 		status = &resp
 	}
@@ -590,15 +591,18 @@ func (e *HyperLiquidEmitter) submitModify(
 			if req.Cloid != nil {
 				cloid = req.Cloid.Value
 			}
-			logger.Info("modify skipped because order already filled or canceled", slog.String("cloid", cloid))
+			logger.Info("modify skipped because order already filled or canceled; not persisting request", slog.String("cloid", cloid))
+			shouldPersist = false
 			err = nil
 		} else {
 			logger.Warn("could not modify order", slog.String("error", err.Error()), slog.Any("action", req))
 			return nil, fmt.Errorf("could not modify order: %w", err)
 		}
 	}
-	if err := e.store.AppendHyperliquidModify(ctx, w.Identifier, req, w.BotEvent.RowID); err != nil {
-		logger.Warn("could not add to store", slog.String("error", err.Error()))
+	if shouldPersist {
+		if err := e.store.AppendHyperliquidModify(ctx, w.Identifier, req, w.BotEvent.RowID); err != nil {
+			logger.Warn("could not add to store", slog.String("error", err.Error()))
+		}
 	}
 	return status, nil
 }

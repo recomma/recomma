@@ -1489,7 +1489,7 @@ WITH ranked AS (
     FROM threecommas_botevents
     WHERE deal_id = ?1
       AND CAST(json_extract(payload, '$.OrderType') AS TEXT) = 'Take Profit'
-      AND CAST(json_extract(payload, '$.OrderPosition') AS INTEGER) BETWEEN 0 AND CAST(?2 AS INTEGER) - 1
+      AND CAST(json_extract(payload, '$.OrderPosition') AS INTEGER) BETWEEN 1 AND CAST(?2 AS INTEGER)
 )
 SELECT
     order_position,

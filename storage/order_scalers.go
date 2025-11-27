@@ -274,8 +274,13 @@ func takeProfitStackFromDeal(deal tc.Deal, stackSizeHint int) map[int]float64 {
 	result := make(map[int]float64, len(deal.TakeProfitSteps))
 	for idx, step := range deal.TakeProfitSteps {
 		pos := idx
-		if step.Id != nil && *step.Id >= 0 {
-			pos = *step.Id
+		if step.Id != nil {
+			switch {
+			case *step.Id > 0:
+				pos = *step.Id - 1
+			case *step.Id == 0:
+				pos = 0
+			}
 		}
 
 		size := parseNumericString(nullableString(step.InitialAmount))

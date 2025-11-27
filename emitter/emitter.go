@@ -547,6 +547,9 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 }
 
 func (e *HyperLiquidEmitter) constrainPrice(ctx context.Context, coin string, price float64) (float64, error) {
+	if e.constraints == nil {
+		return price, nil
+	}
 	constraints, err := e.constraints.Resolve(ctx, coin)
 	if err != nil {
 		return 0, fmt.Errorf("resolve constraints: %w", err)

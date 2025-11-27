@@ -190,7 +190,7 @@ func (s *Storage) ListTakeProfitStackSizes(ctx context.Context, oid orderid.Orde
 
 	byPosition := make(map[int]float64, stackSize)
 	for _, row := range rows {
-		pos := int(row.OrderPosition)
+		pos := int(row.OrderPosition) - 1
 		if pos < 0 || pos >= stackSize {
 			continue
 		}

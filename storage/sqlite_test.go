@@ -994,7 +994,7 @@ func TestRecordThreeCommasBotEventDuplicateReturnsPreviousInsertID(t *testing.T)
 		Size:          10,
 		OrderType:     tc.MarketOrderDealOrderTypeBase,
 		OrderSize:     1,
-		OrderPosition: 0,
+		OrderPosition: 1,
 		QuoteVolume:   2.5,
 		QuoteCurrency: "USDT",
 		IsMarket:      false,
@@ -1035,7 +1035,7 @@ func TestListTakeProfitStackSizesUsesLegSizes(t *testing.T) {
 			Size:          42, // placeholder; overwritten by newer revision
 			OrderType:     tc.MarketOrderDealOrderTypeTakeProfit,
 			OrderSize:     0,
-			OrderPosition: pos,
+			OrderPosition: pos + 1,
 			Text:          fmt.Sprintf("tp leg %d initial", pos),
 		}
 		oldOid := orderid.OrderId{BotID: 77, DealID: dealID, BotEventID: uint32(pos*2 + 1)}
@@ -1078,7 +1078,7 @@ func TestListTakeProfitStackSizesDoesNotErrorWhenStackIncomplete(t *testing.T) {
 		Size:          250,
 		OrderType:     tc.MarketOrderDealOrderTypeTakeProfit,
 		OrderSize:     stackSize,
-		OrderPosition: 0,
+		OrderPosition: 1,
 		Text:          "only first leg persisted",
 	}
 
@@ -1116,7 +1116,7 @@ func TestLoadTakeProfitForDeal(t *testing.T) {
 			Coin:          "ETH",
 			OrderType:     tc.MarketOrderDealOrderTypeTakeProfit,
 			OrderSize:     1,
-			OrderPosition: 0,
+			OrderPosition: 1,
 			Text:          "take profit execution",
 		}
 

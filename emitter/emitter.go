@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/recomma/recomma/hl"
 	"github.com/recomma/recomma/hl/ws"
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
@@ -97,6 +98,10 @@ type hyperliquidExchange interface {
 	ModifyOrder(ctx context.Context, req hyperliquid.ModifyOrderRequest) (hyperliquid.OrderStatus, error)
 }
 
+type hyperliquidStatusClient interface {
+	QueryOrderByCloid(ctx context.Context, cloid string) (*hyperliquid.OrderQueryResult, error)
+}
+
 type HyperLiquidEmitterConfig struct {
 	MaxIOCRetries       int
 	InitialIOCOffsetBps float64
@@ -108,11 +113,20 @@ var defaultHyperLiquidEmitterConfig = HyperLiquidEmitterConfig{
 	MaxIOCRetries: 3,
 }
 
-const iocRetryBumpRatio = 0.0005
+const (
+	iocRetryBumpRatio                 = 0.0005
+	missingModifyResponseDataFragment = "missing response.data field in successful response"
+	cannotModifyFilledFragment        = "cannot modify canceled or filled order"
+)
 
 type iocRetryOrderId struct {
 	count     int
 	lastError string
+}
+
+// Constraints resolves Hyperliquid rounding requirements.
+type Constraints interface {
+	Resolve(ctx context.Context, coin string) (hl.CoinConstraints, error)
 }
 
 type HyperLiquidEmitter struct {
@@ -124,9 +138,11 @@ type HyperLiquidEmitter struct {
 	wsMu         sync.RWMutex
 	wsClients    map[recomma.VenueID]*ws.Client
 	primaryVenue recomma.VenueID
+	constraints  Constraints
+	statusClient hyperliquidStatusClient
 }
 
-func NewHyperLiquidEmitter(exchange hyperliquidExchange, primaryVenue recomma.VenueID, wsClient *ws.Client, store *storage.Storage, opts ...HyperLiquidEmitterOption) *HyperLiquidEmitter {
+func NewHyperLiquidEmitter(exchange hyperliquidExchange, primaryVenue recomma.VenueID, wsClient *ws.Client, store *storage.Storage, constraints Constraints, opts ...HyperLiquidEmitterOption) *HyperLiquidEmitter {
 	emitter := &HyperLiquidEmitter{
 		exchange:     exchange,
 		store:        store,
@@ -134,6 +150,7 @@ func NewHyperLiquidEmitter(exchange hyperliquidExchange, primaryVenue recomma.Ve
 		logger:       slog.Default().WithGroup("hl-emitter"),
 		cfg:          defaultHyperLiquidEmitterConfig,
 		primaryVenue: primaryVenue,
+		constraints:  constraints,
 	}
 
 	if wsClient != nil && primaryVenue != "" {
@@ -171,6 +188,14 @@ func WithHyperLiquidRateGate(gate RateGate) HyperLiquidEmitterOption {
 	return func(e *HyperLiquidEmitter) {
 		if gate != nil {
 			e.gate = gate
+		}
+	}
+}
+
+func WithHyperLiquidStatusClient(client hyperliquidStatusClient) HyperLiquidEmitterOption {
+	return func(e *HyperLiquidEmitter) {
+		if client != nil {
+			e.statusClient = client
 		}
 	}
 }
@@ -333,6 +358,11 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 	switch w.Action.Type {
 	case recomma.ActionCreate:
 		order := e.setMarketPrice(ctx, wsClient, w.Action.Create)
+		if constrainedPrice, err := e.constrainPrice(ctx, order.Coin, order.Price); err != nil {
+			logger.Warn("could not constrain price", slog.String("error", err.Error()))
+		} else {
+			order.Price = constrainedPrice
+		}
 		w.Action.Create = order
 
 		if wsClient != nil {
@@ -390,6 +420,11 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 
 			order := e.setMarketPrice(ctx, wsClient, w.Action.Create)
 			order = e.applyIOCOffset(order, attempt)
+			if constrainedPrice, err := e.constrainPrice(ctx, order.Coin, order.Price); err != nil {
+				logger.Warn("could not constrain price", slog.String("error", err.Error()))
+			} else {
+				order.Price = constrainedPrice
+			}
 			w.Action.Create = order
 
 			status, err := e.exchange.Order(ctx, w.Action.Create, nil)
@@ -470,6 +505,11 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 
 	case recomma.ActionModify:
 		order := e.setMarketPrice(ctx, wsClient, w.Action.Modify.Order)
+		if constrainedPrice, err := e.constrainPrice(ctx, order.Coin, order.Price); err != nil {
+			logger.Warn("could not constrain price", slog.String("error", err.Error()))
+		} else {
+			order.Price = constrainedPrice
+		}
 		w.Action.Modify.Order = order
 		status, err := e.submitModify(ctx, logger, w, w.Action.Modify)
 		if err != nil {
@@ -506,27 +546,107 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 	return nil
 }
 
+func (e *HyperLiquidEmitter) constrainPrice(ctx context.Context, coin string, price float64) (float64, error) {
+	if e.constraints == nil {
+		return price, nil
+	}
+	constraints, err := e.constraints.Resolve(ctx, coin)
+	if err != nil {
+		return 0, fmt.Errorf("resolve constraints: %w", err)
+	}
+
+	return constraints.RoundPrice(price), nil
+}
+
 func (e *HyperLiquidEmitter) submitModify(
 	ctx context.Context,
 	logger *slog.Logger,
 	w recomma.OrderWork,
 	req hyperliquid.ModifyOrderRequest,
 ) (*hyperliquid.OrderStatus, error) {
-	status, err := e.exchange.ModifyOrder(ctx, req)
+	resp, err := e.exchange.ModifyOrder(ctx, req)
+	var status *hyperliquid.OrderStatus
+	shouldPersist := true
+	if err == nil {
+		status = &resp
+	}
 	if err != nil {
+		errMsg := strings.ToLower(err.Error())
 		// If HL rate limits (address-based or IP-based), apply a cooldown.
-		if strings.Contains(err.Error(), "429") || strings.Contains(strings.ToLower(err.Error()), "rate limit") {
+		if strings.Contains(err.Error(), "429") || strings.Contains(errMsg, "rate limit") {
 			logger.Debug("hit ratelimit, cooldown of 10s applied")
 			// HL allows ~1 action per 10s when address-limited.
 			e.applyCooldown(10 * time.Second)
 		}
-		logger.Warn("could not modify order", slog.String("error", err.Error()), slog.Any("action", req))
-		return nil, fmt.Errorf("could not modify order: %w", err)
+		// We received an empty response, attempt to verify via the info client before failing.
+		if strings.Contains(err.Error(), missingModifyResponseDataFragment) {
+			status, err = e.confirmModifyViaStatus(ctx, w, req)
+			if err == nil {
+				logger.Info("modify verified via info fallback after empty response", slog.String("cloid", req.Cloid.Value))
+			} else {
+				return nil, fmt.Errorf("modify error was successful but returned an error: %w", err)
+			}
+		} else if strings.Contains(errMsg, cannotModifyFilledFragment) {
+			cloid := ""
+			if req.Cloid != nil {
+				cloid = req.Cloid.Value
+			}
+			logger.Info("modify skipped because order already filled or canceled; not persisting request", slog.String("cloid", cloid))
+			shouldPersist = false
+			err = nil
+		} else {
+			logger.Warn("could not modify order", slog.String("error", err.Error()), slog.Any("action", req))
+			return nil, fmt.Errorf("could not modify order: %w", err)
+		}
 	}
-	if err := e.store.AppendHyperliquidModify(ctx, w.Identifier, req, w.BotEvent.RowID); err != nil {
-		logger.Warn("could not add to store", slog.String("error", err.Error()))
+	if shouldPersist {
+		if err := e.store.AppendHyperliquidModify(ctx, w.Identifier, req, w.BotEvent.RowID); err != nil {
+			logger.Warn("could not add to store", slog.String("error", err.Error()))
+		}
 	}
-	return &status, nil
+	return status, nil
+}
+
+func (e *HyperLiquidEmitter) confirmModifyViaStatus(
+	ctx context.Context,
+	w recomma.OrderWork,
+	req hyperliquid.ModifyOrderRequest,
+) (*hyperliquid.OrderStatus, error) {
+	if e.statusClient == nil {
+		return nil, fmt.Errorf("status client unavailable for venue %s", w.Identifier.Venue())
+	}
+	if req.Cloid == nil {
+		return nil, errors.New("modify verification requires cloid")
+	}
+
+	result, err := e.statusClient.QueryOrderByCloid(ctx, req.Cloid.Value)
+	if err != nil {
+		return nil, fmt.Errorf("query order status: %w", err)
+	}
+
+	wsOrder, err := hl.OrderQueryResultToWsOrder(w.OrderId, result)
+	if err != nil {
+		return nil, fmt.Errorf("convert queried order: %w", err)
+	}
+	if wsOrder == nil {
+		return nil, fmt.Errorf("order status unavailable for %s", req.Cloid.Value)
+	}
+
+	if !ordersMatch(wsOrder, &req.Order, req.Order) {
+		return nil, fmt.Errorf("queried order does not match desired state")
+	}
+
+	res := &hyperliquid.OrderStatus{
+		Resting: &hyperliquid.OrderStatusResting{
+			Oid:    wsOrder.Order.Oid,
+			Status: string(wsOrder.Status),
+		},
+	}
+	if wsOrder.Order.Cloid != nil {
+		res.Resting.ClientID = wsOrder.Order.Cloid
+	}
+
+	return res, nil
 }
 
 func requestedOrderSize(action recomma.Action) float64 {

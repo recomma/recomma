@@ -44,17 +44,26 @@ func (stubStatusClient) QueryOrderByCloid(context.Context, string) (*hyperliquid
 	return nil, nil
 }
 
+var (
+	defaultAliasID     = recomma.VenueID("hyperliquid:default")
+	defaultAliasWallet = "default"
+)
+
+func sentinelDefaultIdentifier(oid orderid.OrderId) recomma.OrderIdentifier {
+	return recomma.NewOrderIdentifier(defaultAliasID, defaultAliasWallet, oid)
+}
+
 func TestRegisterHyperliquidEmitterRegistersDefaultAlias(t *testing.T) {
 	queue := emitter.NewQueueEmitter(&stubQueue{})
 	submitter := &stubEmitter{}
 
 	primaryIdent := recomma.VenueID("primary")
-	defaultIdent := storage.DefaultHyperliquidIdentifier(orderid.OrderId{}).VenueID
+	defaultIdent := defaultAliasID
 
 	registerHyperliquidEmitter(queue, submitter, primaryIdent, primaryIdent, defaultIdent)
 
 	oid := orderid.OrderId{BotID: 1, DealID: 2, BotEventID: 3}
-	ident := storage.DefaultHyperliquidIdentifier(oid)
+	ident := sentinelDefaultIdentifier(oid)
 	work := recomma.OrderWork{Identifier: ident, OrderId: oid}
 
 	if err := queue.Dispatch(context.Background(), work); err != nil {
@@ -75,7 +84,7 @@ func TestRegisterHyperliquidEmitterDoesNotAliasNonPrimary(t *testing.T) {
 
 	venueIdent := recomma.VenueID("secondary")
 	primaryIdent := recomma.VenueID("primary")
-	defaultIdent := storage.DefaultHyperliquidIdentifier(orderid.OrderId{}).VenueID
+	defaultIdent := defaultAliasID
 
 	registerHyperliquidEmitter(queue, submitter, venueIdent, primaryIdent, defaultIdent)
 
@@ -90,7 +99,7 @@ func TestRegisterHyperliquidEmitterDoesNotAliasNonPrimary(t *testing.T) {
 
 	submitter.calls = 0
 
-	defaultWork := recomma.OrderWork{Identifier: storage.DefaultHyperliquidIdentifier(oid), OrderId: oid}
+	defaultWork := recomma.OrderWork{Identifier: sentinelDefaultIdentifier(oid), OrderId: oid}
 	err := queue.Dispatch(context.Background(), defaultWork)
 	if !errors.Is(err, emitter.ErrUnregisteredVenueEmitter) {
 		t.Fatalf("expected unregistered venue error, got %v", err)
@@ -105,7 +114,7 @@ func TestRegisterHyperliquidStatusClientAliasesDefault(t *testing.T) {
 	client := stubStatusClient{}
 
 	primaryIdent := recomma.VenueID("hyperliquid:primary")
-	defaultIdent := storage.DefaultHyperliquidIdentifier(orderid.OrderId{}).VenueID
+	defaultIdent := defaultAliasID
 
 	registerHyperliquidStatusClient(registry, client, primaryIdent, primaryIdent, defaultIdent)
 
@@ -127,7 +136,7 @@ func TestRegisterHyperliquidStatusClientDoesNotAliasNonPrimary(t *testing.T) {
 
 	primaryIdent := recomma.VenueID("hyperliquid:primary")
 	secondaryIdent := recomma.VenueID("hyperliquid:secondary")
-	defaultIdent := storage.DefaultHyperliquidIdentifier(orderid.OrderId{}).VenueID
+	defaultIdent := defaultAliasID
 
 	registerHyperliquidStatusClient(registry, client, secondaryIdent, primaryIdent, defaultIdent)
 
@@ -144,7 +153,7 @@ func TestRegisterHyperliquidWsClientRegistersExactVenue(t *testing.T) {
 	client := &ws.Client{}
 
 	primaryIdent := recomma.VenueID("hyperliquid:primary")
-	defaultIdent := storage.DefaultHyperliquidIdentifier(orderid.OrderId{}).VenueID
+	defaultIdent := defaultAliasID
 
 	registerHyperliquidWsClient(registry, client, primaryIdent)
 
@@ -157,7 +166,7 @@ func TestRegisterHyperliquidWsClientRegistersExactVenue(t *testing.T) {
 }
 
 func TestShouldUseSentinelDefaultHyperliquidWalletSkipsPrimary(t *testing.T) {
-	defaultIdent := storage.DefaultHyperliquidIdentifier(orderid.OrderId{}).VenueID
+	defaultIdent := defaultAliasID
 	venues := []vault.VenueSecret{
 		{
 			ID:      "hyperliquid:primary",
@@ -173,7 +182,7 @@ func TestShouldUseSentinelDefaultHyperliquidWalletSkipsPrimary(t *testing.T) {
 }
 
 func TestShouldUseSentinelDefaultHyperliquidWalletDetectsDuplicateWallet(t *testing.T) {
-	defaultIdent := storage.DefaultHyperliquidIdentifier(orderid.OrderId{}).VenueID
+	defaultIdent := defaultAliasID
 	venues := []vault.VenueSecret{
 		{
 			ID:      "hyperliquid:primary",

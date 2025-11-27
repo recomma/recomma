@@ -70,7 +70,7 @@ func TestOrderScalerEmitsScaledOrderThroughEmitter(t *testing.T) {
 	cache := hl.NewOrderIdCache(info)
 
 	scaler := New(store, cache, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	ident := recomma.NewOrderIdentifier("hyperliquid:default", "default", oid)
+	ident := defaultIdentifier(t, store, ctx, oid)
 	req := BuildRequest(ident, event, order)
 
 	result, err := scaler.Scale(ctx, req, &order)
@@ -78,7 +78,7 @@ func TestOrderScalerEmitsScaledOrderThroughEmitter(t *testing.T) {
 	require.InDelta(t, 2.0, result.Size, 1e-9, "multiplier 0.5 should halve the size")
 
 	exchange := newMockExchangeForScaler(t, ts.URL())
-	hlEmitter := emitter.NewHyperLiquidEmitter(exchange, "hyperliquid:default", nil, store,
+	hlEmitter := emitter.NewHyperLiquidEmitter(exchange, "hyperliquid:default", nil, store, cache,
 		emitter.WithHyperLiquidEmitterLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 	)
 

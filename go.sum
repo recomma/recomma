@@ -231,8 +231,8 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/prometheus/procfs v0.17.0 h1:FuLQ+05u4ZI+SS/w9+BWEM2TXiHKsUQ9TADiRH7DuK0=
 github.com/prometheus/procfs v0.17.0/go.mod h1:oPQLaDAMRbA+u8H5Pbfq+dl3VDAvHxMUOVhe0wYB2zw=
-github.com/recomma/3commas-mock v0.2.1 h1:bWNYMtdj4uywzNj06WMUuQS+XNKTplIG0NyxyvmoZLI=
-github.com/recomma/3commas-mock v0.2.1/go.mod h1:ormTmU5geaRWX5atuUCl5OYqxXR4ndE8OXgZQfaI1yw=
+github.com/recomma/3commas-mock v0.2.2 h1:Q7GphG8ucsTOODeceMIkXuHpN4Doxe1H+V4DRgpUJhs=
+github.com/recomma/3commas-mock v0.2.2/go.mod h1:ormTmU5geaRWX5atuUCl5OYqxXR4ndE8OXgZQfaI1yw=
 github.com/recomma/3commas-sdk-go v0.4.0 h1:kdhIwhlQJG3yj7b8TeU8Sl4cza24dKhXZm13TqM05pw=
 github.com/recomma/3commas-sdk-go v0.4.0/go.mod h1:gRdQ8KeyIuTCTqS+Ue0LftnPeMSUGo/AbHX7Msa/X9U=
 github.com/recomma/hyperliquid-mock v0.2.0 h1:nmBdIa1qscuUNMFMC7IpdLFooPC7Z/iGXCWUVGh+uc8=

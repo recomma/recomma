@@ -81,7 +81,7 @@ func NewLimiter(cfg Config) *Limiter {
 		cfg.WindowDuration = 60 * time.Second
 	}
 	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
+		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
 
 	// Check for window resets frequently (every 1/10th of window duration)

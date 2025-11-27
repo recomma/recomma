@@ -694,7 +694,7 @@ func TestEnsureTakeProfitRecreatesAfterStaleSubmission(t *testing.T) {
 	require.True(t, create.ReduceOnly)
 	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, tpIdent, create, tpRowID))
 
-	canceled := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueCanceled, 10, 10, 37, now.Add(-7*time.Minute))
+	canceled := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValue("reduceOnlyCanceled"), 10, 10, 37, now.Add(-7*time.Minute))
 	require.NoError(t, recordStatus(store, tpIdent, canceled))
 
 	require.NoError(t, tracker.Rebuild(ctx))

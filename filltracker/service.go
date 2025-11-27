@@ -540,6 +540,17 @@ func isLiveHyperliquidStatus(status *hyperliquid.WsOrder) bool {
 	}
 }
 
+func isCanceledHyperliquidStatus(status hyperliquid.OrderStatusValue) bool {
+	if status == hyperliquid.OrderStatusValueCanceled {
+		return true
+	}
+	if status == "" {
+		return false
+	}
+	lower := strings.ToLower(string(status))
+	return strings.HasSuffix(lower, "canceled") || strings.HasSuffix(lower, "cancelled")
+}
+
 func (s *Service) lookupTakeProfitContext(
 	ctx context.Context,
 	snapshot DealSnapshot,
@@ -851,6 +862,7 @@ func (o *orderState) applyStatus(status hyperliquid.WsOrder) {
 
 	o.status = status.Status
 	o.lastUpdate = time.Now().UTC()
+	cancelled := isCanceledHyperliquidStatus(status.Status)
 
 	if status.Order.Coin != "" {
 		o.coin = status.Order.Coin
@@ -874,8 +886,17 @@ func (o *orderState) applyStatus(status hyperliquid.WsOrder) {
 		}
 	}
 
+	var filled float64
 	if o.originalQty > 0 {
-		o.filledQty = math.Max(0, o.originalQty-o.remainingQty)
+		filled = math.Max(0, o.originalQty-o.remainingQty)
+	}
+
+	if cancelled {
+		o.remainingQty = 0
+	}
+
+	if o.originalQty > 0 {
+		o.filledQty = filled
 	}
 }
 
@@ -903,7 +924,7 @@ func (o *orderState) isBuy() bool {
 }
 
 func (o *orderState) isActive() bool {
-	if o.status == hyperliquid.OrderStatusValueCanceled || o.status == hyperliquid.OrderStatusValueFilled {
+	if isCanceledHyperliquidStatus(o.status) || o.status == hyperliquid.OrderStatusValueFilled {
 		return false
 	}
 	if o.remainingQty <= floatTolerance {

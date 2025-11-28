@@ -233,137 +233,97 @@ func (s *Storage) ListOrders(ctx context.Context, opts api.ListOrdersOptions) ([
 			return nil, nil, fmt.Errorf("invalid page token: %w", err)
 		}
 	}
+	var (
+		cursorObservedAtPtr *int64
+		cursorIDPtr         *int64
+	)
+	if opts.PageToken != "" {
+		cursorObservedAtPtr = &cursorObservedAt
+		cursorIDPtr = &cursorID
+	}
 
 	var (
-		args       []any
-		conditions []string
+		observedFrom *int64
+		observedTo   *int64
 	)
-
 	logFrom := int64(math.MinInt64)
 	if opts.ObservedFrom != nil {
-		logFrom = opts.ObservedFrom.UTC().UnixMilli()
-		conditions = append(conditions, "observed_at_utc >= ?")
-		args = append(args, logFrom)
+		val := opts.ObservedFrom.UTC().UnixMilli()
+		logFrom = val
+		observedFrom = new(int64)
+		*observedFrom = val
 	}
 
 	logTo := int64(math.MaxInt64)
 	if opts.ObservedTo != nil {
-		logTo = opts.ObservedTo.UTC().UnixMilli()
-		conditions = append(conditions, "observed_at_utc <= ?")
-		args = append(args, logTo)
+		val := opts.ObservedTo.UTC().UnixMilli()
+		logTo = val
+		observedTo = new(int64)
+		*observedTo = val
 	}
 
+	var orderIDPrefix *string
 	if opts.OrderIdPrefix != nil {
 		if prefix := strings.TrimSpace(*opts.OrderIdPrefix); prefix != "" {
-			conditions = append(conditions, "LOWER(order_id) LIKE ?")
-			args = append(args, strings.ToLower(prefix)+"%")
+			lowered := strings.ToLower(prefix)
+			orderIDPrefix = new(string)
+			*orderIDPrefix = lowered
 		}
 	}
-	if opts.BotID != nil {
-		conditions = append(conditions, "bot_id = ?")
-		args = append(args, *opts.BotID)
-	}
-	if opts.DealID != nil {
-		conditions = append(conditions, "deal_id = ?")
-		args = append(args, *opts.DealID)
-	}
-	if opts.BotEventID != nil {
-		conditions = append(conditions, "botevent_id = ?")
-		args = append(args, *opts.BotEventID)
-	}
-	if opts.PageToken != "" {
-		conditions = append(conditions, "(observed_at_utc < ? OR (observed_at_utc = ? AND id < ?))")
-		args = append(args, cursorObservedAt, cursorObservedAt, cursorID)
-	}
-
-	// TODO: tear out this hardcoded query -> move to sqlc
-	var queryBuilder strings.Builder
-	queryBuilder.WriteString(`
-SELECT id, order_id, bot_id, deal_id, botevent_id, created_at_utc, observed_at_utc, payload
-FROM threecommas_botevents`)
-	if len(conditions) > 0 {
-		queryBuilder.WriteString(" WHERE ")
-		queryBuilder.WriteString(strings.Join(conditions, " AND "))
-	}
-	queryBuilder.WriteString(" ORDER BY observed_at_utc DESC, id DESC LIMIT ?")
-	args = append(args, opts.Limit+1)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rows, err := s.db.QueryContext(ctx, queryBuilder.String(), args...)
+	rows, err := s.queries.ListThreeCommasBotEventsForAPI(ctx, sqlcgen.ListThreeCommasBotEventsForAPIParams{
+		BotID:            opts.BotID,
+		DealID:           opts.DealID,
+		BotEventID:       opts.BotEventID,
+		ObservedFrom:     observedFrom,
+		ObservedTo:       observedTo,
+		OrderIDPrefix:    orderIDPrefix,
+		CursorObservedAt: cursorObservedAtPtr,
+		CursorID:         cursorIDPtr,
+		Limit: int64(opts.Limit + 1),
+	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("query orders: %w", err)
-	}
-	defer rows.Close()
-
-	type rawOrder struct {
-		id         int64
-		oid        string
-		botID      int64
-		dealID     int64
-		botEventID int64
-		createdAt  int64
-		observedAt int64
-		payload    []byte
-	}
-	raw := make([]rawOrder, 0, opts.Limit+1)
-
-	for rows.Next() {
-		var ro rawOrder
-		if err := rows.Scan(
-			&ro.id,
-			&ro.oid,
-			&ro.botID,
-			&ro.dealID,
-			&ro.botEventID,
-			&ro.createdAt,
-			&ro.observedAt,
-			&ro.payload,
-		); err != nil {
-			return nil, nil, fmt.Errorf("scan order row: %w", err)
-		}
-		raw = append(raw, ro)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("iterate order rows: %w", err)
+		return nil, nil, fmt.Errorf("list bot events: %w", err)
 	}
 
-	if len(raw) == 0 {
+	if len(rows) == 0 {
 		return nil, nil, nil
 	}
 
 	var nextToken *string
-	if len(raw) > opts.Limit {
-		last := raw[opts.Limit]
-		token := encodeCursor(last.observedAt, last.id)
+	if len(rows) > opts.Limit {
+		last := rows[opts.Limit]
+		token := encodeCursor(last.ObservedAtUtc, last.ID)
 		nextToken = &token
-		raw = raw[:opts.Limit]
+		rows = rows[:opts.Limit]
 	}
 
-	items := make([]api.OrderItem, 0, len(raw))
-	byOrderId := make(map[string][]int, len(raw))
+	items := make([]api.OrderItem, 0, len(rows))
+	byOrderId := make(map[string][]int, len(rows))
 
-	for _, ro := range raw {
-		oid, err := orderid.FromHexString(ro.oid)
+	for _, row := range rows {
+		oid, err := orderid.FromHexString(row.OrderID)
 		if err != nil {
-			return nil, nil, fmt.Errorf("decode orderid %q: %w", ro.oid, err)
+			return nil, nil, fmt.Errorf("decode orderid %q: %w", row.OrderID, err)
 		}
 
 		var event tc.BotEvent
-		if err := json.Unmarshal(ro.payload, &event); err != nil {
+		if err := json.Unmarshal(row.Payload, &event); err != nil {
 			return nil, nil, fmt.Errorf("decode bot event payload: %w", err)
 		}
 		eventCopy := event
 
 		item := api.OrderItem{
 			OrderId:    *oid,
-			ObservedAt: time.UnixMilli(ro.observedAt).UTC(),
+			ObservedAt: time.UnixMilli(row.ObservedAtUtc).UTC(),
 			BotEvent:   &eventCopy,
 		}
 		items = append(items, item)
 		idx := len(items) - 1
-		byOrderId[ro.oid] = append(byOrderId[ro.oid], idx)
+		byOrderId[row.OrderID] = append(byOrderId[row.OrderID], idx)
 	}
 
 	defaultAssignment, err := s.defaultVenueAssignmentLocked(ctx)

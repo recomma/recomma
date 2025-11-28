@@ -1940,6 +1940,107 @@ func (q *Queries) ListThreeCommasBotEvents(ctx context.Context, arg ListThreeCom
 	return items, nil
 }
 
+const listThreeCommasBotEventsForAPI = `-- name: ListThreeCommasBotEventsForAPI :many
+SELECT
+    id,
+    order_id,
+    bot_id,
+    deal_id,
+    botevent_id,
+    created_at_utc,
+    observed_at_utc,
+    payload
+FROM threecommas_botevents
+WHERE (
+        ?1 IS NULL
+        OR bot_id = ?1
+      )
+  AND (
+        ?2 IS NULL
+        OR deal_id = ?2
+      )
+  AND (
+        ?3 IS NULL
+        OR botevent_id = ?3
+      )
+  AND (
+        ?4 IS NULL
+        OR observed_at_utc >= ?4
+      )
+  AND (
+        ?5 IS NULL
+        OR observed_at_utc <= ?5
+      )
+  AND (
+        ?6 IS NULL
+        OR LOWER(order_id) LIKE LOWER(?6) || '%'
+      )
+  AND (
+        ?7 IS NULL
+        OR observed_at_utc < ?7
+        OR (
+            observed_at_utc = ?7
+            AND id < ?8
+        )
+      )
+ORDER BY observed_at_utc DESC, id DESC
+LIMIT ?9
+`
+
+type ListThreeCommasBotEventsForAPIParams struct {
+	BotID            interface{} `json:"bot_id"`
+	DealID           interface{} `json:"deal_id"`
+	BotEventID       interface{} `json:"bot_event_id"`
+	ObservedFrom     interface{} `json:"observed_from"`
+	ObservedTo       interface{} `json:"observed_to"`
+	OrderIDPrefix    interface{} `json:"order_id_prefix"`
+	CursorObservedAt interface{} `json:"cursor_observed_at"`
+	CursorID         *int64      `json:"cursor_id"`
+	Limit            int64       `json:"limit"`
+}
+
+func (q *Queries) ListThreeCommasBotEventsForAPI(ctx context.Context, arg ListThreeCommasBotEventsForAPIParams) ([]ThreecommasBotevent, error) {
+	rows, err := q.db.QueryContext(ctx, listThreeCommasBotEventsForAPI,
+		arg.BotID,
+		arg.DealID,
+		arg.BotEventID,
+		arg.ObservedFrom,
+		arg.ObservedTo,
+		arg.OrderIDPrefix,
+		arg.CursorObservedAt,
+		arg.CursorID,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ThreecommasBotevent
+	for rows.Next() {
+		var i ThreecommasBotevent
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderID,
+			&i.BotID,
+			&i.DealID,
+			&i.BoteventID,
+			&i.CreatedAtUtc,
+			&i.ObservedAtUtc,
+			&i.Payload,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listThreeCommasBotEventsForOrder = `-- name: ListThreeCommasBotEventsForOrder :many
 SELECT id, payload
 FROM threecommas_botevents

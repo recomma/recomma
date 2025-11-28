@@ -595,6 +595,52 @@ WHERE bot_id = COALESCE(sqlc.arg(bot_id), bot_id)
 ORDER BY observed_at_utc DESC, id DESC
 LIMIT sqlc.arg(limit);
 
+-- name: ListThreeCommasBotEventsForAPI :many
+SELECT
+    id,
+    order_id,
+    bot_id,
+    deal_id,
+    botevent_id,
+    created_at_utc,
+    observed_at_utc,
+    payload
+FROM threecommas_botevents
+WHERE (
+        sqlc.narg(bot_id) IS NULL
+        OR bot_id = sqlc.narg(bot_id)
+      )
+  AND (
+        sqlc.narg(deal_id) IS NULL
+        OR deal_id = sqlc.narg(deal_id)
+      )
+  AND (
+        sqlc.narg(bot_event_id) IS NULL
+        OR botevent_id = sqlc.narg(bot_event_id)
+      )
+  AND (
+        sqlc.narg(observed_from) IS NULL
+        OR observed_at_utc >= sqlc.narg(observed_from)
+      )
+  AND (
+        sqlc.narg(observed_to) IS NULL
+        OR observed_at_utc <= sqlc.narg(observed_to)
+      )
+  AND (
+        sqlc.narg(order_id_prefix) IS NULL
+        OR LOWER(order_id) LIKE LOWER(sqlc.narg(order_id_prefix)) || '%'
+      )
+  AND (
+        sqlc.narg(cursor_observed_at) IS NULL
+        OR observed_at_utc < sqlc.narg(cursor_observed_at)
+        OR (
+            observed_at_utc = sqlc.narg(cursor_observed_at)
+            AND id < sqlc.narg(cursor_id)
+        )
+      )
+ORDER BY observed_at_utc DESC, id DESC
+LIMIT sqlc.arg(limit);
+
 -- name: ListThreeCommasBotEventLogsForOrderId :many
 SELECT
     id,

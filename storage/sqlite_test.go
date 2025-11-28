@@ -1206,6 +1206,8 @@ func TestListOrdersSurfacesLatestModify(t *testing.T) {
 	}
 	_, err := store.RecordThreeCommasBotEvent(ctx, oid, event)
 	require.NoError(t, err)
+	_, err = store.RecordThreeCommasBotEventLog(ctx, oid, event)
+	require.NoError(t, err)
 
 	ident := defaultIdentifier(t, store, ctx, oid)
 
@@ -1250,4 +1252,33 @@ func TestListOrdersSurfacesLatestModify(t *testing.T) {
 	modifySubmission, ok := target.LatestSubmission.(*hyperliquid.ModifyOrderRequest)
 	require.True(t, ok, "expected modify submission to be surfaced")
 	require.InDelta(t, modifyReq.Order.Price, modifySubmission.Order.Price, 1e-9)
+
+	ordersWithLog, _, err := store.ListOrders(ctx, api.ListOrdersOptions{IncludeLog: true})
+	require.NoError(t, err)
+
+	var targetWithLog api.OrderItem
+	for _, order := range ordersWithLog {
+		if order.OrderId == oid {
+			targetWithLog = order
+			break
+		}
+	}
+	require.NotNil(t, targetWithLog.LogEntries)
+	require.NotEmpty(t, targetWithLog.LogEntries)
+
+	var (
+		hasBotEvent    bool
+		hasSubmission  bool
+	)
+	for _, entry := range targetWithLog.LogEntries {
+		switch entry.Type {
+		case api.ThreeCommasEvent:
+			hasBotEvent = true
+		case api.HyperliquidSubmission:
+			hasSubmission = true
+		}
+	}
+
+	require.True(t, hasBotEvent, "expected include_log to surface 3Commas log entries")
+	require.True(t, hasSubmission, "expected include_log to surface submission entries")
 }

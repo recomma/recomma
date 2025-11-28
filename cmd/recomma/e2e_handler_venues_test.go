@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"testing"
@@ -125,4 +126,216 @@ func TestE2E_VenueCRUDAndAssignments(t *testing.T) {
 	resp = harness.APIGet(fmt.Sprintf("/api/venues/%s/assignments", url.PathEscape(venueID)))
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 	resp.Body.Close()
+}
+
+// TestE2E_VenueHandlers_Errors exercises validation and error branches for venue APIs.
+func TestE2E_VenueHandlers_Errors(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	harness := NewE2ETestHarness(t, ctx)
+	defer harness.Shutdown()
+
+	const botID int64 = 55202
+	require.NoError(t, harness.Store.RecordBot(ctx, tc.Bot{Id: int(botID)}, time.Now()))
+
+	harness.Start(ctx)
+
+	assignBody := api.UpsertVenueAssignmentJSONRequestBody{IsPrimary: true}
+	existingVenue := url.PathEscape(harness.VenueID)
+	defaultVenue := url.PathEscape("hyperliquid:default")
+	unassignedVenue := url.PathEscape("hyperliquid:errors")
+
+	_, err := harness.Store.UpsertVenue(ctx, "hyperliquid:errors", api.VenueUpsertRequest{
+		Type:        "hyperliquid",
+		DisplayName: "Error Coverage",
+		Wallet:      "0xdead",
+	})
+	require.NoError(t, err)
+
+	testCases := []struct {
+		name       string
+		method     string
+		path       string
+		body       interface{}
+		wantStatus int
+	}{
+		{
+			name:       "upsert venue missing body and id",
+			method:     http.MethodPut,
+			path:       fmt.Sprintf("/api/venues/%s", url.PathEscape(" ")),
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "upsert venue invalid payload",
+			method:     http.MethodPut,
+			path:       fmt.Sprintf("/api/venues/%s", url.PathEscape("hyperliquid:invalid")),
+			body:       api.UpsertVenueJSONRequestBody{Type: "hyperliquid"},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "delete default venue forbidden",
+			method:     http.MethodDelete,
+			path:       fmt.Sprintf("/api/venues/%s", defaultVenue),
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name:       "delete missing venue",
+			method:     http.MethodDelete,
+			path:       fmt.Sprintf("/api/venues/%s", url.PathEscape("ghost")),
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "list assignments for missing venue",
+			method:     http.MethodGet,
+			path:       fmt.Sprintf("/api/venues/%s/assignments", url.PathEscape("ghost")),
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "list assignments with blank id",
+			method:     http.MethodGet,
+			path:       fmt.Sprintf("/api/venues/%s/assignments", url.PathEscape(" ")),
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "upsert assignment invalid bot",
+			method:     http.MethodPut,
+			path:       fmt.Sprintf("/api/venues/%s/assignments/%d", existingVenue, 0),
+			body:       assignBody,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "upsert assignment missing venue",
+			method:     http.MethodPut,
+			path:       fmt.Sprintf("/api/venues/%s/assignments/%d", url.PathEscape("ghost"), botID),
+			body:       assignBody,
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "delete assignment missing record",
+			method:     http.MethodDelete,
+			path:       fmt.Sprintf("/api/venues/%s/assignments/%d", unassignedVenue, botID),
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "delete assignment invalid bot",
+			method:     http.MethodDelete,
+			path:       fmt.Sprintf("/api/venues/%s/assignments/%d", existingVenue, 0),
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "list bot venues invalid bot id",
+			method:     http.MethodGet,
+			path:       "/api/bots/0/venues",
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var body io.Reader
+			if tc.body != nil {
+				body = mustJSONReader(t, tc.body)
+			}
+			resp := harness.APIRequest(tc.method, tc.path, body)
+			require.Equal(t, tc.wantStatus, resp.StatusCode)
+			resp.Body.Close()
+		})
+	}
+}
+
+// TestE2E_VenueHandlers_StoreFailures forces storage errors to exercise 500 paths.
+func TestE2E_VenueHandlers_StoreFailures(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	harness := NewE2ETestHarness(t, ctx)
+	defer harness.Shutdown()
+
+	const botID int64 = 66303
+	require.NoError(t, harness.Store.RecordBot(ctx, tc.Bot{Id: int(botID)}, time.Now()))
+
+	harness.Start(ctx)
+
+	// Close the underlying storage so subsequent API calls surface 500 errors.
+	require.NoError(t, harness.Store.Close())
+
+	failVenue := url.PathEscape("hyperliquid:fail")
+	assignBody := api.UpsertVenueAssignmentJSONRequestBody{IsPrimary: true}
+	venueBody := api.UpsertVenueJSONRequestBody{
+		Type:        "hyperliquid",
+		DisplayName: "Failover Venue",
+		Wallet:      "0xfail",
+	}
+
+	cases := []struct {
+		name       string
+		method     string
+		path       string
+		body       interface{}
+		wantStatus int
+	}{
+		{
+			name:       "list venues fails",
+			method:     http.MethodGet,
+			path:       "/api/venues",
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name:       "upsert venue fails",
+			method:     http.MethodPut,
+			path:       fmt.Sprintf("/api/venues/%s", failVenue),
+			body:       venueBody,
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name:       "delete venue fails",
+			method:     http.MethodDelete,
+			path:       fmt.Sprintf("/api/venues/%s", failVenue),
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name:       "list venue assignments fails",
+			method:     http.MethodGet,
+			path:       fmt.Sprintf("/api/venues/%s/assignments", failVenue),
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name:       "upsert venue assignment fails",
+			method:     http.MethodPut,
+			path:       fmt.Sprintf("/api/venues/%s/assignments/%d", failVenue, botID),
+			body:       assignBody,
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name:       "delete venue assignment fails",
+			method:     http.MethodDelete,
+			path:       fmt.Sprintf("/api/venues/%s/assignments/%d", failVenue, botID),
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name:       "list bot venues fails",
+			method:     http.MethodGet,
+			path:       fmt.Sprintf("/api/bots/%d/venues", botID),
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var body io.Reader
+			if tc.body != nil {
+				body = mustJSONReader(t, tc.body)
+			}
+			resp := harness.APIRequest(tc.method, tc.path, body)
+			require.Equal(t, tc.wantStatus, resp.StatusCode)
+			resp.Body.Close()
+		})
+	}
 }

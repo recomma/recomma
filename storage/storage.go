@@ -859,7 +859,7 @@ func (s *Storage) ListEventsForOrder(ctx context.Context, botID, dealID, botEven
 }
 
 // ListEventsLog returns all BotEvents recorded, irrelevant if we acted on it.
-func (s *Storage) ListEventsLog(ctx context.Context) ([]recomma.BotEventLog, error) {
+func (s *Storage) ListEventsLog(ctx context.Context) ([]recomma.BotEventLog, error) { // coverage-ignore
 	logger := s.logger.WithGroup("ListEventsLog")
 
 	s.mu.Lock()

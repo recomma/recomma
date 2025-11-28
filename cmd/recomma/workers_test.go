@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/recomma/recomma/emitter"
+	"github.com/recomma/recomma/engine"
 	rlog "github.com/recomma/recomma/log"
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
@@ -98,6 +99,17 @@ func newOrderWork() recomma.OrderWork {
 	}
 }
 
+type stubDealHandler struct {
+	err error
+}
+
+func (s *stubDealHandler) HandleDeal(ctx context.Context, wi engine.WorkKey) error {
+	if s.err != nil {
+		return s.err
+	}
+	return nil
+}
+
 func newLoggerContext() context.Context {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
 	return rlog.ContextWithLogger(context.Background(), logger)
@@ -177,4 +189,25 @@ func TestProcessOrderItem_SuccessForgets(t *testing.T) {
 	require.Len(t, q.forgotten, 1)
 	require.Equal(t, work, q.forgotten[0])
 	require.Len(t, q.addRateLimited, 0)
+}
+
+func TestProcessWorkItem_RetryLimit(t *testing.T) {
+	q := newFakeQueue[engine.WorkKey]()
+	work := engine.WorkKey{BotID: 1, DealID: 2}
+	handler := &stubDealHandler{err: errors.New("kaboom")}
+
+	for i := 0; i < 5; i++ {
+		processWorkItem(newLoggerContext(), q, handler, work)
+		require.Len(t, q.addRateLimited, i+1)
+		require.Equal(t, work, q.addRateLimited[i])
+		require.Len(t, q.forgotten, 0)
+	}
+
+	require.Equal(t, 5, q.NumRequeues(work))
+
+	processWorkItem(newLoggerContext(), q, handler, work)
+
+	require.Len(t, q.forgotten, 1)
+	require.Equal(t, work, q.forgotten[0])
+	require.Equal(t, 0, q.NumRequeues(work))
 }

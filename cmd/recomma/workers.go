@@ -22,7 +22,11 @@ type rateGateKey struct {
 }
 
 // runWorker processes items from the work queue
-func runWorker(ctx context.Context, wg *sync.WaitGroup, q workqueue.TypedRateLimitingInterface[engine.WorkKey], e *engine.Engine) {
+type dealHandler interface {
+	HandleDeal(ctx context.Context, wi engine.WorkKey) error
+}
+
+func runWorker(ctx context.Context, wg *sync.WaitGroup, q workqueue.TypedRateLimitingInterface[engine.WorkKey], h dealHandler) {
 	defer wg.Done()
 
 	for {
@@ -34,17 +38,17 @@ func runWorker(ctx context.Context, wg *sync.WaitGroup, q workqueue.TypedRateLim
 		// The SDK's internal rate limiter may need to wait for rate limit windows,
 		// which can be up to an hour or more when limits are exceeded.
 		reqCtx, cancel := context.WithTimeout(ctx, 2*time.Hour)
-		processWorkItem(reqCtx, q, e, wi)
+		processWorkItem(reqCtx, q, h, wi)
 		cancel()
 	}
 }
 
 // processWorkItem handles a single work item from the queue
-func processWorkItem(ctx context.Context, q workqueue.TypedRateLimitingInterface[engine.WorkKey], e *engine.Engine, wi engine.WorkKey) {
+func processWorkItem(ctx context.Context, q workqueue.TypedRateLimitingInterface[engine.WorkKey], h dealHandler, wi engine.WorkKey) {
 	logger := rlog.LoggerFromContext(ctx).With("work-key", wi)
 	defer q.Done(wi)
 
-	if err := e.HandleDeal(ctx, wi); err != nil {
+	if err := h.HandleDeal(ctx, wi); err != nil {
 		if errors.Is(err, context.Canceled) {
 			q.Forget(wi)
 			return

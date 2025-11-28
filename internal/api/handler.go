@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"math"
 	"strings"
@@ -48,11 +47,6 @@ type Store interface {
 	UpsertVenueAssignment(ctx context.Context, venueID string, botID int64, isPrimary bool) (VenueAssignmentRecord, error)
 	DeleteVenueAssignment(ctx context.Context, venueID string, botID int64) error
 	ListBotVenues(ctx context.Context, botID int64) ([]BotVenueAssignmentRecord, error)
-}
-
-// StreamSource publishes live order mutations for the SSE endpoint.
-type StreamSource interface {
-	Subscribe(ctx context.Context, filter StreamFilter) (<-chan StreamEvent, error)
 }
 
 // ApiHandler implements api.StrictServerInterface.
@@ -570,51 +564,6 @@ func (h *ApiHandler) CancelOrderByOrderId(ctx context.Context, req CancelOrderBy
 	return CancelOrderByOrderId202JSONResponse(resp), nil
 }
 
-// StreamOrders satisfies StrictServerInterface.
-func (h *ApiHandler) StreamOrders(ctx context.Context, req StreamOrdersRequestObject) (StreamOrdersResponseObject, error) {
-	if h.stream == nil {
-		return nil, fmt.Errorf("order streaming not configured")
-	}
-
-	filter := StreamFilter{
-		OrderIdPrefix: req.Params.OrderId,
-		BotID:         req.Params.BotId,
-		DealID:        req.Params.DealId,
-		BotEventID:    req.Params.BotEventId,
-		ObservedFrom:  req.Params.ObservedFrom,
-	}
-
-	ch, err := h.stream.Subscribe(ctx, filter)
-	if err != nil {
-		return nil, err
-	}
-
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer pw.Close()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case evt, ok := <-ch:
-				if !ok {
-					return
-				}
-				if err := h.writeSSEFrame(ctx, pw, evt); err != nil {
-					h.logger.WarnContext(ctx, "write SSE frame", slog.String("error", err.Error()))
-					return
-				}
-			}
-		}
-	}()
-
-	return StreamOrders200TexteventStreamResponse{
-		Body: pr,
-	}, nil
-}
-
 // GetSystemStatus satisfies StrictServerInterface.
 func (h *ApiHandler) GetSystemStatus(ctx context.Context, req GetSystemStatusRequestObject) (GetSystemStatusResponseObject, error) {
 	if h.systemStatus == nil {
@@ -695,8 +644,6 @@ type ListOrdersOptions struct {
 	PageToken     string
 }
 
-/* ---- streaming primitives ---- */
-
 type BotItem struct {
 	Bot          tc.Bot
 	LastSyncedAt time.Time
@@ -740,28 +687,6 @@ type OrderLogItem struct {
 	ScalerConfig *EffectiveOrderScaler
 	ScaledAudit  *ScaledOrderAudit
 	Actor        *string
-}
-
-type StreamFilter struct {
-	OrderIdPrefix *string
-	BotID         *int64
-	DealID        *int64
-	BotEventID    *int64
-	ObservedFrom  *time.Time
-}
-
-type StreamEvent struct {
-	Type             OrderLogEntryType
-	OrderID          orderid.OrderId
-	Identifier       *recomma.OrderIdentifier
-	ObservedAt       time.Time
-	BotEvent         *tc.BotEvent
-	Submission       interface{}
-	Status           *hyperliquid.WsOrder
-	Sequence         *int64
-	ScalerConfig     *EffectiveOrderScaler
-	ScaledOrderAudit *ScaledOrderAudit
-	Actor            *string
 }
 
 func makeOrderIdentifiers(oid orderid.OrderId, event *tc.BotEvent, fallback time.Time, ident *recomma.OrderIdentifier) OrderIdentifiers {

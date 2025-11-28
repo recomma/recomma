@@ -13,8 +13,84 @@ import (
 	"sync"
 	"time"
 
+	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/hl"
+	"github.com/recomma/recomma/orderid"
+	"github.com/recomma/recomma/recomma"
+	hyperliquid "github.com/sonirico/go-hyperliquid"
 )
+
+// StreamSource publishes live order mutations for the SSE endpoint.
+type StreamSource interface {
+	Subscribe(ctx context.Context, filter StreamFilter) (<-chan StreamEvent, error)
+}
+
+type StreamFilter struct {
+	OrderIdPrefix *string
+	BotID         *int64
+	DealID        *int64
+	BotEventID    *int64
+	ObservedFrom  *time.Time
+}
+
+type StreamEvent struct {
+	Type             OrderLogEntryType
+	OrderID          orderid.OrderId
+	Identifier       *recomma.OrderIdentifier
+	ObservedAt       time.Time
+	BotEvent         *tc.BotEvent
+	Submission       interface{}
+	Status           *hyperliquid.WsOrder
+	Sequence         *int64
+	ScalerConfig     *EffectiveOrderScaler
+	ScaledOrderAudit *ScaledOrderAudit
+	Actor            *string
+}
+
+// StreamOrders satisfies StrictServerInterface.
+func (h *ApiHandler) StreamOrders(ctx context.Context, req StreamOrdersRequestObject) (StreamOrdersResponseObject, error) {
+	if h.stream == nil {
+		return nil, fmt.Errorf("order streaming not configured")
+	}
+
+	filter := StreamFilter{
+		OrderIdPrefix: req.Params.OrderId,
+		BotID:         req.Params.BotId,
+		DealID:        req.Params.DealId,
+		BotEventID:    req.Params.BotEventId,
+		ObservedFrom:  req.Params.ObservedFrom,
+	}
+
+	ch, err := h.stream.Subscribe(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	pr, pw := io.Pipe()
+
+	go func() {
+		defer pw.Close()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case evt, ok := <-ch:
+				if !ok {
+					return
+				}
+				if err := h.writeSSEFrame(ctx, pw, evt); err != nil {
+					h.logger.WarnContext(ctx, "write SSE frame", slog.String("error", err.Error()))
+					return
+				}
+			}
+		}
+	}()
+
+	return StreamOrders200TexteventStreamResponse{
+		Body: pr,
+	}, nil
+}
 
 // StreamSystemEvents satisfies StrictServerInterface.
 func (h *ApiHandler) StreamSystemEvents(ctx context.Context, req StreamSystemEventsRequestObject) (StreamSystemEventsResponseObject, error) {

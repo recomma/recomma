@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -27,6 +28,7 @@ type stubHandlerStore struct {
 	orderScalers      []OrderScalerConfigItem
 	defaultScaler     OrderScalerState
 	botScalerOverride map[uint32]*OrderScalerOverride
+	listVenuesErr     error
 }
 
 func newStubHandlerStore() *stubHandlerStore {
@@ -73,7 +75,7 @@ func (s *stubHandlerStore) ListSubmissionIdentifiersForOrder(ctx context.Context
 }
 
 func (s *stubHandlerStore) ListVenues(ctx context.Context) ([]VenueRecord, error) {
-	return s.venues, nil
+	return s.venues, s.listVenuesErr
 }
 
 func (s *stubHandlerStore) UpsertVenue(ctx context.Context, venueID string, req VenueUpsertRequest) (VenueRecord, error) {
@@ -92,10 +94,10 @@ func (s *stubHandlerStore) DeleteVenue(ctx context.Context, venueID string) erro
 	for i, v := range s.venues {
 		if v.VenueId == venueID {
 			s.venues = append(s.venues[:i], s.venues[i+1:]...)
-			break
+			return nil
 		}
 	}
-	return nil
+	return ErrVenueNotFound
 }
 
 func (s *stubHandlerStore) ListVenueAssignments(ctx context.Context, venueID string) ([]VenueAssignmentRecord, error) {
@@ -300,6 +302,12 @@ func TestListVenues_WithData(t *testing.T) {
 	require.Len(t, okResp.Items, 2)
 	require.Equal(t, "hl1", okResp.Items[0].VenueId)
 	require.Equal(t, "hyperliquid", okResp.Items[0].Type)
+
+	store.listVenuesErr = errors.New("boom")
+	failResp, err := handler.ListVenues(ctx, ListVenuesRequestObject{})
+	require.NoError(t, err)
+	_, ok = failResp.(ListVenues500Response)
+	require.True(t, ok)
 }
 
 func TestUpsertVenue_Create(t *testing.T) {
@@ -326,6 +334,12 @@ func TestUpsertVenue_Create(t *testing.T) {
 	// Verify stored
 	require.Len(t, store.venues, 1)
 	require.Equal(t, "test-venue", store.venues[0].VenueId)
+
+	// Missing body should fail
+	badResp, err := handler.UpsertVenue(ctx, UpsertVenueRequestObject{VenueId: "another"})
+	require.NoError(t, err)
+	_, ok = badResp.(UpsertVenue400Response)
+	require.True(t, ok)
 }
 
 func TestDeleteVenue(t *testing.T) {
@@ -344,6 +358,12 @@ func TestDeleteVenue(t *testing.T) {
 
 	// Verify deleted
 	require.Empty(t, store.venues)
+
+	// Deleting again should yield 404
+	resp, err = handler.DeleteVenue(ctx, DeleteVenueRequestObject{VenueId: "to-delete"})
+	require.NoError(t, err)
+	_, ok = resp.(DeleteVenue404Response)
+	require.True(t, ok)
 }
 
 func TestListOrderScalers_WithData(t *testing.T) {

@@ -123,6 +123,118 @@ type RecordScaledOrderParams struct {
 	SkipReason        *string
 }
 
+func (s *Storage) ListOrderScalers(ctx context.Context, opts api.ListOrderScalersOptions) ([]api.OrderScalerConfigItem, *string, error) {
+	if opts.Limit <= 0 {
+		opts.Limit = 50
+	}
+
+	orderOpts := api.ListOrdersOptions{
+		OrderIdPrefix: opts.OrderIdPrefix,
+		BotID:         opts.BotID,
+		DealID:        opts.DealID,
+		BotEventID:    opts.BotEventID,
+		Limit:         opts.Limit,
+		PageToken:     opts.PageToken,
+	}
+
+	rows, next, err := s.ListOrders(ctx, orderOpts)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	items := make([]api.OrderScalerConfigItem, 0, len(rows))
+	for _, row := range rows {
+		effective, err := s.ResolveEffectiveOrderScaler(ctx, row.OrderId)
+		if err != nil {
+			return nil, nil, err
+		}
+		cfgPtr := toAPIEffectiveOrderScaler(effective)
+		if cfgPtr == nil {
+			return nil, nil, fmt.Errorf("build effective scaler for %s", row.OrderId.Hex())
+		}
+		items = append(items, api.OrderScalerConfigItem{
+			OrderId:    row.OrderId,
+			ObservedAt: effective.UpdatedAt(),
+			Actor:      effective.Actor(),
+			Config:     *cfgPtr,
+		})
+	}
+
+	return items, next, nil
+}
+
+func (s *Storage) GetDefaultOrderScaler(ctx context.Context) (api.OrderScalerState, error) {
+	state, err := s.GetOrderScaler(ctx)
+	if err != nil {
+		return api.OrderScalerState{}, err
+	}
+	return toAPIOrderScalerState(state), nil
+}
+
+func (s *Storage) UpsertDefaultOrderScaler(ctx context.Context, multiplier float64, updatedBy string, notes *string) (api.OrderScalerState, error) {
+	state, err := s.UpsertOrderScaler(ctx, multiplier, updatedBy, notes)
+	if err != nil {
+		return api.OrderScalerState{}, err
+	}
+	return toAPIOrderScalerState(state), nil
+}
+
+func (s *Storage) GetBotOrderScalerOverride(ctx context.Context, botID uint32) (*api.OrderScalerOverride, bool, error) {
+	state, found, err := s.GetBotOrderScaler(ctx, botID)
+	if err != nil {
+		return nil, false, err
+	}
+	if !found || state == nil {
+		return nil, false, nil
+	}
+	apiOverride := toAPIOrderScalerOverride(*state)
+	return &apiOverride, true, nil
+}
+
+func (s *Storage) UpsertBotOrderScalerOverride(ctx context.Context, botID uint32, multiplier *float64, notes *string, updatedBy string) (api.OrderScalerOverride, error) {
+	override, err := s.UpsertBotOrderScaler(ctx, botID, multiplier, notes, updatedBy)
+	if err != nil {
+		return api.OrderScalerOverride{}, err
+	}
+	return toAPIOrderScalerOverride(override), nil
+}
+
+func (s *Storage) DeleteBotOrderScalerOverride(ctx context.Context, botID uint32, updatedBy string) error {
+	return s.DeleteBotOrderScaler(ctx, botID, updatedBy)
+}
+
+func (s *Storage) ResolveEffectiveOrderScalerConfig(ctx context.Context, oid orderid.OrderId) (api.EffectiveOrderScaler, error) {
+	effective, err := s.ResolveEffectiveOrderScaler(ctx, oid)
+	if err != nil {
+		return api.EffectiveOrderScaler{}, err
+	}
+	apiEffective := toAPIEffectiveOrderScaler(effective)
+	if apiEffective == nil {
+		return api.EffectiveOrderScaler{}, fmt.Errorf("convert effective order scaler")
+	}
+	return *apiEffective, nil
+}
+
+func toAPIOrderScalerState(state OrderScalerState) api.OrderScalerState {
+	return api.OrderScalerState{
+		Multiplier: state.Multiplier,
+		Notes:      state.Notes,
+		UpdatedAt:  state.UpdatedAt,
+		UpdatedBy:  state.UpdatedBy,
+	}
+}
+
+func toAPIOrderScalerOverride(override BotOrderScalerOverride) api.OrderScalerOverride {
+	return api.OrderScalerOverride{
+		BotId:         int64(override.BotID),
+		Multiplier:    override.Multiplier,
+		Notes:         override.Notes,
+		EffectiveFrom: override.EffectiveFrom,
+		UpdatedAt:     override.UpdatedAt,
+		UpdatedBy:     override.UpdatedBy,
+	}
+}
+
 func (s *Storage) GetOrderScaler(ctx context.Context) (OrderScalerState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

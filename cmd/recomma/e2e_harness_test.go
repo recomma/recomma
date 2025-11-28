@@ -368,20 +368,26 @@ func (h *E2ETestHarness) WaitForOrderInDatabase(timeout time.Duration) {
 
 // APIGet performs GET request to app's API
 func (h *E2ETestHarness) APIGet(path string) *http.Response {
-	h.t.Helper()
-
-	baseURL := "http://" + h.App.HTTPAddr()
-	resp, err := h.HTTPClient.Get(baseURL + path)
-	require.NoError(h.t, err)
-	return resp
+	return h.APIRequest(http.MethodGet, path, nil)
 }
 
 // APIPost performs POST request to app's API
 func (h *E2ETestHarness) APIPost(path string, body io.Reader) *http.Response {
+	return h.APIRequest(http.MethodPost, path, body)
+}
+
+// APIRequest performs a request against the app's API using the shared client.
+func (h *E2ETestHarness) APIRequest(method, path string, body io.Reader) *http.Response {
 	h.t.Helper()
 
 	baseURL := "http://" + h.App.HTTPAddr()
-	resp, err := h.HTTPClient.Post(baseURL+path, "application/json", body)
+	req, err := http.NewRequest(method, baseURL+path, body)
+	require.NoError(h.t, err)
+	if body != nil && req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := h.HTTPClient.Do(req)
 	require.NoError(h.t, err)
 	return resp
 }

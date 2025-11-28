@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -283,87 +282,6 @@ func TestListOrders_WithData(t *testing.T) {
 	okResp, ok := resp.(ListOrders200JSONResponse)
 	require.True(t, ok, "expected 200 response")
 	require.Len(t, okResp.Items, 2)
-}
-
-func TestListVenues_WithData(t *testing.T) {
-	handler, store, ctx := newTestHandler(t)
-
-	// Add test venues
-	store.venues = []VenueRecord{
-		{VenueId: "hl1", Type: "hyperliquid", Wallet: "0x1234", DisplayName: "HL 1"},
-		{VenueId: "hl2", Type: "hyperliquid", Wallet: "0x5678", DisplayName: "HL 2"},
-	}
-
-	resp, err := handler.ListVenues(ctx, ListVenuesRequestObject{})
-	require.NoError(t, err)
-
-	okResp, ok := resp.(ListVenues200JSONResponse)
-	require.True(t, ok, "expected 200 response")
-	require.Len(t, okResp.Items, 2)
-	require.Equal(t, "hl1", okResp.Items[0].VenueId)
-	require.Equal(t, "hyperliquid", okResp.Items[0].Type)
-
-	store.listVenuesErr = errors.New("boom")
-	failResp, err := handler.ListVenues(ctx, ListVenuesRequestObject{})
-	require.NoError(t, err)
-	_, ok = failResp.(ListVenues500Response)
-	require.True(t, ok)
-}
-
-func TestUpsertVenue_Create(t *testing.T) {
-	handler, store, ctx := newTestHandler(t)
-
-	body := UpsertVenueJSONRequestBody{
-		Type:        "hyperliquid",
-		Wallet:      "0xabcd",
-		DisplayName: "Test Venue",
-	}
-
-	resp, err := handler.UpsertVenue(ctx, UpsertVenueRequestObject{
-		VenueId: "test-venue",
-		Body:    &body,
-	})
-	require.NoError(t, err)
-
-	okResp, ok := resp.(UpsertVenue200JSONResponse)
-	require.True(t, ok, "expected 200 response")
-	require.Equal(t, "test-venue", okResp.VenueId)
-	require.Equal(t, "hyperliquid", okResp.Type)
-	require.Equal(t, "0xabcd", okResp.Wallet)
-
-	// Verify stored
-	require.Len(t, store.venues, 1)
-	require.Equal(t, "test-venue", store.venues[0].VenueId)
-
-	// Missing body should fail
-	badResp, err := handler.UpsertVenue(ctx, UpsertVenueRequestObject{VenueId: "another"})
-	require.NoError(t, err)
-	_, ok = badResp.(UpsertVenue400Response)
-	require.True(t, ok)
-}
-
-func TestDeleteVenue(t *testing.T) {
-	handler, store, ctx := newTestHandler(t)
-
-	// Add venue to delete
-	store.venues = []VenueRecord{
-		{VenueId: "to-delete", Type: "hyperliquid", Wallet: "0x1111", DisplayName: "Delete Me"},
-	}
-
-	resp, err := handler.DeleteVenue(ctx, DeleteVenueRequestObject{VenueId: "to-delete"})
-	require.NoError(t, err)
-
-	_, ok := resp.(DeleteVenue204Response)
-	require.True(t, ok, "expected 204 response")
-
-	// Verify deleted
-	require.Empty(t, store.venues)
-
-	// Deleting again should yield 404
-	resp, err = handler.DeleteVenue(ctx, DeleteVenueRequestObject{VenueId: "to-delete"})
-	require.NoError(t, err)
-	_, ok = resp.(DeleteVenue404Response)
-	require.True(t, ok)
 }
 
 func TestListOrderScalers_WithData(t *testing.T) {

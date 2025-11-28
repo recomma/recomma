@@ -413,7 +413,7 @@ func (a *App) Start(ctx context.Context) error {
 	})
 
 	// Create ThreeCommas client (unless already provided, e.g., for testing)
-	if a.ThreeCommasClient == nil {
+	if a.ThreeCommasClient == nil { // coverage-ignore
 		baseClient, err := tc.New3CommasClient(
 			tc.WithAPIKey(secrets.Secrets.THREECOMMASAPIKEY),
 			tc.WithPrivatePEM([]byte(secrets.Secrets.THREECOMMASPRIVATEKEY)),

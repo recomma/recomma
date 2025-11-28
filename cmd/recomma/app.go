@@ -740,7 +740,11 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 		a.Logger.Warn("fill tracker rebuild failed", slog.String("error", err.Error()))
 	}
 
-	priceSource := newPriceSourceMultiplexer(priceLogger, primaryIdent, venueOrder, a.WsClients)
+	subscribers := make(map[recomma.VenueID]bboSubscriber, len(a.WsClients))
+	for id, client := range a.WsClients {
+		subscribers[id] = client
+	}
+	priceSource := newPriceSourceMultiplexer(priceLogger, primaryIdent, venueOrder, subscribers)
 	api.WithHyperliquidPriceSource(priceSource)(a.APIHandler)
 
 	return nil

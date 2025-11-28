@@ -8,26 +8,29 @@ import (
 	"strings"
 
 	"github.com/recomma/recomma/hl"
-	"github.com/recomma/recomma/hl/ws"
 	"github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/internal/vault"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
 )
 
+type bboSubscriber interface {
+	SubscribeBBO(ctx context.Context, coin string) (<-chan hl.BestBidOffer, error)
+}
+
 // priceSourceMultiplexer manages multiple WebSocket price sources with failover
 type priceSourceMultiplexer struct {
 	logger  *slog.Logger
 	primary recomma.VenueID
 	order   []recomma.VenueID
-	sources map[recomma.VenueID]*ws.Client
+	sources map[recomma.VenueID]bboSubscriber
 }
 
 // newPriceSourceMultiplexer creates a new price source multiplexer
-func newPriceSourceMultiplexer(logger *slog.Logger, primary recomma.VenueID, order []recomma.VenueID, sources map[recomma.VenueID]*ws.Client) *priceSourceMultiplexer {
+func newPriceSourceMultiplexer(logger *slog.Logger, primary recomma.VenueID, order []recomma.VenueID, sources map[recomma.VenueID]bboSubscriber) *priceSourceMultiplexer {
 	// Create defensive copies to prevent external mutations
 	orderCopy := append([]recomma.VenueID(nil), order...)
-	sourceCopy := make(map[recomma.VenueID]*ws.Client, len(sources))
+	sourceCopy := make(map[recomma.VenueID]bboSubscriber, len(sources))
 	for id, src := range sources {
 		sourceCopy[id] = src
 	}

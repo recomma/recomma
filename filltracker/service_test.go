@@ -902,6 +902,75 @@ func TestReconcileTakeProfitsRecreatesAfterCancelWithMissingOrderId(t *testing.T
 	require.Equal(t, tpIdent, createWork.Identifier)
 }
 
+func TestCleanupStaleDeals_RemovesOnlyInactive(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	service := &Service{
+		logger: newTestLogger(),
+		orders: make(map[recomma.OrderIdentifier]*orderState),
+		deals:  make(map[uint32]*dealState),
+	}
+
+	staleOID := orderid.OrderId{BotID: 1, DealID: 100, BotEventID: 1}
+	staleIdent := recomma.NewOrderIdentifier(recomma.VenueID("hyperliquid:test"), "wallet", staleOID)
+	staleOrder := &orderState{
+		identifier:   staleIdent,
+		status:       hyperliquid.OrderStatusValueFilled,
+		remainingQty: 0,
+		lastUpdate:   now.Add(-2 * time.Hour),
+	}
+	service.orders[staleIdent] = staleOrder
+	service.deals[staleOID.DealID] = &dealState{
+		botID:      staleOID.BotID,
+		dealID:     staleOID.DealID,
+		orders:     map[recomma.OrderIdentifier]*orderState{staleIdent: staleOrder},
+		lastUpdate: now.Add(-2 * time.Hour),
+	}
+
+	activeOID := orderid.OrderId{BotID: 2, DealID: 200, BotEventID: 1}
+	activeIdent := recomma.NewOrderIdentifier(recomma.VenueID("hyperliquid:test"), "wallet", activeOID)
+	activeOrder := &orderState{
+		identifier:   activeIdent,
+		status:       hyperliquid.OrderStatusValueOpen,
+		remainingQty: 5,
+		lastUpdate:   now.Add(-2 * time.Hour),
+	}
+	service.orders[activeIdent] = activeOrder
+	service.deals[activeOID.DealID] = &dealState{
+		botID:      activeOID.BotID,
+		dealID:     activeOID.DealID,
+		orders:     map[recomma.OrderIdentifier]*orderState{activeIdent: activeOrder},
+		lastUpdate: now.Add(-2 * time.Hour),
+	}
+
+	recentOID := orderid.OrderId{BotID: 3, DealID: 300, BotEventID: 1}
+	recentIdent := recomma.NewOrderIdentifier(recomma.VenueID("hyperliquid:test"), "wallet", recentOID)
+	recentOrder := &orderState{
+		identifier:   recentIdent,
+		status:       hyperliquid.OrderStatusValueFilled,
+		remainingQty: 0,
+		lastUpdate:   now.Add(-10 * time.Minute),
+	}
+	service.orders[recentIdent] = recentOrder
+	service.deals[recentOID.DealID] = &dealState{
+		botID:      recentOID.BotID,
+		dealID:     recentOID.DealID,
+		orders:     map[recomma.OrderIdentifier]*orderState{recentIdent: recentOrder},
+		lastUpdate: now.Add(-10 * time.Minute),
+	}
+
+	cleaned := service.CleanupStaleDeals(time.Hour)
+	require.Equal(t, 1, cleaned)
+
+	_, ok := service.deals[staleOID.DealID]
+	require.False(t, ok)
+	_, ok = service.orders[staleIdent]
+	require.False(t, ok)
+	require.Contains(t, service.deals, activeOID.DealID)
+	require.Contains(t, service.deals, recentOID.DealID)
+}
+
 // Helpers
 
 type stubEmitter struct {

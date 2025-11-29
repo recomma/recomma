@@ -61,6 +61,32 @@ func (c constraintsStub) Resolve(context.Context, string) (hl.CoinConstraints, e
 	return c.constraint, nil
 }
 
+func TestOrdersMatchAcceptsHyperliquidSideLetters(t *testing.T) {
+	t.Parallel()
+
+	desired := hyperliquid.CreateOrderRequest{
+		Coin:       "DOGE",
+		IsBuy:      false,
+		Price:      0.15348,
+		Size:       320,
+		ReduceOnly: true,
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{Tif: "Gtc"},
+		},
+	}
+	status := &hyperliquid.WsOrder{
+		Order: hyperliquid.WsBasicOrder{
+			Coin:    "DOGE",
+			Side:    "A",
+			LimitPx: "0.15348",
+			Sz:      "320",
+		},
+	}
+
+	latest := desired
+	require.True(t, ordersMatch(status, &latest, desired), "ordersMatch should treat Hyperliquid sell side \"A\" as valid")
+}
+
 type failingConstraints struct {
 	err error
 }

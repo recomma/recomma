@@ -712,7 +712,7 @@ func ordersMatch(status *hyperliquid.WsOrder, latestSubmission *hyperliquid.Crea
 			return false
 		}
 	} else {
-		if side != "S" {
+		if side != "S" && side != "A" {
 			return false
 		}
 	}

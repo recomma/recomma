@@ -8,7 +8,7 @@ profile: cover.out
 threshold:
   file: 50      # Minimum coverage per file (%)
   package: 50   # Minimum coverage per package (%)
-  total: 60     # Minimum overall project coverage (%)
+  total: 75     # Minimum overall project coverage (%)
 
 # Exclusions
 exclude:

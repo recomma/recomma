@@ -35,6 +35,7 @@ func TestE2E_ManualCancelFlow(t *testing.T) {
 	harness.TriggerDealProduction(testCtx)
 	harness.WaitForDealProcessing(2376446537, 5*time.Second)
 	harness.WaitForOrderInDatabase(5 * time.Second)
+	harness.WaitForOrderQueueIdle(5 * time.Second)
 
 	order := fetchFirstOrderRecord(t, harness)
 	require.NotEmpty(t, order.OrderId, "order must expose an OrderId")
@@ -124,7 +125,14 @@ func fetchFirstOrderRecord(t *testing.T, harness *E2ETestHarness) api.OrderRecor
 	require.NoError(t, json.Unmarshal(body, &list))
 	require.NotEmpty(t, list.Items, "expected at least one order from API")
 
-	return list.Items[0]
+	for _, item := range list.Items {
+		if item.Hyperliquid != nil && item.Hyperliquid.LatestSubmission != nil {
+			return item
+		}
+	}
+
+	t.Fatalf("no orders have a Hyperliquid.LatestSubmission in API response")
+	return api.OrderRecord{}
 }
 
 func countHyperliquidCancelActions(reqs []hlmock.ExchangeRequest) int {

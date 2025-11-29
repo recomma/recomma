@@ -197,9 +197,13 @@ func findOrderByType(
 		return api.OrderItem{}, false
 	}
 	for _, candidate := range orders {
-		if candidate.BotEvent != nil && candidate.BotEvent.OrderType == orderType {
-			return candidate, true
+		if candidate.BotEvent == nil || candidate.BotEvent.OrderType != orderType {
+			continue
 		}
+		if candidate.LatestSubmission == nil {
+			continue
+		}
+		return candidate, true
 	}
 	return api.OrderItem{}, false
 }

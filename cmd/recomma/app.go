@@ -439,6 +439,7 @@ func (a *App) Start(ctx context.Context) error {
 	oqCfg := workqueue.TypedRateLimitingQueueConfig[recomma.OrderWork]{Name: "orders"}
 	a.OrderQueue = workqueue.NewTypedRateLimitingQueueWithConfig(rlOrders, oqCfg)
 	a.OrderEmitter = emitter.NewQueueEmitter(a.OrderQueue)
+	a.FillTracker.SetEmitter(a.OrderEmitter)
 
 	// Initialize Hyperliquid venues
 	if err := a.initializeHyperliquidVenues(ctx, secrets); err != nil {

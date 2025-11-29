@@ -164,6 +164,68 @@ func TestServiceUpdateStatusAdjustsPosition(t *testing.T) {
 	require.True(t, snapshot.AllBuysFilled, "all buy orders still filled")
 }
 
+func TestUpdateStatusAutoCreatesTakeProfitAfterBaseFill(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := newTestStore(t)
+	logger := newTestLogger()
+	tracker := New(store, logger)
+	emitter := &stubEmitter{}
+	tracker.SetEmitter(emitter)
+
+	const (
+		dealID = uint32(9010)
+		botID  = uint32(77)
+		coin   = "DOGE"
+		size   = 131.0
+	)
+
+	createPrimaryVenue(t, store)
+	require.NoError(t, store.UpsertBotVenueAssignment(ctx, botID, "hyperliquid:test", true))
+	recordDeal(t, store, dealID, botID, coin)
+
+	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
+	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
+	now := time.Now()
+
+	require.NoError(t, recordEvent(store, baseOid, tc.BotEvent{
+		CreatedAt: now.Add(-2 * time.Minute),
+		Action:    tc.BotEventActionExecute,
+		Coin:      coin,
+		Type:      tc.BUY,
+		Status:    tc.Active,
+		Price:     0.15,
+		Size:      size,
+		OrderType: tc.MarketOrderDealOrderTypeBase,
+	}))
+
+	require.NoError(t, recordEvent(store, tpOid, tc.BotEvent{
+		CreatedAt: now.Add(-time.Minute),
+		Action:    tc.BotEventActionPlace,
+		Coin:      coin,
+		Type:      tc.SELL,
+		Status:    tc.Active,
+		Price:     0.15196,
+		Size:      size,
+		OrderType: tc.MarketOrderDealOrderTypeTakeProfit,
+		Text:      "Placing TakeProfit trade",
+	}))
+
+	fillStatus := makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, size, 0, 0.1503, now)
+	require.NoError(t, recordStatus(store, baseIdent, fillStatus))
+	require.NoError(t, tracker.UpdateStatus(ctx, baseIdent, fillStatus))
+
+	actions := emitter.Actions()
+	require.Len(t, actions, 1, "expected take-profit creation")
+
+	work := actions[0]
+	require.Equal(t, recomma.ActionCreate, work.Action.Type)
+	require.True(t, work.Action.Create.ReduceOnly, "take-profit must be reduce-only")
+	require.InDelta(t, size, work.Action.Create.Size, 1e-6)
+}
+
 func TestReconcileTakeProfits(t *testing.T) {
 	t.Parallel()
 

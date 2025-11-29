@@ -363,10 +363,13 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 		missingTargets := missingAssignmentTargets(oid, assignments, storedIdents)
 		replayAvailable := hasLocalOrder && len(missingTargets) > 0 && latestEvent != nil && latestEvent.Status == tc.Active
 
-		if fillSnapshot != nil && latestEvent != nil {
+		if latestEvent != nil {
 			adjusted, emit := e.adjustActionWithTracker(currency, oid, *latestEvent, action, fillSnapshot, orderLogger, false)
 			action = adjusted
 			shouldEmit = emit
+		}
+		if action.Type == recomma.ActionNone {
+			shouldEmit = false
 		}
 
 		var emissions []emissionPlan
@@ -437,11 +440,14 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 			latestForEmission := emission.latest
 			emit := true
 
-			if fillSnapshot != nil && latestForEmission != nil {
+			if latestForEmission != nil {
 				action, emit = e.adjustActionWithTracker(currency, oid, *latestForEmission, action, fillSnapshot, orderLogger, emission.skipExisting)
 				if !emit {
 					continue
 				}
+			}
+			if action.Type == recomma.ActionNone {
+				continue
 			}
 
 			// Scale and emit per-identifier to ensure each venue gets its own audit record
@@ -617,6 +623,13 @@ func (e *Engine) adjustActionWithTracker(
 	skipExisting bool,
 ) (recomma.Action, bool) {
 	if snapshot == nil {
+		if latest.OrderType == tc.MarketOrderDealOrderTypeTakeProfit {
+			logger.Info("skipping take profit placement: waiting for fill snapshot",
+				slog.String("action_type", action.Type.String()),
+				slog.String("reason", "fill snapshot unavailable"),
+			)
+			return recomma.Action{Type: recomma.ActionNone, Reason: "skip take-profit: fill snapshot unavailable"}, false
+		}
 		return action, true
 	}
 	if latest.OrderType != tc.MarketOrderDealOrderTypeTakeProfit {

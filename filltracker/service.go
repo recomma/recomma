@@ -29,6 +29,9 @@ type Service struct {
 	mu     sync.RWMutex
 	orders map[recomma.OrderIdentifier]*orderState
 	deals  map[uint32]*dealState
+	// submitter is optional; when configured the tracker can emit work items
+	// without waiting for the engine to rescan deals.
+	submitter recomma.Emitter
 }
 
 // New creates a new fill tracker service.
@@ -42,6 +45,13 @@ func New(store *storage.Storage, logger *slog.Logger) *Service {
 		orders: make(map[recomma.OrderIdentifier]*orderState),
 		deals:  make(map[uint32]*dealState),
 	}
+}
+
+// SetEmitter wires the queue emitter so the tracker can submit work directly.
+func (s *Service) SetEmitter(emitter recomma.Emitter) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.submitter = emitter
 }
 
 // Rebuild loads fill state for all deals from storage. Call once during startup.
@@ -75,7 +85,6 @@ func (s *Service) UpdateStatus(ctx context.Context, ident recomma.OrderIdentifie
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	state := s.ensureOrderLocked(ident)
 	if event != nil {
@@ -89,6 +98,11 @@ func (s *Service) UpdateStatus(ctx context.Context, ident recomma.OrderIdentifie
 	deal.lastUpdate = time.Now().UTC()
 	deal.recompute()
 
+	snapshot := deal.snapshot()
+	submitter := s.submitter
+
+	s.mu.Unlock()
+
 	s.logger.Debug("updated order status",
 		slog.Uint64("deal_id", uint64(deal.dealID)),
 		slog.String("venue", ident.Venue()),
@@ -98,6 +112,10 @@ func (s *Service) UpdateStatus(ctx context.Context, ident recomma.OrderIdentifie
 		slog.Float64("filled_qty", state.filledQty),
 		slog.Float64("remaining_qty", state.remainingQty),
 	)
+
+	if submitter != nil {
+		s.reconcileSnapshot(ctx, submitter, snapshot)
+	}
 
 	return nil
 }
@@ -159,51 +177,53 @@ func (s *Service) ReconcileTakeProfits(ctx context.Context, submitter recomma.Em
 		if !ok {
 			continue
 		}
-		if !snapshot.AllBuysFilled {
+		s.reconcileSnapshot(ctx, submitter, snapshot)
+	}
+}
+
+func (s *Service) reconcileSnapshot(ctx context.Context, submitter recomma.Emitter, snapshot DealSnapshot) {
+	if submitter == nil {
+		return
+	}
+	if snapshot.DealID == 0 {
+		return
+	}
+	if !snapshot.AllBuysFilled {
+		return
+	}
+
+	venuePositions := s.calculateVenuePositions(snapshot)
+
+	activeTPs := make(map[venueKey]OrderSnapshot)
+	for _, tp := range snapshot.ActiveTakeProfits {
+		key := venueKey{venue: tp.Identifier.VenueID, wallet: tp.Identifier.Wallet}
+		activeTPs[key] = tp
+	}
+
+	processedVenues := make(map[venueKey]bool)
+	for ident, venueNetQty := range venuePositions {
+		key := venueKey{venue: ident.VenueID, wallet: ident.Wallet}
+		processedVenues[key] = true
+
+		if venueNetQty <= floatTolerance {
+			if tp, exists := activeTPs[key]; exists {
+				s.cancelTakeProfitBySnapshot(ctx, submitter, snapshot, tp)
+			}
 			continue
 		}
 
-		// Calculate per-venue positions from filled orders
-		venuePositions := s.calculateVenuePositions(snapshot)
-
-		// Map existing active take-profits by venue+wallet (not full identifier)
-		activeTPs := make(map[venueKey]OrderSnapshot)
-		for _, tp := range snapshot.ActiveTakeProfits {
-			key := venueKey{venue: tp.Identifier.VenueID, wallet: tp.Identifier.Wallet}
-			activeTPs[key] = tp
+		if tp, exists := activeTPs[key]; exists {
+			s.reconcileActiveTakeProfitBySnapshot(ctx, submitter, snapshot, tp, venueNetQty)
+			continue
 		}
 
-		// Reconcile each venue independently
-		processedVenues := make(map[venueKey]bool)
-		for ident, venueNetQty := range venuePositions {
-			key := venueKey{venue: ident.VenueID, wallet: ident.Wallet}
-			processedVenues[key] = true
+		tpIdent := s.buildTakeProfitIdentifier(ctx, snapshot, ident.VenueID, ident.Wallet)
+		s.ensureTakeProfit(ctx, submitter, snapshot, venueNetQty, tpIdent, nil, false)
+	}
 
-			if venueNetQty <= floatTolerance {
-				// Position flat for this venue; cancel TP if it exists
-				if tp, exists := activeTPs[key]; exists {
-					s.cancelTakeProfitBySnapshot(ctx, submitter, snapshot, tp)
-				}
-				continue
-			}
-
-			// Check if this venue has an active take-profit
-			if tp, exists := activeTPs[key]; exists {
-				// Reconcile existing take-profit to match venue's net position
-				s.reconcileActiveTakeProfitBySnapshot(ctx, submitter, snapshot, tp, venueNetQty)
-			} else {
-				// Create take-profit for this venue
-				// Build the correct identifier with venue+wallet and TP's OrderId (not base order's)
-				tpIdent := s.buildTakeProfitIdentifier(ctx, snapshot, ident.VenueID, ident.Wallet)
-				s.ensureTakeProfit(ctx, submitter, snapshot, venueNetQty, tpIdent, nil, false)
-			}
-		}
-
-		// Cancel any TPs for venues that have no position (not in venuePositions map)
-		for key, tp := range activeTPs {
-			if !processedVenues[key] {
-				s.cancelTakeProfitBySnapshot(ctx, submitter, snapshot, tp)
-			}
+	for key, tp := range activeTPs {
+		if !processedVenues[key] {
+			s.cancelTakeProfitBySnapshot(ctx, submitter, snapshot, tp)
 		}
 	}
 }

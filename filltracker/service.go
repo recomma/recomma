@@ -428,6 +428,17 @@ func (s *Service) ensureTakeProfit(
 		return
 	}
 
+	if s.hasLiveHyperliquidStatus(ctx, ident) {
+		s.logger.Debug("skip take profit create: live reduce-only order already recorded",
+			slog.Uint64("deal_id", uint64(snapshot.DealID)),
+			slog.Uint64("bot_id", uint64(snapshot.BotID)),
+			slog.String("venue", ident.Venue()),
+			slog.String("wallet", ident.Wallet),
+			slog.String("cloid", ident.Hex()),
+		)
+		return
+	}
+
 	oid := ident.OrderId
 	create := adapter.ToCreateOrderRequest(snapshot.Currency, recomma.BotEvent{BotEvent: *evt}, oid)
 	create.Size = desiredQty
@@ -555,6 +566,18 @@ func isLiveHyperliquidStatus(status *hyperliquid.WsOrder) bool {
 	default:
 		return false
 	}
+}
+
+func (s *Service) hasLiveHyperliquidStatus(ctx context.Context, ident recomma.OrderIdentifier) bool {
+	status, found, err := s.store.LoadHyperliquidStatus(ctx, ident)
+	if err != nil {
+		s.logger.Warn("load hyperliquid status failed", slog.String("cloid", ident.Hex()), slog.String("error", err.Error()))
+		return false
+	}
+	if !found {
+		return false
+	}
+	return isLiveHyperliquidStatus(status)
 }
 
 func isCanceledHyperliquidStatus(status hyperliquid.OrderStatusValue) bool {

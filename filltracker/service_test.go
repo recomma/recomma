@@ -778,6 +778,77 @@ func TestUpdateStatusIgnoresOlderTimestamps(t *testing.T) {
 	})
 }
 
+func TestUpdateStatus_RecreatesTakeProfitBeforeExistingStatusArrives(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := newTestStore(t)
+	logger := newTestLogger()
+	tracker := New(store, logger)
+
+	const (
+		dealID = uint32(9102)
+		botID  = uint32(79)
+		coin   = "DOGE"
+		size   = 1955.0
+	)
+
+	createPrimaryVenue(t, store)
+	require.NoError(t, store.UpsertBotVenueAssignment(ctx, botID, "hyperliquid:test", true))
+	recordDeal(t, store, dealID, botID, coin)
+
+	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
+	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
+	tpIdent := defaultIdentifier(t, store, ctx, botID, tpOid)
+	now := time.Now()
+
+	baseEvent := tc.BotEvent{
+		CreatedAt: now.Add(-5 * time.Minute),
+		Action:    tc.BotEventActionExecute,
+		Coin:      coin,
+		Type:      tc.BUY,
+		Status:    tc.Filled,
+		Price:     0.15,
+		Size:      size,
+		OrderType: tc.MarketOrderDealOrderTypeBase,
+		IsMarket:  true,
+		Text:      "base fill",
+	}
+	require.NoError(t, recordEvent(store, baseOid, baseEvent))
+	baseStatus := makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, size, 0, baseEvent.Price, now.Add(-4*time.Minute))
+	require.NoError(t, recordStatus(store, baseIdent, baseStatus))
+
+	tpEvent := tc.BotEvent{
+		CreatedAt: now.Add(-3 * time.Minute),
+		Action:    tc.BotEventActionPlace,
+		Coin:      coin,
+		Type:      tc.SELL,
+		Status:    tc.Active,
+		Price:     0.15212,
+		Size:      size,
+		OrderType: tc.MarketOrderDealOrderTypeTakeProfit,
+		Text:      "existing tp",
+	}
+	require.NoError(t, recordEvent(store, tpOid, tpEvent))
+	tpStatus := makeStatus(tpOid, coin, "S", hyperliquid.OrderStatusValueOpen, size, size, tpEvent.Price, now.Add(-2*time.Minute))
+	require.NoError(t, recordStatus(store, tpIdent, tpStatus))
+
+	emitter := &stubEmitter{}
+	tracker.SetEmitter(emitter)
+
+	// Status refresher replays the base fill before the TP status, so ideally the
+	// tracker should wait for the TP replay instead of emitting duplicate work.
+	require.NoError(t, tracker.UpdateStatus(ctx, baseIdent, baseStatus))
+
+	actions := emitter.Actions()
+	require.Len(t, actions, 0, "replaying the base fill alone should not enqueue a duplicate take-profit create")
+
+	// Once the actual TP status arrives the tracker should remain idle.
+	require.NoError(t, tracker.UpdateStatus(ctx, tpIdent, tpStatus))
+	require.Len(t, emitter.Actions(), 0, "take-profit replay should not emit any additional work")
+}
+
 func TestEnsureTakeProfitRecreatesAfterStaleSubmission(t *testing.T) {
 	t.Parallel()
 

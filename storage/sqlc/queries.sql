@@ -1060,3 +1060,24 @@ ON CONFLICT(venue_id, wallet, order_id) DO NOTHING;
 DELETE FROM scaled_orders
 WHERE venue_id = sqlc.arg(venue_id)
   AND wallet = sqlc.arg(wallet);
+
+-- name: InsertAppLogEntry :exec
+INSERT INTO app_logs (
+    timestamp_utc,
+    level,
+    scope,
+    message,
+    attrs,
+    source_file,
+    source_line,
+    source_func
+) VALUES (
+    sqlc.arg(timestamp_millis),
+    sqlc.arg(level_text),
+    sqlc.arg(scope),
+    sqlc.arg(message),
+    sqlc.arg(attrs_json),
+    sqlc.arg(source_file),
+    sqlc.arg(source_line),
+    sqlc.arg(source_function)
+);

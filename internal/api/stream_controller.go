@@ -64,6 +64,16 @@ func NewStreamController(opts ...StreamControllerOption) *StreamController {
 	return c
 }
 
+// SetLogger updates the internal logger used for diagnostics.
+func (c *StreamController) SetLogger(logger *slog.Logger) {
+	if logger == nil {
+		return
+	}
+	c.mu.Lock()
+	c.logger = logger
+	c.mu.Unlock()
+}
+
 type streamSubscriber struct {
 	id     int64
 	filter StreamFilter

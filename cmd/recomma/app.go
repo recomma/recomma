@@ -28,6 +28,7 @@ import (
 	"github.com/recomma/recomma/internal/origin"
 	"github.com/recomma/recomma/internal/vault"
 	rlog "github.com/recomma/recomma/log"
+	"github.com/recomma/recomma/pkg/sqllogger"
 	"github.com/recomma/recomma/ratelimit"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
@@ -43,6 +44,7 @@ type App struct {
 	Store           *storage.Storage
 	VaultController *vault.Controller
 	Logger          *slog.Logger
+	sqliteLogHandler *sqllogger.Handler
 
 	// API
 	APIHandler       *api.ApiHandler
@@ -116,14 +118,12 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 	workerCtx, cancelWorkers := context.WithCancel(context.Background())
 
 	// Setup logging
-	logger := slog.New(config.GetLogHandler(cfg))
-	slog.SetDefault(logger)
-	log.SetOutput(slog.NewLogLogger(logger.Handler(), slog.LevelDebug).Writer())
+	baseHandler := config.GetLogHandler(cfg)
+	logger := slog.New(baseHandler)
 
 	webui.SetDebug(cfg.Debug)
-	appCtx = rlog.ContextWithLogger(appCtx, logger)
 
-	// Initialize stream controllers
+	// Initialize stream controllers (logger will be updated once the final handler is assembled)
 	streamController := api.NewStreamController(api.WithStreamLogger(logger))
 
 	// Parse system stream log level
@@ -155,6 +155,37 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 			return nil, fmt.Errorf("storage init failed: %w", err)
 		}
 	}
+
+	// Optional SQLite log handler
+	var sqliteLogHandler *sqllogger.Handler
+	if cfg.LogToStorage {
+		storageLevel := config.ParseLevelOrDefault(cfg.LogStorageLevel, slog.LevelInfo)
+		sqliteLogHandler, err = sqllogger.NewHandler(
+			sqllogger.WithInsertFunc(store.LogInsertFunc()),
+			sqllogger.WithMinLevel(storageLevel),
+		)
+		if err != nil {
+			store.Close()
+			return nil, fmt.Errorf("log storage handler init failed: %w", err)
+		}
+	}
+
+	// Compose final slog handler (stderr + optional SQLite + group filter)
+	var fanOut []slog.Handler
+	fanOut = append(fanOut, baseHandler)
+	if sqliteLogHandler != nil {
+		fanOut = append(fanOut, sqliteLogHandler)
+	}
+	var finalHandler slog.Handler = rlog.NewMultiHandler(fanOut...)
+	if groups := config.ParseLogGroups(cfg.LogGroups); len(groups) > 0 {
+		finalHandler = rlog.NewGroupFilterHandler(finalHandler, groups)
+	}
+	logger = slog.New(finalHandler)
+	streamController.SetLogger(logger)
+	storage.WithLogger(logger)(store)
+	slog.SetDefault(logger)
+	log.SetOutput(slog.NewLogLogger(logger.Handler(), slog.LevelDebug).Writer())
+	appCtx = rlog.ContextWithLogger(appCtx, logger)
 
 	// Initialize WebAuthn
 	webAuth, err := webauthn.New(&webauthn.Config{
@@ -261,6 +292,7 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 		Store:            store,
 		VaultController:  vaultController,
 		Logger:           logger,
+		sqliteLogHandler: sqliteLogHandler,
 		APIHandler:       apiHandler,
 		StreamController: streamController,
 		SystemStream:     systemStream,
@@ -805,6 +837,13 @@ func (a *App) Shutdown(ctx context.Context) error {
 		// Close websocket connections
 		for _, closeFn := range a.venueClosers {
 			closeFn()
+		}
+
+		// Close log handler before storage so queued writes flush
+		if a.sqliteLogHandler != nil {
+			if err := a.sqliteLogHandler.Close(ctx); err != nil {
+				a.Logger.Warn("log handler close error", slog.String("error", err.Error()))
+			}
 		}
 
 		// Close storage

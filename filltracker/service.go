@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
@@ -29,9 +30,10 @@ type Service struct {
 	mu     sync.RWMutex
 	orders map[recomma.OrderIdentifier]*orderState
 	deals  map[uint32]*dealState
-	// submitter is optional; when configured the tracker can emit work items
-	// without waiting for the engine to rescan deals.
-	submitter recomma.Emitter
+
+	submitter        recomma.Emitter
+	requireHydration atomic.Bool
+	statusHydrated   atomic.Bool
 }
 
 // New creates a new fill tracker service.
@@ -45,6 +47,25 @@ func New(store *storage.Storage, logger *slog.Logger) *Service {
 		orders: make(map[recomma.OrderIdentifier]*orderState),
 		deals:  make(map[uint32]*dealState),
 	}
+}
+
+// RequireStatusHydration enforces that reconciliation is skipped until Hyperliquid
+// statuses have been refreshed at least once.
+func (s *Service) RequireStatusHydration() {
+	s.requireHydration.Store(true)
+	s.statusHydrated.Store(false)
+}
+
+// MarkStatusesHydrated signals that Hyperliquid statuses have been replayed at least once.
+func (s *Service) MarkStatusesHydrated() {
+	s.statusHydrated.Store(true)
+}
+
+func (s *Service) statusesHydrated() bool {
+	if !s.requireHydration.Load() {
+		return true
+	}
+	return s.statusHydrated.Load()
 }
 
 // SetEmitter wires the queue emitter so the tracker can submit work directly.
@@ -172,6 +193,11 @@ func (s *Service) Snapshot(dealID uint32) (DealSnapshot, bool) {
 
 // ReconcileTakeProfits ensures a reduce-only order exists that matches the current net position.
 func (s *Service) ReconcileTakeProfits(ctx context.Context, submitter recomma.Emitter) {
+	if !s.statusesHydrated() {
+		s.logger.Debug("skip take profit reconciliation: hyperliquid statuses not hydrated")
+		return
+	}
+
 	for _, dealID := range s.listDealIDs() {
 		snapshot, ok := s.Snapshot(dealID)
 		if !ok {
@@ -428,7 +454,7 @@ func (s *Service) ensureTakeProfit(
 		return
 	}
 
-	if s.hasLiveHyperliquidStatus(ctx, ident) {
+	if !force && s.hasLiveHyperliquidStatus(ctx, ident) {
 		s.logger.Debug("skip take profit create: live reduce-only order already recorded",
 			slog.Uint64("deal_id", uint64(snapshot.DealID)),
 			slog.Uint64("bot_id", uint64(snapshot.BotID)),
@@ -679,6 +705,13 @@ func floatsEqual(a, b float64) bool {
 }
 
 func (s *Service) reloadDeal(ctx context.Context, dealID uint32) error {
+	var dealRecord *tc.Deal
+	if record, found, err := s.store.LoadThreeCommasDeal(ctx, int(dealID)); err != nil {
+		return err
+	} else if found {
+		dealRecord = record
+	}
+
 	oids, err := s.store.ListOrderIdsForDeal(ctx, dealID)
 	if err != nil {
 		return err
@@ -758,6 +791,10 @@ func (s *Service) reloadDeal(ctx context.Context, dealID uint32) error {
 			deal.recompute()
 			s.mu.Unlock()
 		}
+	}
+
+	if dealFinished(dealRecord) {
+		s.closeOpenOrdersForDeal(dealID)
 	}
 
 	return nil
@@ -848,6 +885,53 @@ func (s *Service) CleanupStaleDeals(staleDuration time.Duration) int {
 	}
 
 	return len(staleDeals)
+}
+
+func (s *Service) closeOpenOrdersForDeal(dealID uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	deal, ok := s.deals[dealID]
+	if !ok {
+		return
+	}
+
+	now := time.Now().UTC()
+	for _, state := range deal.orders {
+		if !state.isBuy() {
+			continue
+		}
+		if !state.isActive() {
+			continue
+		}
+		state.remainingQty = 0
+		state.status = hyperliquid.OrderStatusValueCanceled
+		state.statusObserved = now
+		state.lastUpdate = now
+	}
+	deal.lastUpdate = now
+	deal.recompute()
+}
+
+func dealFinished(deal *tc.Deal) bool {
+	if deal == nil {
+		return false
+	}
+	if deal.Finished {
+		return true
+	}
+	status := strings.ToLower(string(deal.Status))
+	if status == "" {
+		return false
+	}
+	if strings.Contains(status, "finished") ||
+		strings.Contains(status, "canceled") ||
+		strings.Contains(status, "cancelled") ||
+		status == "completed" ||
+		status == "failed" {
+		return true
+	}
+	return false
 }
 
 type orderState struct {
@@ -947,9 +1031,8 @@ func (o *orderState) inferFromEvent() {
 	if o.event.Size > 0 && o.originalQty == 0 {
 		o.originalQty = o.event.Size
 	}
-	if o.event.Status == tc.Filled || o.event.Status == tc.Finished {
-		o.filledQty = o.event.Size
-		o.remainingQty = 0
+	if o.originalQty > 0 && o.remainingQty == 0 {
+		o.remainingQty = o.originalQty
 	}
 	if o.event.CreatedAt.UnixMilli() > 0 {
 		o.statusObserved = o.event.CreatedAt.UTC()

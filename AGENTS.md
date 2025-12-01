@@ -166,6 +166,7 @@ The second version makes it **impossible** to write a test that ignores auto-wak
 - **Debug queue behaviour**: use `engine` + `emitter` logs; consider toggling log level via `RECOMMA_LOG_LEVEL=debug`.
 - **Work on SDKs**: enable `replace` entries, rebuild, and run targeted tests.
 - **Local run**: `go run ./cmd/recomma --public-origin=http://localhost:8080` (or use `docker compose up recomma`).
+- **Bug reports**: whenever you uncover a defect from a snapshot/log review, document it under `./bugs/bug_<yyyy-mm-dd>_<slug>.md` using the existing format (source artifacts, summary, evidence, impact, next steps) so the maintainer can triage it later.
 
 ### Generated Artifacts
 - Do not edit generated code. Rerun the appropriate `go generate` after changing `openapi.yaml`, `oapi.yaml`, or anything under `storage/sqlc/`.
@@ -179,11 +180,20 @@ The second version makes it **impossible** to write a test that ignores auto-wak
 - Keep generated files checked in; CI relies on repo consistency without rerunning `go generate`.
 - The default Hyperliquid venue must be resolved via `storage.ResolveDefaultAlias`; do not hard-code `hyperliquid:default` or its wallet—always derive the identifier from storage before emitting work or recording submissions.
 
+### Debugging From a Provided SQLite Snapshot
+When the user shares a `.sqlite` capture, follow this checklist so we can replay exactly what they saw:
+1. **Inspect the schema/tables**: `sqlite3 <db> '.tables'` and note whether WAL files (`-wal`, `-shm`) are present; copy them too so no state is lost.
+2. **Dump the logs**: `sqlite3 <db> "SELECT datetime(timestamp_utc/1000,'unixepoch'), level, scope, message FROM app_logs ORDER BY timestamp_utc;"` filters quickly (`scope IN (...)`) when we just need filltracker/emitter activity.
+3. **Check Hyperliquid state**: query both `hyperliquid_status_history` and `hyperliquid_submissions` for the CLOIDs/DealIDs in question to see what was “live” when the snapshot was taken.
+4. **Look for outstanding safeties**: use `SELECT DISTINCT order_id FROM hyperliquid_status_history WHERE json_extract(payload_blob,'$.status')='open'` to confirm whether any buys were still in flight (this determines `AllBuysFilled`).
+5. **Annotate findings**: reference the sqlite file name in every bug report or summary so we can reproduce later (e.g. “using `2025-11-30_1354/testing31-retry.sqlite`”).
+6. **Never mutate the source DB**: copy it before running destructive queries so the user can re-run the same analysis if needed.
+
 ## Commits
 Prefer smaller commits instead of one massive one. This allows to track the changes more easily.
 Add a co-authored to the commit message, use your own verified email if present else agent@terwey.me
 
-   Co-authored-by: Your Name <agent@terwey.me>
+   Co-authored-by: Codex <agent@terwey.me>
 
 ### Commit Messages
 - All PR titles and commit messages must follow the Conventional Commits specification (https://www.conventionalcommits.org/).

@@ -41,9 +41,9 @@ type App struct {
 	Config config.AppConfig
 
 	// Core components
-	Store           *storage.Storage
-	VaultController *vault.Controller
-	Logger          *slog.Logger
+	Store            *storage.Storage
+	VaultController  *vault.Controller
+	Logger           *slog.Logger
 	sqliteLogHandler *sqllogger.Handler
 
 	// API
@@ -463,6 +463,7 @@ func (a *App) Start(ctx context.Context) error {
 
 	// Initialize fill tracker
 	a.FillTracker = filltracker.New(a.Store, a.Logger)
+	a.FillTracker.RequireStatusHydration()
 
 	// Create order queue and emitter
 	rlOrders := workqueue.NewTypedMaxOfRateLimiter(
@@ -767,6 +768,8 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 	// TODO: needs to become venue aware!
 	if err := statusRefresher.Refresh(ctx); err != nil {
 		a.Logger.Warn("status refresher failed", slog.String("error", err.Error()))
+	} else {
+		a.FillTracker.MarkStatusesHydrated()
 	}
 
 	if err := a.FillTracker.Rebuild(ctx); err != nil {

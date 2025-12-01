@@ -27,6 +27,7 @@ func TestServiceRebuildAggregatesExecutedOrders(t *testing.T) {
 	store := newTestStore(t)
 	logger := newTestLogger()
 	tracker := New(store, logger)
+	tracker.RequireStatusHydration()
 
 	const (
 		dealID = uint32(9001)
@@ -162,6 +163,56 @@ func TestServiceUpdateStatusAdjustsPosition(t *testing.T) {
 	require.Len(t, snapshot.ActiveTakeProfits, 1, "should have one active take-profit")
 	require.InDelta(t, 80, snapshot.ActiveTakeProfits[0].RemainingQty, 1e-6)
 	require.True(t, snapshot.AllBuysFilled, "all buy orders still filled")
+}
+
+func TestSnapshotIgnoresFilledEventsWithoutHyperliquidStatus(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := newTestStore(t)
+	logger := newTestLogger()
+	tracker := New(store, logger)
+
+	const (
+		dealID = uint32(9105)
+		botID  = uint32(42)
+		coin   = "DOGE"
+		size   = 200.0
+		price  = 0.15
+	)
+
+	createPrimaryVenue(t, store)
+	require.NoError(t, store.UpsertBotVenueAssignment(ctx, botID, "hyperliquid:test", true))
+	recordDeal(t, store, dealID, botID, coin)
+
+	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
+
+	baseEvent := tc.BotEvent{
+		CreatedAt: time.Now().Add(-time.Minute),
+		Action:    tc.BotEventActionExecute,
+		Coin:      coin,
+		Type:      tc.BUY,
+		Status:    tc.Filled,
+		Price:     price,
+		Size:      size,
+		OrderType: tc.MarketOrderDealOrderTypeBase,
+		IsMarket:  true,
+		Text:      "3Commas marked order as filled",
+	}
+	baseRowID, err := store.RecordThreeCommasBotEvent(ctx, baseOid, baseEvent)
+	require.NoError(t, err)
+
+	createReq := adapter.ToCreateOrderRequest(coin, recomma.BotEvent{BotEvent: baseEvent}, baseOid)
+	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, baseIdent, createReq, baseRowID))
+
+	require.NoError(t, tracker.Rebuild(ctx))
+
+	snapshot, ok := tracker.Snapshot(dealID)
+	require.True(t, ok)
+	require.InDelta(t, 0, snapshot.Position.TotalBuyQty, 1e-6, "should ignore 3Commas event without matching Hyperliquid status")
+	require.InDelta(t, 0, snapshot.Position.NetQty, 1e-6, "net position must remain flat until Hyperliquid reports a fill")
+	require.Falsef(t, snapshot.AllBuysFilled, "buys cannot be treated as filled without an exchange status (snapshot=%+v)", snapshot)
 }
 
 func TestUpdateStatusAutoCreatesTakeProfitAfterBaseFill(t *testing.T) {
@@ -849,6 +900,78 @@ func TestUpdateStatus_RecreatesTakeProfitBeforeExistingStatusArrives(t *testing.
 	require.Len(t, emitter.Actions(), 0, "take-profit replay should not emit any additional work")
 }
 
+func TestSnapshotClearsStaleOpenOrdersAfterStopLoss(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := newTestStore(t)
+	logger := newTestLogger()
+	tracker := New(store, logger)
+
+	const (
+		dealID = uint32(9300)
+		botID  = uint32(55)
+		coin   = "DOGE"
+		size   = 160.0
+		price  = 0.14
+	)
+
+	createPrimaryVenue(t, store)
+	require.NoError(t, store.UpsertBotVenueAssignment(ctx, botID, "hyperliquid:test", true))
+	recordDeal(t, store, dealID, botID, coin)
+
+	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
+	now := time.Now().Add(-48 * time.Hour)
+
+	baseEvent := tc.BotEvent{
+		CreatedAt: now,
+		Action:    tc.BotEventActionExecute,
+		Coin:      coin,
+		Type:      tc.BUY,
+		Status:    tc.Filled,
+		Price:     price,
+		Size:      size,
+		OrderType: tc.MarketOrderDealOrderTypeBase,
+		Text:      "base order placed long ago",
+	}
+	require.NoError(t, recordEvent(store, baseOid, baseEvent))
+
+	// Hyperliquid never produced a terminal status; the last thing we saw was "open".
+	staleStatus := makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueOpen, size, size, price, now)
+	require.NoError(t, recordStatus(store, baseIdent, staleStatus))
+
+	// 3Commas reported a stop-loss completion, so the mirrored deal should be closed.
+	closeOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
+	closeEvent := tc.BotEvent{
+		CreatedAt: time.Now().Add(-47 * time.Hour),
+		Action:    tc.BotEventActionCancel,
+		Coin:      coin,
+		Type:      tc.SELL,
+		Status:    tc.Finished,
+		Price:     price * 0.98,
+		Size:      size,
+		OrderType: tc.MarketOrderDealOrderTypeStopLoss,
+		Text:      "stop loss finished deal",
+	}
+	require.NoError(t, recordEvent(store, closeOid, closeEvent))
+
+	require.NoError(t, store.RecordThreeCommasDeal(ctx, tc.Deal{
+		Id:         int(dealID),
+		BotId:      int(botID),
+		ToCurrency: coin,
+		Status:     tc.DealStatus("stop_loss_finished"),
+		Finished:   true,
+	}))
+
+	require.NoError(t, tracker.Rebuild(ctx))
+
+	snapshot, ok := tracker.Snapshot(dealID)
+	require.True(t, ok)
+	require.True(t, snapshot.AllBuysFilled, "stale open buy should be cleared once stop loss finishes")
+	require.Empty(t, snapshot.OpenBuys, "no live buy orders should remain after deal closure")
+}
+
 func TestEnsureTakeProfitRecreatesAfterStaleSubmission(t *testing.T) {
 	t.Parallel()
 
@@ -1033,6 +1156,76 @@ func TestReconcileTakeProfitsRecreatesAfterCancelWithMissingOrderId(t *testing.T
 	require.InDelta(t, snapshot.Position.NetQty, createWork.Action.Create.Size, 1e-6)
 	require.Equal(t, tpOid.Hex(), createWork.OrderId.Hex())
 	require.Equal(t, tpIdent, createWork.Identifier)
+}
+
+func TestReconcileTakeProfits_WaitsForStatusRefreshBeforeRecreation(t *testing.T) {
+	// t.Skip("BUG: filltracker recreates TP during startup before Hyperliquid statuses are refreshed (see bugs/bug_2025-11-30_startup_tp_race.md)")
+
+	ctx := context.Background()
+	store := newTestStore(t)
+	logger := newTestLogger()
+	tracker := New(store, logger)
+	tracker.RequireStatusHydration()
+
+	const (
+		dealID = uint32(9401)
+		botID  = uint32(74)
+		coin   = "DOGE"
+	)
+
+	createPrimaryVenue(t, store)
+	require.NoError(t, store.UpsertBotVenueAssignment(ctx, botID, "hyperliquid:test", true))
+	recordDeal(t, store, dealID, botID, coin)
+
+	baseOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 1}
+	baseIdent := defaultIdentifier(t, store, ctx, botID, baseOid)
+	now := time.Now().UTC()
+
+	baseEvent := tc.BotEvent{
+		CreatedAt: now.Add(-2 * time.Minute),
+		Action:    tc.BotEventActionExecute,
+		Coin:      coin,
+		Type:      tc.BUY,
+		Status:    tc.Filled,
+		Price:     0.15,
+		Size:      1955,
+		OrderType: tc.MarketOrderDealOrderTypeBase,
+		IsMarket:  true,
+		Text:      "base fill",
+	}
+	require.NoError(t, recordEvent(store, baseOid, baseEvent))
+	require.NoError(t, recordStatus(store, baseIdent, makeStatus(baseOid, coin, "B", hyperliquid.OrderStatusValueFilled, baseEvent.Size, 0, baseEvent.Price, now.Add(-90*time.Second))))
+
+	tpOid := orderid.OrderId{BotID: botID, DealID: dealID, BotEventID: 2}
+	tpIdent := defaultIdentifier(t, store, ctx, botID, tpOid)
+	tpEvent := tc.BotEvent{
+		CreatedAt: now.Add(-1 * time.Minute),
+		Action:    tc.BotEventActionPlace,
+		Coin:      coin,
+		Type:      tc.SELL,
+		Status:    tc.Active,
+		Price:     0.15212,
+		Size:      1955,
+		OrderType: tc.MarketOrderDealOrderTypeTakeProfit,
+		Text:      "take profit placed",
+	}
+	rowID, err := store.RecordThreeCommasBotEvent(ctx, tpOid, tpEvent)
+	require.NoError(t, err)
+
+	create := adapter.ToCreateOrderRequest(coin, recomma.BotEvent{BotEvent: tpEvent}, tpOid)
+	create.ReduceOnly = true
+	require.NoError(t, store.RecordHyperliquidOrderRequest(ctx, tpIdent, create, rowID))
+
+	require.NoError(t, tracker.Rebuild(ctx))
+
+	snapshot, ok := tracker.Snapshot(dealID)
+	require.True(t, ok)
+	require.True(t, snapshot.AllBuysFilled, "all safeties/base should be filled at startup")
+
+	emitter := &stubEmitter{}
+	tracker.ReconcileTakeProfits(ctx, emitter)
+
+	require.Len(t, emitter.Actions(), 0, "tracker should wait for Hyperliquid status refresh before recreating the TP")
 }
 
 func TestCleanupStaleDeals_RemovesOnlyInactive(t *testing.T) {

@@ -8,6 +8,18 @@ import (
 	"encoding/json"
 )
 
+type AppLog struct {
+	ID           int64           `json:"id"`
+	TimestampUtc int64           `json:"timestamp_utc"`
+	Level        string          `json:"level"`
+	Scope        *string         `json:"scope"`
+	Message      string          `json:"message"`
+	Attrs        json.RawMessage `json:"attrs"`
+	SourceFile   *string         `json:"source_file"`
+	SourceLine   *int64          `json:"source_line"`
+	SourceFunc   *string         `json:"source_func"`
+}
+
 type BotOrderScaler struct {
 	BotID            int64    `json:"bot_id"`
 	Multiplier       *float64 `json:"multiplier"`

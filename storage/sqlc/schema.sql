@@ -196,3 +196,19 @@ CREATE INDEX IF NOT EXISTS idx_scaled_orders_order_id_created
 
 CREATE INDEX IF NOT EXISTS idx_scaled_orders_deal_stack
     ON scaled_orders(deal_id, stack_index);
+
+CREATE TABLE IF NOT EXISTS app_logs (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp_utc  INTEGER NOT NULL,  -- unix epoch milliseconds
+    level          TEXT    NOT NULL,  -- slog level text
+    scope          TEXT,              -- dot-joined slog groups
+    message        TEXT    NOT NULL,
+    attrs          JSON    NOT NULL DEFAULT '[]',
+    source_file    TEXT,
+    source_line    INTEGER,
+    source_func    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON app_logs(timestamp_utc);
+CREATE INDEX IF NOT EXISTS idx_logs_level ON app_logs(level);
+CREATE INDEX IF NOT EXISTS idx_logs_scope ON app_logs(scope);

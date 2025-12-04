@@ -81,7 +81,7 @@ func NewLimiter(cfg Config) *Limiter {
 		cfg.WindowDuration = 60 * time.Second
 	}
 	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
+		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
 
 	// Check for window resets frequently (every 1/10th of window duration)
@@ -404,15 +404,25 @@ func (l *Limiter) SignalComplete(workflowID string) error {
 	res.completed = true
 
 	slotsWasted := res.slotsReserved - res.slotsConsumed
-	l.logger.Info("rate limit workflow complete",
+	if slotsWasted < 0 {
+		slotsWasted = 0
+	}
+	woken := l.tryGrantWaiting()
+
+	attrs := []any{
 		slog.String("workflow_id", workflowID),
 		slog.Int("slots_reserved", res.slotsReserved),
 		slog.Int("slots_consumed", res.slotsConsumed),
 		slog.Int("slots_wasted", slotsWasted),
-	)
-
-	// Try to grant waiting workflows
-	l.tryGrantWaiting()
+	}
+	if woken > 0 {
+		attrs = append(attrs, slog.Int("woken_workflows", woken))
+	}
+	if slotsWasted > 0 || woken > 0 {
+		l.logger.Info("rate limit workflow complete", attrs...)
+	} else {
+		l.logger.Debug("rate limit workflow complete", attrs...)
+	}
 
 	return nil
 }
@@ -439,23 +449,39 @@ func (l *Limiter) Release(workflowID string) error {
 	slotsReserved := res.slotsReserved
 	slotsConsumed := res.slotsConsumed
 
-	nextInQueue := "<none>"
+	nextInQueue := "none"
 	if len(l.waitQueue) > 0 {
 		nextInQueue = l.waitQueue[0].workflowID
 	}
 
-	l.logger.Info("rate limit release",
+	delete(l.activeReservations, workflowID)
+
+	freedCapacity := slotsReserved - slotsConsumed
+	if freedCapacity < 0 {
+		freedCapacity = 0
+	}
+
+	woken := l.tryGrantWaiting()
+
+	attrs := []any{
 		slog.String("workflow_id", workflowID),
 		slog.Duration("duration", duration),
 		slog.Int("slots_reserved", slotsReserved),
 		slog.Int("slots_consumed", slotsConsumed),
 		slog.String("next_in_queue", nextInQueue),
-	)
+	}
+	if freedCapacity > 0 {
+		attrs = append(attrs, slog.Int("freed_capacity", freedCapacity))
+	}
+	if woken > 0 {
+		attrs = append(attrs, slog.Int("woken_workflows", woken))
+	}
 
-	delete(l.activeReservations, workflowID)
-
-	// Try to grant next waiting workflow
-	l.tryGrantWaiting()
+	if freedCapacity > 0 || woken > 0 {
+		l.logger.Info("rate limit release", attrs...)
+	} else {
+		l.logger.Debug("rate limit release", attrs...)
+	}
 
 	return nil
 }
@@ -469,12 +495,12 @@ func (l *Limiter) Stats() (consumed, limit, queueLen int, hasReservation bool) {
 	return l.consumed, l.limit, len(l.waitQueue), len(l.activeReservations) > 0
 }
 
-// resetWindowIfNeeded resets the window if we've passed the boundary and attempts to wake
-// queued workflows. Must be called with lock held.
+// resetWindowIfNeeded resets the window if we've passed the boundary.
+// Must be called with the lock held.
 //
-// This is called both during normal operations (Reserve, Consume, etc.) and by the background
-// ticker to ensure queued workflows are woken even when no other operations occur.
-func (l *Limiter) resetWindowIfNeeded() {
+// Returns true when a reset occurred so the caller can decide whether to wake
+// queued workflows.
+func (l *Limiter) resetWindowIfNeeded() bool {
 	now := time.Now()
 	if now.Sub(l.windowStart) >= l.window {
 		previousConsumed := l.consumed
@@ -500,13 +526,14 @@ func (l *Limiter) resetWindowIfNeeded() {
 		l.consumed = 0
 
 		// Active reservations are NOT cancelled, workflows continue
-		// Try to grant waiting workflows now that window has reset
-		l.tryGrantWaiting()
+		return true
 	}
+	return false
 }
 
 // tryGrantWaiting attempts to grant reservations to waiting workflows (must be called with lock held)
-func (l *Limiter) tryGrantWaiting() {
+func (l *Limiter) tryGrantWaiting() int {
+	granted := 0
 	// Process queue in FIFO order, granting as many as capacity allows
 	for len(l.waitQueue) > 0 {
 		next := l.waitQueue[0]
@@ -539,11 +566,13 @@ func (l *Limiter) tryGrantWaiting() {
 			// Remove from queue and signal
 			l.waitQueue = l.waitQueue[1:]
 			close(next.ready)
+			granted++
 		} else {
 			// Not enough capacity yet, stop trying
 			break
 		}
 	}
+	return granted
 }
 
 // calculateTotalReserved sums up all reserved slots across active reservations (must be called with lock held)
@@ -574,7 +603,9 @@ func (l *Limiter) windowResetWatcher() {
 			l.mu.Lock()
 			// Only check if there are queued workflows waiting
 			if len(l.waitQueue) > 0 {
-				l.resetWindowIfNeeded()
+				if l.resetWindowIfNeeded() {
+					l.tryGrantWaiting()
+				}
 			}
 			l.mu.Unlock()
 		case <-l.done:

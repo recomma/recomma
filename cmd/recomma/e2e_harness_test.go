@@ -1,0 +1,444 @@
+package main
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/hex"
+	"encoding/pem"
+	"io"
+	"net/http"
+	"testing"
+	"time"
+
+	gethCrypto "github.com/ethereum/go-ethereum/crypto"
+	threecommasmock "github.com/recomma/3commas-mock/server"
+	tc "github.com/recomma/3commas-sdk-go/threecommas"
+	hlmock "github.com/recomma/hyperliquid-mock/server"
+	"github.com/recomma/recomma/cmd/recomma/internal/config"
+	"github.com/recomma/recomma/internal/api"
+	"github.com/recomma/recomma/internal/vault"
+	"github.com/recomma/recomma/recomma"
+	"github.com/recomma/recomma/storage"
+	"github.com/stretchr/testify/require"
+)
+
+// generateTestRSAKeyPEM generates an RSA private key and returns it as PEM-encoded bytes
+func generateTestRSAKeyPEM(t testing.TB) []byte {
+	t.Helper()
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	privateKeyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
+	privateKeyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: privateKeyBytes,
+	})
+
+	return privateKeyPEM
+}
+
+type harnessConfig struct {
+	additionalVenues    []additionalVenueSpec
+	enableStorageLogger bool
+}
+
+func unwrapTestingT(tb testing.TB) *testing.T {
+	if t, ok := tb.(*testing.T); ok {
+		return t
+	}
+	return &testing.T{}
+}
+
+type additionalVenueSpec struct {
+	id          string
+	displayName string
+}
+
+// E2EHarnessOption customizes the harness construction.
+type E2EHarnessOption func(*harnessConfig)
+
+// WithAdditionalHyperliquidVenue appends another Hyperliquid venue secret to the harness.
+func WithAdditionalHyperliquidVenue(id, displayName string) E2EHarnessOption {
+	return func(cfg *harnessConfig) {
+		if id == "" {
+			return
+		}
+		cfg.additionalVenues = append(cfg.additionalVenues, additionalVenueSpec{
+			id:          id,
+			displayName: displayName,
+		})
+	}
+}
+
+func generateHyperliquidCredentials(t testing.TB) (*ecdsa.PrivateKey, string) {
+	t.Helper()
+
+	privateKey, err := gethCrypto.GenerateKey()
+	require.NoError(t, err)
+
+	pub := privateKey.Public()
+	pubECDSA, ok := pub.(*ecdsa.PublicKey)
+	require.True(t, ok)
+	wallet := gethCrypto.PubkeyToAddress(*pubECDSA).Hex()
+	return privateKey, wallet
+}
+
+// E2ETestHarness manages all components for end-to-end testing
+type E2ETestHarness struct {
+	t testing.TB
+
+	// Application under test
+	App *App
+
+	// Mock servers
+	ThreeCommasMock *threecommasmock.TestServer
+	HyperliquidMock *hlmock.TestServer
+
+	// Direct access for assertions
+	Store *storage.Storage
+
+	// HTTP client for API testing
+	HTTPClient *http.Client
+
+	// Generated test credentials
+	HLPrivateKey *ecdsa.PrivateKey
+	HLWallet     string
+	VenueID      string
+
+	// Test vault secrets for programmatic unseal
+	testSecrets *vault.Secrets
+
+	AdditionalVenues map[string]vault.VenueSecret
+}
+
+// NewE2ETestHarness creates a new E2E test harness with all dependencies
+func NewE2ETestHarness(t testing.TB, ctx context.Context, opts ...E2EHarnessOption) *E2ETestHarness {
+	t.Helper()
+	harnessCfg := harnessConfig{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&harnessCfg)
+		}
+	}
+
+	// Create mock servers
+	mockT := unwrapTestingT(t)
+	tcMock := threecommasmock.NewTestServer(mockT)
+	hlMock := hlmock.NewTestServer(mockT)
+
+	// Generate ThreeCommas RSA credentials
+	rsaKeyPEM := generateTestRSAKeyPEM(t)
+
+	// Generate Hyperliquid test credentials
+	privateKey, wallet := generateHyperliquidCredentials(t)
+
+	venueID := "hyperliquid:test"
+
+	// Build test vault secrets for programmatic unseal
+	now := time.Now().UTC()
+	testSecrets := &vault.Secrets{
+		Secrets: vault.Data{
+			THREECOMMASAPIKEY:     "test-api-key",
+			THREECOMMASPRIVATEKEY: string(rsaKeyPEM),
+			THREECOMMASPLANTIER:   string(recomma.ThreeCommasPlanTierExpert),
+			Venues: []vault.VenueSecret{
+				{
+					ID:           venueID,
+					Type:         "hyperliquid",
+					DisplayName:  "Test Hyperliquid",
+					Wallet:       wallet,
+					PrivateKey:   hex.EncodeToString(gethCrypto.FromECDSA(privateKey)),
+					APIURL:       hlMock.URL(),
+					WebsocketURL: hlMock.WebSocketURL(),
+					Primary:      true,
+				},
+			},
+		},
+		ReceivedAt: now,
+	}
+
+	additional := make(map[string]vault.VenueSecret)
+	for _, venue := range harnessCfg.additionalVenues {
+		key, addr := generateHyperliquidCredentials(t)
+		secret := vault.VenueSecret{
+			ID:           venue.id,
+			Type:         "hyperliquid",
+			DisplayName:  venue.displayName,
+			Wallet:       addr,
+			PrivateKey:   hex.EncodeToString(gethCrypto.FromECDSA(key)),
+			APIURL:       hlMock.URL(),
+			WebsocketURL: hlMock.WebSocketURL(),
+			Primary:      false,
+		}
+		testSecrets.Secrets.Venues = append(testSecrets.Secrets.Venues, secret)
+		additional[venue.id] = secret
+	}
+
+	// Create 3commas client pointing to mock
+	tcClient, err := tc.New3CommasClient(
+		tc.WithClientOption(tc.WithBaseURL(tcMock.URL())),
+		tc.WithAPIKey("test-api-key"),
+		tc.WithPrivatePEM(rsaKeyPEM),
+		tc.WithPlanTier(recomma.ThreeCommasPlanTierExpert.SDKTier()),
+	)
+	require.NoError(t, err)
+
+	// Create test configuration
+	cfg := config.DefaultConfig()
+	cfg.HTTPListen = "127.0.0.1:0" // Random port
+	cfg.StoragePath = ":memory:"
+	cfg.Debug = false
+	cfg.OrderWorkers = 2
+	cfg.OrderScalerMaxMultiplier = 10.0
+	cfg.LogToStorage = false
+
+	// Create app with test dependencies - vault will be unsealed programmatically
+	app, err := NewApp(ctx, AppOptions{
+		Config:            cfg,
+		ThreeCommasClient: tcClient,
+	})
+	require.NoError(t, err)
+
+	if harnessCfg.enableStorageLogger {
+		storage.WithLogger(app.Logger)(app.Store)
+		storage.WithQueryLogger(app.Logger)(app.Store)
+	}
+
+	return &E2ETestHarness{
+		t:                t,
+		App:              app,
+		ThreeCommasMock:  tcMock,
+		HyperliquidMock:  hlMock,
+		Store:            app.Store,
+		HTTPClient:       &http.Client{Timeout: 10 * time.Second},
+		HLPrivateKey:     privateKey,
+		HLWallet:         wallet,
+		VenueID:          venueID,
+		testSecrets:      testSecrets,
+		AdditionalVenues: additional,
+	}
+}
+
+// Start starts the application (non-blocking)
+func (h *E2ETestHarness) Start(ctx context.Context) {
+	h.t.Helper()
+
+	// Start HTTP server
+	h.App.StartHTTPServer()
+
+	// Unseal vault using production API (same as UI does)
+	err := h.App.VaultController.Unseal(*h.testSecrets, nil)
+	require.NoError(h.t, err)
+
+	// Start all services (workers, periodic tasks, etc.)
+	err = h.App.Start(ctx)
+	require.NoError(h.t, err)
+
+	// Wait for HTTP server to be ready
+	h.WaitForHTTPServer(5 * time.Second)
+}
+
+// Shutdown gracefully stops the application
+func (h *E2ETestHarness) Shutdown() {
+	h.t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if h.App != nil {
+		err := h.App.Shutdown(ctx)
+		if err != nil {
+			h.t.Logf("shutdown warning: %v", err)
+		}
+	}
+
+	if h.ThreeCommasMock != nil {
+		h.ThreeCommasMock.Close()
+	}
+
+	if h.HyperliquidMock != nil {
+		h.HyperliquidMock.Close()
+	}
+}
+
+// WaitForHTTPServer polls until HTTP server responds
+func (h *E2ETestHarness) WaitForHTTPServer(timeout time.Duration) {
+	h.t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	baseURL := "http://" + h.App.HTTPAddr()
+
+	for {
+		select {
+		case <-ctx.Done():
+			h.t.Fatal("timeout waiting for HTTP server")
+		case <-ticker.C:
+			resp, err := h.HTTPClient.Get(baseURL + "/api/bots")
+			if err == nil {
+				resp.Body.Close()
+				return
+			}
+		}
+	}
+}
+
+// WaitForDealProcessing polls until deal appears in database
+func (h *E2ETestHarness) WaitForDealProcessing(dealID uint32, timeout time.Duration) {
+	h.t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			h.t.Fatalf("timeout waiting for deal %d processing", dealID)
+		case <-ticker.C:
+			deals, _, err := h.Store.ListDeals(ctx, api.ListDealsOptions{})
+			if err != nil {
+				continue
+			}
+			for _, d := range deals {
+				if uint32(d.Id) == dealID {
+					return
+				}
+			}
+		}
+	}
+}
+
+// WaitForOrderSubmission polls until the specified order appears in Hyperliquid mock
+func (h *E2ETestHarness) WaitForOrderSubmission(cloid string, timeout time.Duration) {
+	h.t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			h.t.Fatalf("timeout waiting for order %s submission", cloid)
+		case <-ticker.C:
+			if _, exists := h.HyperliquidMock.GetOrder(cloid); exists {
+				return
+			}
+		}
+	}
+}
+
+// WaitForOrderInDatabase polls until order appears in database
+func (h *E2ETestHarness) WaitForOrderInDatabase(timeout time.Duration) {
+	h.t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			h.t.Fatal("timeout waiting for order in database")
+		case <-ticker.C:
+			orders, _, err := h.Store.ListOrders(ctx, api.ListOrdersOptions{})
+			if err != nil {
+				continue
+			}
+			if len(orders) > 0 {
+				return
+			}
+		}
+	}
+}
+
+// APIGet performs GET request to app's API
+func (h *E2ETestHarness) APIGet(path string) *http.Response {
+	return h.APIRequest(http.MethodGet, path, nil)
+}
+
+// APIPost performs POST request to app's API
+func (h *E2ETestHarness) APIPost(path string, body io.Reader) *http.Response {
+	return h.APIRequest(http.MethodPost, path, body)
+}
+
+// APIRequest performs a request against the app's API using the shared client.
+func (h *E2ETestHarness) APIRequest(method, path string, body io.Reader) *http.Response {
+	h.t.Helper()
+
+	baseURL := "http://" + h.App.HTTPAddr()
+	req, err := http.NewRequest(method, baseURL+path, body)
+	require.NoError(h.t, err)
+	if body != nil && req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := h.HTTPClient.Do(req)
+	require.NoError(h.t, err)
+	return resp
+}
+
+// TriggerDealProduction triggers a single deal production cycle
+func (h *E2ETestHarness) TriggerDealProduction(ctx context.Context) {
+	h.t.Helper()
+
+	h.App.ProduceActiveDealsOnce(ctx)
+}
+
+// WaitForOrderQueueIdle waits until the order work queue drains or times out.
+func (h *E2ETestHarness) WaitForOrderQueueIdle(timeout time.Duration) {
+	h.t.Helper()
+
+	if h.App == nil || h.App.OrderQueue == nil {
+		h.t.Fatal("order queue not initialized")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	const idleConfirmations = 3
+	idleTicks := 0
+
+	for {
+		if h.App.OrderQueue.Len() == 0 {
+			idleTicks++
+			if idleTicks >= idleConfirmations {
+				return
+			}
+		} else {
+			idleTicks = 0
+		}
+
+		select {
+		case <-ctx.Done():
+			h.t.Fatal("timeout waiting for order queue to drain")
+		case <-ticker.C:
+		}
+	}
+}
+
+// WithStorageLogger enables verbose SQL logging for the harness storage instance.
+func WithStorageLogger() E2EHarnessOption {
+	return func(cfg *harnessConfig) {
+		cfg.enableStorageLogger = true
+	}
+}

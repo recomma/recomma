@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"sort"
 	"strconv"
@@ -26,7 +27,7 @@ const cursorSeparator = ":"
 
 func (s *Storage) ListBots(ctx context.Context, opts api.ListBotsOptions) ([]api.BotItem, *string, error) {
 	if opts.Limit <= 0 {
-		return nil, nil, fmt.Errorf("limit must be positive")
+		opts.Limit = 50
 	}
 
 	var cursorSynced, cursorBotID int64
@@ -121,7 +122,7 @@ func (s *Storage) ListBots(ctx context.Context, opts api.ListBotsOptions) ([]api
 
 func (s *Storage) ListDeals(ctx context.Context, opts api.ListDealsOptions) ([]tc.Deal, *string, error) {
 	if opts.Limit <= 0 {
-		return nil, nil, fmt.Errorf("limit must be positive")
+		opts.Limit = 50
 	}
 
 	var cursorUpdatedAt, cursorDealID int64
@@ -219,121 +220,9 @@ func (s *Storage) ListDeals(ctx context.Context, opts api.ListDealsOptions) ([]t
 	return items, nextToken, nil
 }
 
-func (s *Storage) ListOrderScalers(ctx context.Context, opts api.ListOrderScalersOptions) ([]api.OrderScalerConfigItem, *string, error) {
-	if opts.Limit <= 0 {
-		return nil, nil, fmt.Errorf("limit must be positive")
-	}
-
-	orderOpts := api.ListOrdersOptions{
-		OrderIdPrefix: opts.OrderIdPrefix,
-		BotID:         opts.BotID,
-		DealID:        opts.DealID,
-		BotEventID:    opts.BotEventID,
-		Limit:         opts.Limit,
-		PageToken:     opts.PageToken,
-	}
-
-	rows, next, err := s.ListOrders(ctx, orderOpts)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	items := make([]api.OrderScalerConfigItem, 0, len(rows))
-	for _, row := range rows {
-		effective, err := s.ResolveEffectiveOrderScaler(ctx, row.OrderId)
-		if err != nil {
-			return nil, nil, err
-		}
-		cfgPtr := toAPIEffectiveOrderScaler(effective)
-		if cfgPtr == nil {
-			return nil, nil, fmt.Errorf("build effective scaler for %s", row.OrderId.Hex())
-		}
-		items = append(items, api.OrderScalerConfigItem{
-			OrderId:    row.OrderId,
-			ObservedAt: effective.UpdatedAt(),
-			Actor:      effective.Actor(),
-			Config:     *cfgPtr,
-		})
-	}
-
-	return items, next, nil
-}
-
-func (s *Storage) GetDefaultOrderScaler(ctx context.Context) (api.OrderScalerState, error) {
-	state, err := s.GetOrderScaler(ctx)
-	if err != nil {
-		return api.OrderScalerState{}, err
-	}
-	return toAPIOrderScalerState(state), nil
-}
-
-func (s *Storage) UpsertDefaultOrderScaler(ctx context.Context, multiplier float64, updatedBy string, notes *string) (api.OrderScalerState, error) {
-	state, err := s.UpsertOrderScaler(ctx, multiplier, updatedBy, notes)
-	if err != nil {
-		return api.OrderScalerState{}, err
-	}
-	return toAPIOrderScalerState(state), nil
-}
-
-func (s *Storage) GetBotOrderScalerOverride(ctx context.Context, botID uint32) (*api.OrderScalerOverride, bool, error) {
-	state, found, err := s.GetBotOrderScaler(ctx, botID)
-	if err != nil {
-		return nil, false, err
-	}
-	if !found || state == nil {
-		return nil, false, nil
-	}
-	apiOverride := toAPIOrderScalerOverride(*state)
-	return &apiOverride, true, nil
-}
-
-func (s *Storage) UpsertBotOrderScalerOverride(ctx context.Context, botID uint32, multiplier *float64, notes *string, updatedBy string) (api.OrderScalerOverride, error) {
-	override, err := s.UpsertBotOrderScaler(ctx, botID, multiplier, notes, updatedBy)
-	if err != nil {
-		return api.OrderScalerOverride{}, err
-	}
-	return toAPIOrderScalerOverride(override), nil
-}
-
-func (s *Storage) DeleteBotOrderScalerOverride(ctx context.Context, botID uint32, updatedBy string) error {
-	return s.DeleteBotOrderScaler(ctx, botID, updatedBy)
-}
-
-func (s *Storage) ResolveEffectiveOrderScalerConfig(ctx context.Context, oid orderid.OrderId) (api.EffectiveOrderScaler, error) {
-	effective, err := s.ResolveEffectiveOrderScaler(ctx, oid)
-	if err != nil {
-		return api.EffectiveOrderScaler{}, err
-	}
-	apiEffective := toAPIEffectiveOrderScaler(effective)
-	if apiEffective == nil {
-		return api.EffectiveOrderScaler{}, fmt.Errorf("convert effective order scaler")
-	}
-	return *apiEffective, nil
-}
-
-func toAPIOrderScalerState(state OrderScalerState) api.OrderScalerState {
-	return api.OrderScalerState{
-		Multiplier: state.Multiplier,
-		Notes:      state.Notes,
-		UpdatedAt:  state.UpdatedAt,
-		UpdatedBy:  state.UpdatedBy,
-	}
-}
-
-func toAPIOrderScalerOverride(override BotOrderScalerOverride) api.OrderScalerOverride {
-	return api.OrderScalerOverride{
-		BotId:         int64(override.BotID),
-		Multiplier:    override.Multiplier,
-		Notes:         override.Notes,
-		EffectiveFrom: override.EffectiveFrom,
-		UpdatedAt:     override.UpdatedAt,
-		UpdatedBy:     override.UpdatedBy,
-	}
-}
-
 func (s *Storage) ListOrders(ctx context.Context, opts api.ListOrdersOptions) ([]api.OrderItem, *string, error) {
 	if opts.Limit <= 0 {
-		return nil, nil, fmt.Errorf("limit must be positive")
+		opts.Limit = 50
 	}
 
 	var cursorObservedAt, cursorID int64
@@ -344,137 +233,97 @@ func (s *Storage) ListOrders(ctx context.Context, opts api.ListOrdersOptions) ([
 			return nil, nil, fmt.Errorf("invalid page token: %w", err)
 		}
 	}
+	var (
+		cursorObservedAtPtr *int64
+		cursorIDPtr         *int64
+	)
+	if opts.PageToken != "" {
+		cursorObservedAtPtr = &cursorObservedAt
+		cursorIDPtr = &cursorID
+	}
 
 	var (
-		args       []any
-		conditions []string
+		observedFrom *int64
+		observedTo   *int64
 	)
-
 	logFrom := int64(math.MinInt64)
 	if opts.ObservedFrom != nil {
-		logFrom = opts.ObservedFrom.UTC().UnixMilli()
-		conditions = append(conditions, "observed_at_utc >= ?")
-		args = append(args, logFrom)
+		val := opts.ObservedFrom.UTC().UnixMilli()
+		logFrom = val
+		observedFrom = new(int64)
+		*observedFrom = val
 	}
 
 	logTo := int64(math.MaxInt64)
 	if opts.ObservedTo != nil {
-		logTo = opts.ObservedTo.UTC().UnixMilli()
-		conditions = append(conditions, "observed_at_utc <= ?")
-		args = append(args, logTo)
+		val := opts.ObservedTo.UTC().UnixMilli()
+		logTo = val
+		observedTo = new(int64)
+		*observedTo = val
 	}
 
+	var orderIDPrefix *string
 	if opts.OrderIdPrefix != nil {
 		if prefix := strings.TrimSpace(*opts.OrderIdPrefix); prefix != "" {
-			conditions = append(conditions, "LOWER(order_id) LIKE ?")
-			args = append(args, strings.ToLower(prefix)+"%")
+			lowered := strings.ToLower(prefix)
+			orderIDPrefix = new(string)
+			*orderIDPrefix = lowered
 		}
 	}
-	if opts.BotID != nil {
-		conditions = append(conditions, "bot_id = ?")
-		args = append(args, *opts.BotID)
-	}
-	if opts.DealID != nil {
-		conditions = append(conditions, "deal_id = ?")
-		args = append(args, *opts.DealID)
-	}
-	if opts.BotEventID != nil {
-		conditions = append(conditions, "botevent_id = ?")
-		args = append(args, *opts.BotEventID)
-	}
-	if opts.PageToken != "" {
-		conditions = append(conditions, "(observed_at_utc < ? OR (observed_at_utc = ? AND id < ?))")
-		args = append(args, cursorObservedAt, cursorObservedAt, cursorID)
-	}
-
-	// TODO: tear out this hardcoded query -> move to sqlc
-	var queryBuilder strings.Builder
-	queryBuilder.WriteString(`
-SELECT id, order_id, bot_id, deal_id, botevent_id, created_at_utc, observed_at_utc, payload
-FROM threecommas_botevents`)
-	if len(conditions) > 0 {
-		queryBuilder.WriteString(" WHERE ")
-		queryBuilder.WriteString(strings.Join(conditions, " AND "))
-	}
-	queryBuilder.WriteString(" ORDER BY observed_at_utc DESC, id DESC LIMIT ?")
-	args = append(args, opts.Limit+1)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rows, err := s.db.QueryContext(ctx, queryBuilder.String(), args...)
+	rows, err := s.queries.ListThreeCommasBotEventsForAPI(ctx, sqlcgen.ListThreeCommasBotEventsForAPIParams{
+		BotID:            opts.BotID,
+		DealID:           opts.DealID,
+		BotEventID:       opts.BotEventID,
+		ObservedFrom:     observedFrom,
+		ObservedTo:       observedTo,
+		OrderIDPrefix:    orderIDPrefix,
+		CursorObservedAt: cursorObservedAtPtr,
+		CursorID:         cursorIDPtr,
+		Limit: int64(opts.Limit + 1),
+	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("query orders: %w", err)
-	}
-	defer rows.Close()
-
-	type rawOrder struct {
-		id         int64
-		oid        string
-		botID      int64
-		dealID     int64
-		botEventID int64
-		createdAt  int64
-		observedAt int64
-		payload    []byte
-	}
-	raw := make([]rawOrder, 0, opts.Limit+1)
-
-	for rows.Next() {
-		var ro rawOrder
-		if err := rows.Scan(
-			&ro.id,
-			&ro.oid,
-			&ro.botID,
-			&ro.dealID,
-			&ro.botEventID,
-			&ro.createdAt,
-			&ro.observedAt,
-			&ro.payload,
-		); err != nil {
-			return nil, nil, fmt.Errorf("scan order row: %w", err)
-		}
-		raw = append(raw, ro)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("iterate order rows: %w", err)
+		return nil, nil, fmt.Errorf("list bot events: %w", err)
 	}
 
-	if len(raw) == 0 {
+	if len(rows) == 0 {
 		return nil, nil, nil
 	}
 
 	var nextToken *string
-	if len(raw) > opts.Limit {
-		last := raw[opts.Limit]
-		token := encodeCursor(last.observedAt, last.id)
+	if len(rows) > opts.Limit {
+		last := rows[opts.Limit]
+		token := encodeCursor(last.ObservedAtUtc, last.ID)
 		nextToken = &token
-		raw = raw[:opts.Limit]
+		rows = rows[:opts.Limit]
 	}
 
-	items := make([]api.OrderItem, 0, len(raw))
-	byOrderId := make(map[string][]int, len(raw))
+	items := make([]api.OrderItem, 0, len(rows))
+	byOrderId := make(map[string][]int, len(rows))
 
-	for _, ro := range raw {
-		oid, err := orderid.FromHexString(ro.oid)
+	for _, row := range rows {
+		oid, err := orderid.FromHexString(row.OrderID)
 		if err != nil {
-			return nil, nil, fmt.Errorf("decode orderid %q: %w", ro.oid, err)
+			return nil, nil, fmt.Errorf("decode orderid %q: %w", row.OrderID, err)
 		}
 
 		var event tc.BotEvent
-		if err := json.Unmarshal(ro.payload, &event); err != nil {
+		if err := json.Unmarshal(row.Payload, &event); err != nil {
 			return nil, nil, fmt.Errorf("decode bot event payload: %w", err)
 		}
 		eventCopy := event
 
 		item := api.OrderItem{
 			OrderId:    *oid,
-			ObservedAt: time.UnixMilli(ro.observedAt).UTC(),
+			ObservedAt: time.UnixMilli(row.ObservedAtUtc).UTC(),
 			BotEvent:   &eventCopy,
 		}
 		items = append(items, item)
 		idx := len(items) - 1
-		byOrderId[ro.oid] = append(byOrderId[ro.oid], idx)
+		byOrderId[row.OrderID] = append(byOrderId[row.OrderID], idx)
 	}
 
 	defaultAssignment, err := s.defaultVenueAssignmentLocked(ctx)
@@ -483,6 +332,11 @@ FROM threecommas_botevents`)
 	}
 
 	for oidHex, indexes := range byOrderId {
+		// useful for intense debugging
+		// rowLogger := s.logger.WithGroup("ListOrders:submission").With(
+		// 	slog.String("order_id", oidHex),
+		// )
+		rowLogger := slog.New(slog.DiscardHandler)
 		if len(indexes) == 0 {
 			continue
 		}
@@ -501,32 +355,43 @@ FROM threecommas_botevents`)
 				return nil, nil, fmt.Errorf("fetch submission for %s: %w", oidHex, err)
 			}
 		} else {
-			switch strings.ToLower(strings.TrimSpace(submissionRow.ActionKind)) {
-			case "create":
-				if len(submissionRow.CreatePayload) > 0 {
-					var decoded hyperliquid.CreateOrderRequest
-					if err := json.Unmarshal(submissionRow.CreatePayload, &decoded); err != nil {
-						return nil, nil, fmt.Errorf("decode create submission for %s: %w", oidHex, err)
-					}
-					submission = &decoded
+			actionKind := strings.ToLower(strings.TrimSpace(submissionRow.ActionKind))
+			switch actionKind {
+			case hyperliquidSubmissionActionCreate:
+				req, err := decodeCreateRequest(submissionRow.CreatePayload)
+				if err != nil {
+					return nil, nil, fmt.Errorf("decode create submission for %s: %w", oidHex, err)
 				}
-			case "modify":
-				if len(submissionRow.ModifyPayloads) > 0 {
-					var decoded []hyperliquid.ModifyOrderRequest
-					if err := json.Unmarshal(submissionRow.ModifyPayloads, &decoded); err != nil {
-						return nil, nil, fmt.Errorf("decode modify submission for %s: %w", oidHex, err)
-					}
-					if len(decoded) > 0 {
-						submission = &decoded[len(decoded)-1]
+				if req == nil {
+					req, err = decodeCreateRequest(submissionRow.PayloadBlob)
+					if err != nil {
+						return nil, nil, fmt.Errorf("decode fallback create submission for %s: %w", oidHex, err)
 					}
 				}
-			case "cancel":
-				if len(submissionRow.CancelPayload) > 0 {
-					var decoded hyperliquid.CancelOrderRequestByCloid
-					if err := json.Unmarshal(submissionRow.CancelPayload, &decoded); err != nil {
-						return nil, nil, fmt.Errorf("decode cancel submission for %s: %w", oidHex, err)
+				if req != nil {
+					submission = req
+				}
+			case hyperliquidSubmissionActionModify:
+				req, err := decodeLatestModifyRequest(submissionRow.ModifyPayloads, submissionRow.PayloadBlob)
+				if err != nil {
+					return nil, nil, fmt.Errorf("decode modify submission for %s: %w", oidHex, err)
+				}
+				if req != nil {
+					submission = req
+				}
+			case hyperliquidSubmissionActionCancel:
+				req, err := decodeCancelRequest(submissionRow.CancelPayload)
+				if err != nil {
+					return nil, nil, fmt.Errorf("decode cancel submission for %s: %w", oidHex, err)
+				}
+				if req == nil {
+					req, err = decodeCancelRequest(submissionRow.PayloadBlob)
+					if err != nil {
+						return nil, nil, fmt.Errorf("decode fallback cancel submission for %s: %w", oidHex, err)
 					}
-					submission = &decoded
+				}
+				if req != nil {
+					submission = req
 				}
 			}
 
@@ -536,6 +401,30 @@ FROM threecommas_botevents`)
 			}
 
 			selectedIdent = recomma.NewOrderIdentifier(recomma.VenueID(submissionRow.VenueID), submissionRow.Wallet, oidCopy)
+
+			switch v := submission.(type) {
+			case *hyperliquid.CreateOrderRequest:
+				rowLogger.Info("latest submission decoded",
+					slog.String("kind", actionKind),
+					slog.Float64("price", v.Price),
+					slog.Float64("size", v.Size),
+					slog.String("coin", v.Coin),
+				)
+			case *hyperliquid.ModifyOrderRequest:
+				rowLogger.Info("latest submission decoded",
+					slog.String("kind", actionKind),
+					slog.Float64("price", v.Order.Price),
+					slog.Float64("size", v.Order.Size),
+					slog.String("coin", v.Order.Coin),
+				)
+			case *hyperliquid.CancelOrderRequestByCloid:
+				rowLogger.Info("latest submission decoded",
+					slog.String("kind", actionKind),
+					slog.String("coin", v.Coin),
+				)
+			default:
+				rowLogger.Info("latest submission decoded", slog.String("kind", actionKind))
+			}
 		}
 
 		if selectedIdent == (recomma.OrderIdentifier{}) {

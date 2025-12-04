@@ -1,0 +1,49 @@
+= Multi-Leg Take-Profit Reconstruction
+
+:toc:
+:toclevels: 2
+
+== Problem
+
+Current TP scaling reads legs exclusively from `threecommas_botevents`.
+3Commas only emits bot events for *active* TP legs (one at a time per deal), so
+our order scaler sees at most one entry. When the deal is configured for
+multiple targets (e.g. 3 or 5), `storage.ListTakeProfitStackSizes` fails with
+`incomplete take profit stack` and the scaler refuses to create take-profit
+orders on Hyperliquid. Production logs from `2025-11-19_0307` show repeated
+errors (`orderscaler: expected 5 legs, got 1`) and the regression test
+`TestListTakeProfitStackSizesDoesNotErrorWhenStackIncomplete` reproduces it.
+
+We need to reconstruct the full TP ladder from deal metadata instead of waiting
+for every bot event.
+
+== Proposal
+
+1. **Read TP stack from deals** – `threecommas_deals.payload` already contains
+   the planned take-profit targets. Parse those into a stable representation
+   (per-leg size %, order position, price offsets). Fall back to botevents only
+   when the deal payload lacks the data (e.g. legacy deals).
+
+2. **Expose stack via storage** – Add an API such as
+   `storage.LoadTakeProfitStack(ctx, dealID)` that consults the deal payload,
+   merges any updated legs from botevents, and returns the full ladder (even if
+   only leg 0 is currently active on 3Commas).
+
+3. **Update orderscaler** – When scaling a TP order, fetch the stack via the
+   new helper. If only a partial stack is available, continue to emit the known
+   legs but never error solely because later legs aren’t active yet. This lets
+   us mirror the entire ladder on Hyperliquid concurrently.
+
+4. **Tests** – Add unit coverage for parsing deal payloads, storage helpers,
+   and orderscaler behavior. Extend end-to-end tests to assert that multiple TP
+   orders are created on Hyperliquid for a multi-leg deal.
+
+== Scope / Notes
+
+* We still rely on 3Commas for the authoritative ladder configuration; the new
+  code only changes *where* we read it from.
+* 3Commas emits additional TP events whenever the user edits the ladder. The
+  storage helper should reconcile those updates with the deal payload so the
+  returned stack always reflects the latest configuration.
+* The change must be backwards compatible: existing deals with single-leg TPs
+  should behave identically.

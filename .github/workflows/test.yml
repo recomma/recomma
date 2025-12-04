@@ -15,7 +15,7 @@ on:
       - go.sum
 
 jobs:
-  test:
+  coverage:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -36,5 +36,11 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Run tests
-        run: go test ./...
+      - name: Run tests with coverage
+        run: go test ./... -coverprofile=./cover.out -covermode=atomic -coverpkg=./...
+
+      - name: Check test coverage
+        uses: vladopajic/go-test-coverage@v2
+        continue-on-error: true
+        with:
+          config: ./.testcoverage.yml

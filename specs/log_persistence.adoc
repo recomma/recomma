@@ -1,0 +1,143 @@
+= Logging Persistence and Group Filtering
+:toc:
+:toclevels: 2
+:numbered:
+
+== Problem Statement
+
+Operators need to reconstruct incidents long after stdout/stderr logs are gone. Today Recomma only writes logs to the console stream selected at startup, which means local debugging requires reproducing issues live and production incidents require external log shipping. Additionally, `slog.WithGroup` metadata is not filterable which makes it difficult to temporarily silence noisy components without globally lowering log verbosity.
+
+We want to:
+
+* Persist structured logs into SQLite for later inspection.
+* Capture the active slog group stack in its own field so we can query by subsystem.
+* Keep the persistence primitives reusable so they can ship as a standalone package.
+* Allow operators to provide an allowlist of slog groups that should emit at runtime.
+
+== Scope
+
+=== Goals
+
+1. New `logs` table schema (shared specification) storing every log entry with timestamp, level, message, attributes, source, and group scope.
+2. Portable `slog.Handler` implementation that writes to the shared schema. The handler must not depend on the rest of the Recomma codebase so that it can be exported later.
+3. Configurable slog group filter handler that drops records not matching an operator-provided allowlist (e.g. `--log-groups storage,filltracker`).
+4. Wiring inside `cmd/recomma` to compose handlers via `slogmulti.NewHandler` so stdout/stderr logging continues to work alongside SQLite persistence.
+
+=== Non-goals
+
+* Building a UI or API for browsing persisted logs (future effort).
+* Automatic retention pruning. Operators can manage retention manually for now.
+* Adding more destinations (cloud logging, syslog, etc.) in this iteration.
+
+== Shared Schema
+
+All consumers of the handler will rely on the following SQLite schema (names are stable so other projects can reuse it):
+
+```
+CREATE TABLE IF NOT EXISTS app_logs (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp_utc  INTEGER NOT NULL,  -- unix epoch milliseconds
+    level          TEXT    NOT NULL,  -- slog level text
+    scope          TEXT,              -- dot-joined slog groups
+    message        TEXT    NOT NULL,
+    attrs          JSON    NOT NULL DEFAULT '[]',
+    source_file    TEXT,
+    source_line    INTEGER,
+    source_func    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON app_logs(timestamp_utc);
+CREATE INDEX IF NOT EXISTS idx_logs_level ON app_logs(level);
+CREATE INDEX IF NOT EXISTS idx_logs_scope ON app_logs(scope);
+```
+
+Entries are appended at runtime; no generated code depends on this table, so sqlc can stay untouched. Documentation will reference this schema so downstream consumers can create the same table.
+
+== Handler Design
+
+=== SQLite Handler
+
+* Package layout: `pkg/sqllogger` (name TBD), exporting a type that satisfies `slog.Handler`.
+* Construction: `func NewHandler(opts ...Option) (slog.Handler, error)` where options control minimum level, queue depth, and the concrete persistence callback.
+* Persistence interface: instead of importing a specific storage package, callers inject a function matching `type InsertFunc func(context.Context, InsertLogEntryParams) error`. The handler defines `InsertLogEntryParams` using only primitive fields (timestamp, level text, scope string, attrs JSON, source metadata) so any query layer can adapt it. Recomma exposes a helper (`storage.LogInsertFunc`) that wraps the sqlc-generated `InsertAppLogEntry` query, while other projects can provide their own functions backed by pgx, GORM, etc.
+* Internal state:
+** Tracks the current slog attributes and group stack.
+** Buffers log records on a bounded channel handled by a single goroutine flushing to SQLite with prepared statements.
+** Uses context cancellation to stop the worker during shutdown and drains outstanding records before closing.
+* Error handling: write failures are counted and surfaced via `error` return from `Handle`; the caller decides whether to drop the record (default is best-effort).
+* No nested logging: the handler never emits slog messages; internal failures are exposed only through returned errors so the main logger can optionally handle them.
+
+==== sqlc Query Contract
+
+The handler depends on the following sqlc query, which lives in `storage/sqlc/queries.sql`. Downstream users targeting other databases can copy this file and point sqlc at the appropriate engine to generate the same `InsertLogEntryParams` struct and method.
+
+```
+-- name: InsertAppLogRecord :exec
+INSERT INTO app_logs (
+    timestamp_utc,
+    level,
+    scope,
+    message,
+    attrs,
+    source_file,
+    source_line,
+    source_func
+) VALUES (
+    sqlc.arg(timestamp_millis),
+    sqlc.arg(level_text),
+    sqlc.arg(scope),
+    sqlc.arg(message),
+    sqlc.arg(attrs_json),
+    sqlc.arg(source_file),
+    sqlc.arg(source_line),
+    sqlc.arg(source_function)
+);
+```
+
+`sqlc.arg` names match the fields in `InsertLogEntryParams` (with snake_case counterparts) so the generated code remains portable across drivers.
+* Error handling: write failures are counted and surfaced via `error` return from `Handle`; the caller decides whether to drop the record (default is best-effort).
+* No nested logging: the handler never emits slog messages; internal failures are exposed only through returned errors so the main logger can optionally handle them.
+
+=== Group Filter Handler
+
+* Configuration: comma-separated allowlist via `--log-groups` / `RECOMMA_LOG_GROUPS`. Empty value disables filtering.
+* Behavior: accepts a record when either (a) no allowlist is configured, or (b) at least one group in the current stack (or the joined scope) matches a configured entry. Otherwise it returns nil without forwarding the record to wrapped handlers.
+* Implementation detail: track groups in the handler state exactly the way slog text/JSON handlers do, so nesting `logger.WithGroup("foo").WithGroup("bar")` results in scope `foo.bar`.
+* Reusability: implemented as a standalone handler adapter so other codebases can reuse it with `slogmulti`.
+
+=== Handler Composition
+
+* Startup builds the standard stderr handler (text or JSON based on existing flags).
+* When `--log-groups` is set, wrap the base handler inside the group filter before any fan-out.
+* When `--log-to-storage` is true, create the SQLite handler and include it in the `slogmulti.NewHandler` call alongside the filtered stderr handler.
+* A separate `--log-storage-level` flag controls the minimum level accepted by the SQLite handler without affecting stderr logging.
+
+== Configuration Changes
+
+* `--log-to-storage` (default: true) / `RECOMMA_LOG_TO_STORAGE`: toggles SQLite persistence.
+* `--log-storage-level` (default: `info`) / `RECOMMA_LOG_STORAGE_LEVEL`: minimum slog level stored in SQLite.
+* `--log-groups` (default: empty) / `RECOMMA_LOG_GROUPS`: comma-separated allowlist of slog group prefixes; empty string disables group filtering.
+
+Validation rules:
+
+* Unknown levels fall back to `info` with a warning (mirrors existing log-level behavior).
+* Group names are normalized (trim spaces, lower-case) before matching.
+
+== Runtime Integration
+
+1. During `NewApp` initialization:
+   * Build the base stderr handler using `config.GetLogHandler`.
+   * Parse group allowlist and wrap the handler if needed.
+   * If log-to-storage is enabled, open the SQLite handler using the already-initialized storage `*sql.DB`.
+   * Compose handlers with `slogmulti.NewHandler` and set it as the default for the process.
+2. Store shutdown:
+   * On `App.Shutdown`, close the SQLite handler before closing the DB so queued records flush cleanly.
+3. Tests:
+   * Unit tests for the handler to ensure group stacks are captured correctly and filtering behaves as expected.
+   * Integration test that runs a temporary SQLite database, emits logs through the composed handler, and asserts persisted rows.
+
+== Packaging Plan
+
+* Keep the handler implementation in a reusable package under `pkg/` with zero references to other Recomma modules.
+* Document usage and schema assumptions inside the package README and `docs/modules/...` so external consumers know how to adopt it.
+* Once stabilized, tag the package for downstream reuse without exporting the rest of the Recomma internals.

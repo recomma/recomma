@@ -191,7 +191,7 @@ func (r *StatusRefresher) refreshOne(ctx context.Context, client orderStatusClie
 		return false, fmt.Errorf("query order %s returned nil result", ident.Hex())
 	}
 
-	wsOrder, err := orderResultToWsOrder(ident.OrderId, result)
+	wsOrder, err := OrderQueryResultToWsOrder(ident.OrderId, result)
 	if err != nil {
 		return false, fmt.Errorf("convert order %s: %w", ident.Hex(), err)
 	}

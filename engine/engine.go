@@ -336,10 +336,17 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 	for _, oid := range seen {
 		orderLogger := logger.With("botevent-id", oid.BotEventID)
 
+		assignments, err := e.store.ListVenuesForBot(ctx, oid.BotID)
+		if err != nil {
+			orderLogger.Warn("could not load bot venues", slog.String("error", err.Error()))
+			assignments = nil
+		}
+
 		storedIdents, err := e.store.ListSubmissionIdentifiersForOrder(ctx, oid)
 		if err != nil {
 			orderLogger.Warn("could not load submission identifiers", slog.String("error", err.Error()))
 		}
+		storedIdents = normalizeSubmissionIdentifiers(assignments, storedIdents)
 
 		hasLocalOrder := len(storedIdents) > 0
 
@@ -348,40 +355,46 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 			return fmt.Errorf("reduce order %d: %w", oid.BotEventID, err)
 		}
 
-		assignments, err := e.store.ListVenuesForBot(ctx, oid.BotID)
-		if err != nil {
-			orderLogger.Warn("could not load bot venues", slog.String("error", err.Error()))
-			assignments = nil
-		}
-
 		// Replay logic: if a venue was added after a deal started and this order is still active,
 		// we'll replay the creation to the new venues. This handles most cases where venues are
 		// added mid-deal. Edge case: If no new events arrive for an order after a venue is added,
 		// this replay won't trigger until the next event. For production use, consider a periodic
 		// reconciliation pass to catch such cases (similar to take-profit reconciliation).
 		missingTargets := missingAssignmentTargets(oid, assignments, storedIdents)
-		needsReplay := len(missingTargets) > 0 && latestEvent != nil && latestEvent.Status == tc.Active
+		replayAvailable := hasLocalOrder && len(missingTargets) > 0 && latestEvent != nil && latestEvent.Status == tc.Active
 
-		if fillSnapshot != nil && latestEvent != nil {
+		if latestEvent != nil {
 			adjusted, emit := e.adjustActionWithTracker(currency, oid, *latestEvent, action, fillSnapshot, orderLogger, false)
 			action = adjusted
 			shouldEmit = emit
 		}
-
-		replayForPrimary := false
-		if !shouldEmit && needsReplay {
-			req := adapter.ToCreateOrderRequest(currency, *latestEvent, oid)
-			orderLogger.Info("replaying create for venues missing submissions", slog.Int("venues", len(missingTargets)))
-			action = recomma.Action{Type: recomma.ActionCreate, Create: req}
-			shouldEmit = true
-			replayForPrimary = true
-			needsReplay = false
+		if action.Type == recomma.ActionNone {
+			shouldEmit = false
 		}
 
 		var emissions []emissionPlan
 
 		if shouldEmit {
-			targets := resolveOrderTargets(oid, assignments, storedIdents, action.Type)
+			var defaultAssignment *storage.VenueAssignment
+			if len(assignments) == 0 && len(storedIdents) == 0 {
+				assignment, err := e.store.ResolveDefaultAlias(ctx)
+				if err != nil {
+					orderLogger.Warn("resolve default alias failed", slog.String("error", err.Error()))
+				} else {
+					defaultAssignment = &assignment
+				}
+			}
+
+			targets := resolveOrderTargets(oid, assignments, storedIdents, action.Type, defaultAssignment)
+			// resolveOrderTargets only returns identifiers with prior submissions for modify/cancel actions;
+			// newly assigned venues without a submission are handled by the replay block below.
+			if len(targets) == 0 && (action.Type == recomma.ActionModify || action.Type == recomma.ActionCancel) {
+				orderLogger.Warn("no submission targets for action",
+					slog.String("action_type", action.Type.String()),
+					slog.Int("stored_identifiers", len(storedIdents)),
+					slog.Int("assignments", len(assignments)),
+				)
+			}
 			if len(targets) > 0 {
 				var latestCopy *recomma.BotEvent
 				if latestEvent != nil {
@@ -392,20 +405,18 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 					action:       action,
 					targets:      targets,
 					latest:       latestCopy,
-					skipExisting: replayForPrimary,
+					skipExisting: false,
 				})
-				if action.Type == recomma.ActionCreate {
-					needsReplay = false
-				}
-			} else if !needsReplay {
+			} else if !replayAvailable {
 				orderLogger.Debug("no venue targets resolved; skipping emission")
 				continue
 			}
 		}
 
-		if needsReplay {
+		if replayAvailable {
 			req := adapter.ToCreateOrderRequest(currency, *latestEvent, oid)
-			orderLogger.Info("replaying create for venues missing submissions", slog.Int("venues", len(missingTargets)))
+			orderLogger.Info("replaying create for venues missing submissions", slog.Int("count", len(missingTargets)),
+				slog.Any("missingTargets", missingTargets))
 			targets := append([]recomma.OrderIdentifier(nil), missingTargets...)
 			var latestCopy *recomma.BotEvent
 			if latestEvent != nil {
@@ -429,11 +440,14 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 			latestForEmission := emission.latest
 			emit := true
 
-			if fillSnapshot != nil && latestForEmission != nil {
+			if latestForEmission != nil {
 				action, emit = e.adjustActionWithTracker(currency, oid, *latestForEmission, action, fillSnapshot, orderLogger, emission.skipExisting)
 				if !emit {
 					continue
 				}
+			}
+			if action.Type == recomma.ActionNone {
+				continue
 			}
 
 			// Scale and emit per-identifier to ensure each venue gets its own audit record
@@ -446,6 +460,7 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 					latestCopy := *latestForEmission
 					identAction, scaleResult, emit, err = e.applyScaling(ctx, ident, &latestCopy, identAction, orderLogger)
 					if err != nil {
+						orderLogger.Warn("cannot apply scaling", slog.Int("bot-event-id", int(oid.BotEventID)), slog.String("venue", ident.Venue()), slog.String("error", err.Error()))
 						return fmt.Errorf("scale order %d for venue %s: %w", oid.BotEventID, ident.Venue(), err)
 					}
 					if !emit {
@@ -470,6 +485,11 @@ func (e *Engine) processDeal(ctx context.Context, wi WorkKey, currency string, e
 				} else if latestForEmission != nil {
 					work.BotEvent = *latestForEmission
 				}
+				orderLogger.Debug("queueing order work",
+					slog.String("action_type", identAction.Type.String()),
+					slog.String("venue", ident.Venue()),
+					slog.String("wallet", ident.Wallet),
+				)
 				if err := e.emitter.Emit(ctx, work); err != nil {
 					e.logger.Warn("could not submit order", slog.Any("orderid", oid), slog.String("venue", ident.Venue()), slog.Any("action", work.Action), slog.String("error", err.Error()))
 				}
@@ -587,6 +607,7 @@ func sameSnapshot(a, b *recomma.BotEvent) bool {
 }
 
 const qtyTolerance = 1e-6
+const priceTolerance = 1e-6
 
 func nearlyEqual(a, b float64) bool {
 	return math.Abs(a-b) <= qtyTolerance
@@ -602,6 +623,13 @@ func (e *Engine) adjustActionWithTracker(
 	skipExisting bool,
 ) (recomma.Action, bool) {
 	if snapshot == nil {
+		if latest.OrderType == tc.MarketOrderDealOrderTypeTakeProfit {
+			logger.Info("skipping take profit placement: waiting for fill snapshot",
+				slog.String("action_type", action.Type.String()),
+				slog.String("reason", "fill snapshot unavailable"),
+			)
+			return recomma.Action{Type: recomma.ActionNone, Reason: "skip take-profit: fill snapshot unavailable"}, false
+		}
 		return action, true
 	}
 	if latest.OrderType != tc.MarketOrderDealOrderTypeTakeProfit {
@@ -630,10 +658,24 @@ func (e *Engine) adjustActionWithTracker(
 	// Single-venue scenario: check if the one TP already matches global position
 	if !skipExisting && len(snapshot.ActiveTakeProfits) == 1 {
 		active := snapshot.ActiveTakeProfits[0]
-		if active.ReduceOnly && nearlyEqual(active.RemainingQty, desiredQty) {
+		targetPrice := latest.Price
+		switch action.Type {
+		case recomma.ActionCreate:
+			if targetPrice == 0 {
+				targetPrice = action.Create.Price
+			}
+		case recomma.ActionModify:
+			if targetPrice == 0 {
+				targetPrice = action.Modify.Order.Price
+			}
+		}
+		priceMatches := targetPrice > 0 && math.Abs(active.LimitPrice-targetPrice) <= priceTolerance
+		if active.ReduceOnly && nearlyEqual(active.RemainingQty, desiredQty) && priceMatches {
 			logger.Debug("take profit already matches position",
 				slog.Float64("desired_qty", desiredQty),
 				slog.Float64("existing_qty", active.RemainingQty),
+				slog.Float64("existing_price", active.LimitPrice),
+				slog.Float64("desired_price", targetPrice),
 				slog.String("venue", active.Identifier.Venue()),
 			)
 			return recomma.Action{Type: recomma.ActionNone, Reason: "take-profit already matches position"}, false
@@ -738,6 +780,7 @@ func resolveOrderTargets(
 	assignments []storage.VenueAssignment,
 	stored []recomma.OrderIdentifier,
 	actionType recomma.ActionType,
+	defaultAssignment *storage.VenueAssignment,
 ) []recomma.OrderIdentifier {
 	targets := make(map[recomma.OrderIdentifier]bool)
 	for _, ident := range stored {
@@ -751,8 +794,8 @@ func resolveOrderTargets(
 		}
 	}
 
-	if len(targets) == 0 {
-		ident := storage.DefaultHyperliquidIdentifier(oid)
+	if len(targets) == 0 && defaultAssignment != nil {
+		ident := recomma.NewOrderIdentifier(defaultAssignment.VenueID, defaultAssignment.Wallet, oid)
 		targets[ident] = len(stored) > 0
 	}
 
@@ -809,6 +852,64 @@ func missingAssignmentTargets(
 
 	slices.SortFunc(missing, compareIdentifiers)
 	return missing
+}
+
+func normalizeSubmissionIdentifiers(
+	assignments []storage.VenueAssignment,
+	stored []recomma.OrderIdentifier,
+) []recomma.OrderIdentifier {
+	if len(stored) == 0 {
+		return nil
+	}
+
+	filtering := len(assignments) > 0
+	venueWallets := make(map[recomma.VenueID]string, len(assignments))
+	walletLookup := make(map[string]recomma.VenueID, len(assignments))
+	if filtering {
+		for _, assignment := range assignments {
+			venueWallets[assignment.VenueID] = assignment.Wallet
+			if assignment.Wallet != "" {
+				walletLookup[strings.ToLower(assignment.Wallet)] = assignment.VenueID
+			}
+		}
+	}
+
+	type key struct {
+		venue  string
+		wallet string
+	}
+	seen := make(map[key]struct{}, len(stored))
+	filtered := make([]recomma.OrderIdentifier, 0, len(stored))
+
+	for _, ident := range stored {
+		normalized := ident
+		if filtering {
+			if _, ok := venueWallets[normalized.VenueID]; !ok {
+				if mapped, ok := walletLookup[strings.ToLower(normalized.Wallet)]; ok {
+					normalized.VenueID = mapped
+					if wallet := venueWallets[mapped]; wallet != "" {
+						normalized.Wallet = wallet
+					}
+				} else {
+					continue
+				}
+			} else if wallet := venueWallets[normalized.VenueID]; wallet != "" {
+				normalized.Wallet = wallet
+			}
+		}
+
+		k := key{
+			venue:  normalized.Venue(),
+			wallet: strings.ToLower(normalized.Wallet),
+		}
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
+		filtered = append(filtered, normalized)
+	}
+
+	return filtered
 }
 
 func compareIdentifiers(a, b recomma.OrderIdentifier) int {

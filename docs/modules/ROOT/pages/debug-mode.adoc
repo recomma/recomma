@@ -5,25 +5,25 @@ This page explains how developers can exercise the Recomma binary without comple
 
 [NOTE]
 ====
-The debug helpers are excluded from release builds. Compile the binary with the `debugmode` build tag whenever you need this feature:
+Debug mode requires compiling with the `debugmode` build tag:
 
 ```
 go build -tags debugmode ./cmd/recomma
 ```
 
-The `--debug` flag and `RECOMMA_DEBUG` environment toggle are hidden in builds that omit the tag and will raise an error if set.
+Production builds (without `-tags debugmode`) do not include debug mode capabilities.
 ====
 
-== What debug mode does
+== How debug mode works
 
-Debug mode pretends that a vault user already completed enrollment and injected secrets into the controller. When `--debug` (or `RECOMMA_DEBUG=true`) is set and the expected environment variables are present, the process:
+Debug mode is implemented as a separate build variant with its own `main()` function. When the binary is compiled with `-tags debugmode` and the required environment variables are present:
 
-* seeds the vault controller with the supplied credential bundle and immediately transitions the state machine to *Unsealed*;
-* skips the WebAuthn flow and session cookie checks so API endpoints stay usable during local runs;
-* publishes `DEBUG_LOGS` to the Web UI runtime config, enabling additional console output; and
-* advertises `debug_mode: true` through the `/api/v1/vault/status` response so tools can detect the relaxed authentication requirements.
+* the application loads vault credentials from `RECOMMA_DEBUG_*` environment variables at startup;
+* it calls the production `VaultController.Unseal()` API programmatically with the loaded credentials;
+* the vault transitions to *Unsealed* state without user interaction; and
+* all services start normally as if the vault was unsealed through the Web UI.
 
-Important: the controller still waits for the unseal signal. Because the secrets are preloaded, the wait completes as soon as the controller processes the injected state. No changes are required to the main startup flow.
+Important: Debug mode uses the same production code paths for vault unsealing. The only difference is that credentials come from environment variables instead of WebAuthn authentication.
 
 == Required environment variables
 
@@ -45,40 +45,45 @@ Each variable is trimmed before use. URL validation rejects obvious typos to avo
 == Enabling debug mode
 
 . Export the required environment variables. Store development-only credentials in a `.env.debug` file or your shell profile. Never reuse production keys.
-. The file `.env.debug` will automatically be loaded, note it must be in the same working directory as the the binary launches from.
-. Build or run the binary with the `debugmode` tag so the flag is available:
+. The file `.env.debug` will automatically be loaded if present in the same working directory as the binary.
+. Build or run the binary with the `debugmode` tag:
 +
 [source,bash]
 ----
-go run -tags debugmode ./cmd/recomma --help
+go build -tags debugmode ./cmd/recomma
 ----
-. Launch the binary with the flag or environment toggle:
++
+Or run directly:
 +
 [source,bash]
 ----
-RECOMMA_DEBUG=true \
 RECOMMA_DEBUG_THREECOMMAS_API_KEY=... \
 RECOMMA_DEBUG_THREECOMMAS_PRIVATE_KEY="$(cat private.pem)" \
 RECOMMA_DEBUG_THREECOMMAS_PLAN_TIER=expert \
 RECOMMA_DEBUG_HYPERLIQUID_WALLET=... \
 RECOMMA_DEBUG_HYPERLIQUID_PRIVATE_KEY=... \
 RECOMMA_DEBUG_HYPERLIQUID_URL=https://example.hyperliquid.dev \
-go run ./cmd/recomma --public-origin=http://localhost:8080
+go run -tags debugmode ./cmd/recomma --public-origin=http://localhost:8080
 ----
-. Open the Web UI. It will behave as if you already authenticated: vault status shows `debug_mode: true` and the API skips session cookies.
++
+. The binary will automatically unseal the vault from environment variables at startup.
 
 TIP: When scripting tests, inject the environment variables directly into the process instead of writing them to disk.
 
 == Interacting with the API in debug mode
 
-* Session cookies are no longer required because `requireSession` short-circuits when debug mode is active. You can call authenticated endpoints directly with `curl` or Postman.
-* The embedded Web UI exposes `DEBUG_LOGS` in `/config.js`, so you can toggle verbose browser logging if the SPA supports it.
-* The vault status endpoint signals debug mode so that test harnesses can assert they are running against a relaxed environment.
+The debug mode binary behaves identically to production once the vault is unsealed. The Web UI and API work normally - authentication and session cookies function as they would in production.
+
+The key differences:
+
+* Vault is automatically unsealed at startup (no WebAuthn required)
+* Credentials come from environment variables instead of encrypted storage
+* The `cfg.Debug` flag may enable additional logging or relaxed validation
 
 == Limitations and cautions
 
 * Secrets stay in memory for the entire process lifetime. There is no reseal flow or passkey protection.
-* The injected user has the hard-coded username `debug` and an ID of `0`. Features that rely on real user metadata may need additional scaffolding when tested in debug mode.
-* This mode bypasses the strongest security guarantees of Recomma. Keep it behind firewalls and avoid connecting wallets with transferable value.
+* The auto-unsealed vault contains production-like credentials but should never handle real funds.
+* Debug mode bypasses the strongest security guarantees of Recomma. Keep it behind firewalls and avoid connecting wallets with transferable value.
 
-Disable debug mode and restart the binary when you are ready to return to normal operations. Building without `-tags debugmode` also removes the flag and environment toggle entirely.
+To return to normal operations, rebuild the binary without `-tags debugmode` and use the standard WebAuthn vault flow.

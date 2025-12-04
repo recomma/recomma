@@ -595,6 +595,52 @@ WHERE bot_id = COALESCE(sqlc.arg(bot_id), bot_id)
 ORDER BY observed_at_utc DESC, id DESC
 LIMIT sqlc.arg(limit);
 
+-- name: ListThreeCommasBotEventsForAPI :many
+SELECT
+    id,
+    order_id,
+    bot_id,
+    deal_id,
+    botevent_id,
+    created_at_utc,
+    observed_at_utc,
+    payload
+FROM threecommas_botevents
+WHERE (
+        sqlc.narg(bot_id) IS NULL
+        OR bot_id = sqlc.narg(bot_id)
+      )
+  AND (
+        sqlc.narg(deal_id) IS NULL
+        OR deal_id = sqlc.narg(deal_id)
+      )
+  AND (
+        sqlc.narg(bot_event_id) IS NULL
+        OR botevent_id = sqlc.narg(bot_event_id)
+      )
+  AND (
+        sqlc.narg(observed_from) IS NULL
+        OR observed_at_utc >= sqlc.narg(observed_from)
+      )
+  AND (
+        sqlc.narg(observed_to) IS NULL
+        OR observed_at_utc <= sqlc.narg(observed_to)
+      )
+  AND (
+        sqlc.narg(order_id_prefix) IS NULL
+        OR LOWER(order_id) LIKE LOWER(sqlc.narg(order_id_prefix)) || '%'
+      )
+  AND (
+        sqlc.narg(cursor_observed_at) IS NULL
+        OR observed_at_utc < sqlc.narg(cursor_observed_at)
+        OR (
+            observed_at_utc = sqlc.narg(cursor_observed_at)
+            AND id < sqlc.narg(cursor_id)
+        )
+      )
+ORDER BY observed_at_utc DESC, id DESC
+LIMIT sqlc.arg(limit);
+
 -- name: ListThreeCommasBotEventLogsForOrderId :many
 SELECT
     id,
@@ -689,7 +735,7 @@ WITH ranked AS (
     FROM threecommas_botevents
     WHERE deal_id = sqlc.arg(deal_id)
       AND CAST(json_extract(payload, '$.OrderType') AS TEXT) = 'Take Profit'
-      AND CAST(json_extract(payload, '$.OrderSize') AS INTEGER) = CAST(sqlc.arg(order_size) AS INTEGER)
+      AND CAST(json_extract(payload, '$.OrderPosition') AS INTEGER) BETWEEN 1 AND CAST(sqlc.arg(order_size) AS INTEGER)
 )
 SELECT
     order_position,
@@ -1014,3 +1060,24 @@ ON CONFLICT(venue_id, wallet, order_id) DO NOTHING;
 DELETE FROM scaled_orders
 WHERE venue_id = sqlc.arg(venue_id)
   AND wallet = sqlc.arg(wallet);
+
+-- name: InsertAppLogEntry :exec
+INSERT INTO app_logs (
+    timestamp_utc,
+    level,
+    scope,
+    message,
+    attrs,
+    source_file,
+    source_line,
+    source_func
+) VALUES (
+    sqlc.arg(timestamp_millis),
+    sqlc.arg(level_text),
+    sqlc.arg(scope),
+    sqlc.arg(message),
+    sqlc.arg(attrs_json),
+    sqlc.arg(source_file),
+    sqlc.arg(source_line),
+    sqlc.arg(source_function)
+);

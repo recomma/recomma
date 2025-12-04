@@ -7,6 +7,7 @@ package sqlcgen
 
 import (
 	"context"
+	"encoding/json"
 )
 
 const appendHyperliquidModify = `-- name: AppendHyperliquidModify :exec
@@ -843,6 +844,53 @@ func (q *Queries) HasThreeCommasOrderId(ctx context.Context, orderID string) (in
 	return column_1, err
 }
 
+const insertAppLogEntry = `-- name: InsertAppLogEntry :exec
+INSERT INTO app_logs (
+    timestamp_utc,
+    level,
+    scope,
+    message,
+    attrs,
+    source_file,
+    source_line,
+    source_func
+) VALUES (
+    ?1,
+    ?2,
+    ?3,
+    ?4,
+    ?5,
+    ?6,
+    ?7,
+    ?8
+)
+`
+
+type InsertAppLogEntryParams struct {
+	TimestampMillis int64           `json:"timestamp_millis"`
+	LevelText       string          `json:"level_text"`
+	Scope           *string         `json:"scope"`
+	Message         string          `json:"message"`
+	AttrsJson       json.RawMessage `json:"attrs_json"`
+	SourceFile      *string         `json:"source_file"`
+	SourceLine      *int64          `json:"source_line"`
+	SourceFunction  *string         `json:"source_function"`
+}
+
+func (q *Queries) InsertAppLogEntry(ctx context.Context, arg InsertAppLogEntryParams) error {
+	_, err := q.db.ExecContext(ctx, insertAppLogEntry,
+		arg.TimestampMillis,
+		arg.LevelText,
+		arg.Scope,
+		arg.Message,
+		arg.AttrsJson,
+		arg.SourceFile,
+		arg.SourceLine,
+		arg.SourceFunction,
+	)
+	return err
+}
+
 const insertHyperliquidStatus = `-- name: InsertHyperliquidStatus :exec
 INSERT INTO hyperliquid_status_history (
     venue_id,
@@ -1489,7 +1537,7 @@ WITH ranked AS (
     FROM threecommas_botevents
     WHERE deal_id = ?1
       AND CAST(json_extract(payload, '$.OrderType') AS TEXT) = 'Take Profit'
-      AND CAST(json_extract(payload, '$.OrderSize') AS INTEGER) = CAST(?2 AS INTEGER)
+      AND CAST(json_extract(payload, '$.OrderPosition') AS INTEGER) BETWEEN 1 AND CAST(?2 AS INTEGER)
 )
 SELECT
     order_position,
@@ -1900,6 +1948,107 @@ type ListThreeCommasBotEventsParams struct {
 
 func (q *Queries) ListThreeCommasBotEvents(ctx context.Context, arg ListThreeCommasBotEventsParams) ([]ThreecommasBotevent, error) {
 	rows, err := q.db.QueryContext(ctx, listThreeCommasBotEvents,
+		arg.BotID,
+		arg.DealID,
+		arg.BotEventID,
+		arg.ObservedFrom,
+		arg.ObservedTo,
+		arg.OrderIDPrefix,
+		arg.CursorObservedAt,
+		arg.CursorID,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ThreecommasBotevent
+	for rows.Next() {
+		var i ThreecommasBotevent
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderID,
+			&i.BotID,
+			&i.DealID,
+			&i.BoteventID,
+			&i.CreatedAtUtc,
+			&i.ObservedAtUtc,
+			&i.Payload,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listThreeCommasBotEventsForAPI = `-- name: ListThreeCommasBotEventsForAPI :many
+SELECT
+    id,
+    order_id,
+    bot_id,
+    deal_id,
+    botevent_id,
+    created_at_utc,
+    observed_at_utc,
+    payload
+FROM threecommas_botevents
+WHERE (
+        ?1 IS NULL
+        OR bot_id = ?1
+      )
+  AND (
+        ?2 IS NULL
+        OR deal_id = ?2
+      )
+  AND (
+        ?3 IS NULL
+        OR botevent_id = ?3
+      )
+  AND (
+        ?4 IS NULL
+        OR observed_at_utc >= ?4
+      )
+  AND (
+        ?5 IS NULL
+        OR observed_at_utc <= ?5
+      )
+  AND (
+        ?6 IS NULL
+        OR LOWER(order_id) LIKE LOWER(?6) || '%'
+      )
+  AND (
+        ?7 IS NULL
+        OR observed_at_utc < ?7
+        OR (
+            observed_at_utc = ?7
+            AND id < ?8
+        )
+      )
+ORDER BY observed_at_utc DESC, id DESC
+LIMIT ?9
+`
+
+type ListThreeCommasBotEventsForAPIParams struct {
+	BotID            interface{} `json:"bot_id"`
+	DealID           interface{} `json:"deal_id"`
+	BotEventID       interface{} `json:"bot_event_id"`
+	ObservedFrom     interface{} `json:"observed_from"`
+	ObservedTo       interface{} `json:"observed_to"`
+	OrderIDPrefix    interface{} `json:"order_id_prefix"`
+	CursorObservedAt interface{} `json:"cursor_observed_at"`
+	CursorID         *int64      `json:"cursor_id"`
+	Limit            int64       `json:"limit"`
+}
+
+func (q *Queries) ListThreeCommasBotEventsForAPI(ctx context.Context, arg ListThreeCommasBotEventsForAPIParams) ([]ThreecommasBotevent, error) {
+	rows, err := q.db.QueryContext(ctx, listThreeCommasBotEventsForAPI,
 		arg.BotID,
 		arg.DealID,
 		arg.BotEventID,

@@ -570,3 +570,45 @@ func (h *ApiHandler) FinishWebauthnLogin(ctx context.Context, req FinishWebauthn
 	}
 	return response, nil
 }
+
+func marshalToMap(v interface{}) (map[string]interface{}, error) {
+	if v == nil {
+		return map[string]interface{}{}, nil
+	}
+
+	switch typed := v.(type) {
+	case map[string]interface{}:
+		return typed, nil
+	case json.RawMessage:
+		if len(typed) == 0 {
+			return map[string]interface{}{}, nil
+		}
+		var out map[string]interface{}
+		if err := json.Unmarshal(typed, &out); err != nil {
+			return nil, err
+		}
+		return out, nil
+	case []byte:
+		if len(typed) == 0 {
+			return map[string]interface{}{}, nil
+		}
+		var out map[string]interface{}
+		if err := json.Unmarshal(typed, &out); err != nil {
+			return nil, err
+		}
+		return out, nil
+	default:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return nil, err
+		}
+		if len(data) == 0 {
+			return map[string]interface{}{}, nil
+		}
+		var out map[string]interface{}
+		if err := json.Unmarshal(data, &out); err != nil {
+			return nil, err
+		}
+		return out, nil
+	}
+}

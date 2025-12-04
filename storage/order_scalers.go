@@ -5,9 +5,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
+	tc "github.com/recomma/3commas-sdk-go/threecommas"
 	"github.com/recomma/recomma/internal/api"
 	"github.com/recomma/recomma/orderid"
 	"github.com/recomma/recomma/recomma"
@@ -120,6 +123,118 @@ type RecordScaledOrderParams struct {
 	SkipReason        *string
 }
 
+func (s *Storage) ListOrderScalers(ctx context.Context, opts api.ListOrderScalersOptions) ([]api.OrderScalerConfigItem, *string, error) {
+	if opts.Limit <= 0 {
+		opts.Limit = 50
+	}
+
+	orderOpts := api.ListOrdersOptions{
+		OrderIdPrefix: opts.OrderIdPrefix,
+		BotID:         opts.BotID,
+		DealID:        opts.DealID,
+		BotEventID:    opts.BotEventID,
+		Limit:         opts.Limit,
+		PageToken:     opts.PageToken,
+	}
+
+	rows, next, err := s.ListOrders(ctx, orderOpts)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	items := make([]api.OrderScalerConfigItem, 0, len(rows))
+	for _, row := range rows {
+		effective, err := s.ResolveEffectiveOrderScaler(ctx, row.OrderId)
+		if err != nil {
+			return nil, nil, err
+		}
+		cfgPtr := toAPIEffectiveOrderScaler(effective)
+		if cfgPtr == nil {
+			return nil, nil, fmt.Errorf("build effective scaler for %s", row.OrderId.Hex())
+		}
+		items = append(items, api.OrderScalerConfigItem{
+			OrderId:    row.OrderId,
+			ObservedAt: effective.UpdatedAt(),
+			Actor:      effective.Actor(),
+			Config:     *cfgPtr,
+		})
+	}
+
+	return items, next, nil
+}
+
+func (s *Storage) GetDefaultOrderScaler(ctx context.Context) (api.OrderScalerState, error) {
+	state, err := s.GetOrderScaler(ctx)
+	if err != nil {
+		return api.OrderScalerState{}, err
+	}
+	return toAPIOrderScalerState(state), nil
+}
+
+func (s *Storage) UpsertDefaultOrderScaler(ctx context.Context, multiplier float64, updatedBy string, notes *string) (api.OrderScalerState, error) {
+	state, err := s.UpsertOrderScaler(ctx, multiplier, updatedBy, notes)
+	if err != nil {
+		return api.OrderScalerState{}, err
+	}
+	return toAPIOrderScalerState(state), nil
+}
+
+func (s *Storage) GetBotOrderScalerOverride(ctx context.Context, botID uint32) (*api.OrderScalerOverride, bool, error) {
+	state, found, err := s.GetBotOrderScaler(ctx, botID)
+	if err != nil {
+		return nil, false, err
+	}
+	if !found || state == nil {
+		return nil, false, nil
+	}
+	apiOverride := toAPIOrderScalerOverride(*state)
+	return &apiOverride, true, nil
+}
+
+func (s *Storage) UpsertBotOrderScalerOverride(ctx context.Context, botID uint32, multiplier *float64, notes *string, updatedBy string) (api.OrderScalerOverride, error) {
+	override, err := s.UpsertBotOrderScaler(ctx, botID, multiplier, notes, updatedBy)
+	if err != nil {
+		return api.OrderScalerOverride{}, err
+	}
+	return toAPIOrderScalerOverride(override), nil
+}
+
+func (s *Storage) DeleteBotOrderScalerOverride(ctx context.Context, botID uint32, updatedBy string) error {
+	return s.DeleteBotOrderScaler(ctx, botID, updatedBy)
+}
+
+func (s *Storage) ResolveEffectiveOrderScalerConfig(ctx context.Context, oid orderid.OrderId) (api.EffectiveOrderScaler, error) {
+	effective, err := s.ResolveEffectiveOrderScaler(ctx, oid)
+	if err != nil {
+		return api.EffectiveOrderScaler{}, err
+	}
+	apiEffective := toAPIEffectiveOrderScaler(effective)
+	if apiEffective == nil {
+		return api.EffectiveOrderScaler{}, fmt.Errorf("convert effective order scaler")
+	}
+	return *apiEffective, nil
+}
+
+func toAPIOrderScalerState(state OrderScalerState) api.OrderScalerState {
+	return api.OrderScalerState{
+		Multiplier: state.Multiplier,
+		Notes:      state.Notes,
+		UpdatedAt:  state.UpdatedAt,
+		UpdatedBy:  state.UpdatedBy,
+	}
+}
+
+func toAPIOrderScalerOverride(override BotOrderScalerOverride) api.OrderScalerOverride {
+	return api.OrderScalerOverride{
+		BotId:         int64(override.BotID),
+		Multiplier:    override.Multiplier,
+		Notes:         override.Notes,
+		EffectiveFrom: override.EffectiveFrom,
+		UpdatedAt:     override.UpdatedAt,
+		UpdatedBy:     override.UpdatedBy,
+	}
+}
+
 func (s *Storage) GetOrderScaler(ctx context.Context) (OrderScalerState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -185,15 +300,147 @@ func (s *Storage) ListTakeProfitStackSizes(ctx context.Context, oid orderid.Orde
 		return nil, fmt.Errorf("list take profit stack sizes: %w", err)
 	}
 
-	sizes := make([]float64, 0, stackSize)
+	byPosition := make(map[int]float64, stackSize)
 	for _, row := range rows {
-		sizes = append(sizes, row.Size)
-	}
-	if len(sizes) != stackSize {
-		return nil, fmt.Errorf("incomplete take profit stack: expected %d legs, got %d", stackSize, len(sizes))
+		pos := int(row.OrderPosition) - 1
+		if pos < 0 || pos >= stackSize {
+			continue
+		}
+		if row.Size <= 0 {
+			continue
+		}
+		byPosition[pos] = row.Size
 	}
 
-	return sizes, nil
+	if len(byPosition) < stackSize {
+		s.mergeStackFromDealLocked(ctx, oid, stackSize, byPosition)
+	}
+
+	if len(byPosition) == 0 {
+		return nil, nil
+	}
+
+	out := make([]float64, 0, stackSize)
+	for pos := 0; pos < stackSize; pos++ {
+		size, ok := byPosition[pos]
+		if !ok || size <= 0 {
+			break
+		}
+		out = append(out, size)
+	}
+
+	if len(out) < stackSize {
+		s.logger.Debug("take profit stack incomplete",
+			slog.Uint64("deal_id", uint64(oid.DealID)),
+			slog.Int("expected", stackSize),
+			slog.Int("resolved", len(out)))
+	}
+
+	return out, nil
+}
+
+func (s *Storage) mergeStackFromDealLocked(ctx context.Context, oid orderid.OrderId, stackSize int, sizes map[int]float64) {
+	payload, err := s.queries.FetchDeal(ctx, int64(oid.DealID))
+	if err != nil {
+		if err != sql.ErrNoRows {
+			s.logger.Debug("fetch deal payload failed",
+				slog.Uint64("deal_id", uint64(oid.DealID)),
+				slog.String("error", err.Error()))
+		}
+		return
+	}
+
+	var deal tc.Deal
+	if err := json.Unmarshal(payload, &deal); err != nil {
+		s.logger.Debug("decode deal payload failed",
+			slog.Uint64("deal_id", uint64(oid.DealID)),
+			slog.String("error", err.Error()))
+		return
+	}
+
+	stack := takeProfitStackFromDeal(deal, stackSize)
+	if len(stack) == 0 {
+		return
+	}
+
+	for pos, size := range stack {
+		if pos < 0 || pos >= stackSize || size <= 0 {
+			continue
+		}
+		if _, exists := sizes[pos]; !exists {
+			sizes[pos] = size
+		}
+	}
+}
+
+func takeProfitStackFromDeal(deal tc.Deal, stackSizeHint int) map[int]float64 {
+	if len(deal.TakeProfitSteps) == 0 {
+		return nil
+	}
+
+	baseVolume := parseNumericString(deal.BaseOrderVolume)
+	if baseVolume <= 0 {
+		baseVolume = parseNumericString(deal.BoughtAmount)
+	}
+
+	result := make(map[int]float64, len(deal.TakeProfitSteps))
+	for idx, step := range deal.TakeProfitSteps {
+		pos := idx
+		if step.Id != nil {
+			switch {
+			case *step.Id > 0:
+				pos = *step.Id - 1
+			case *step.Id == 0:
+				pos = 0
+			}
+		}
+
+		size := parseNumericString(nullableString(step.InitialAmount))
+		if size <= 0 && step.AmountPercentage != nil && baseVolume > 0 {
+			size = baseVolume * float64(*step.AmountPercentage) / 100.0
+		}
+		if size <= 0 {
+			continue
+		}
+		result[pos] = size
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+
+	if stackSizeHint > 0 && len(result) != stackSizeHint {
+		normalized := make(map[int]float64, stackSizeHint)
+		for pos, size := range result {
+			if pos < 0 || pos >= stackSizeHint {
+				continue
+			}
+			normalized[pos] = size
+		}
+		if len(normalized) > 0 {
+			return normalized
+		}
+	}
+
+	return result
+}
+
+func nullableString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+func parseNumericString(val string) float64 {
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return 0
+	}
+	f, err := strconv.ParseFloat(val, 64)
+	if err != nil {
+		return 0
+	}
+	return f
 }
 
 func (s *Storage) UpsertOrderScaler(ctx context.Context, multiplier float64, updatedBy string, notes *string) (OrderScalerState, error) {
@@ -392,7 +639,7 @@ func (s *Storage) InsertScaledOrderAudit(ctx context.Context, params ScaledOrder
 		payloadType = &pt
 	}
 
-	orderID := fmt.Sprintf("%s#%d", params.Identifier.OrderId.Hex(), params.StackIndex)
+	orderID := fmt.Sprintf("%s#%d#%d", params.Identifier.OrderId.Hex(), params.StackIndex, createdAt.UTC().UnixNano())
 
 	// Use venue and wallet from the identifier instead of defaultVenueAssignmentLocked
 	venueID := params.Identifier.VenueID

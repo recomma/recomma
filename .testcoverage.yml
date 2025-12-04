@@ -1,0 +1,42 @@
+# Test coverage configuration for go-test-coverage action
+# See: https://github.com/vladopajic/go-test-coverage
+
+# Coverage profile location
+profile: cover.out
+
+# Minimum coverage thresholds
+threshold:
+  file: 50      # Minimum coverage per file (%)
+  package: 50   # Minimum coverage per package (%)
+  total: 75     # Minimum overall project coverage (%)
+
+# Exclusions
+exclude:
+  paths:
+    # Exclude webui directory
+    - ^webui/
+
+    # Exclude generated code from oapi-codegen
+    - \.gen\.go$
+
+    # Exclude generated code from sqlc
+    - ^storage/sqlcgen/
+
+    # Exclude untestable main entry points
+    - cmd/recomma/main\.go$
+
+    # Exclude config and debug mode (env-based, hard to test)
+    - cmd/recomma/internal/config/
+    - internal/debugmode/
+
+    # Exclude simple logging wrappers
+    - ^log/log\.go$
+    - storage/logging\.go$
+
+    # Exclude SSE / Streaming
+    - internal/api/handler_streaming.go
+
+    # Exclude webauth, requires a complicated E2E
+    - internal/api/webauth.go
+    - internal/api/vault.go
+    - ^internal/vault/

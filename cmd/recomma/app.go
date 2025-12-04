@@ -869,6 +869,10 @@ func (a *App) Shutdown(ctx context.Context) error {
 			}
 		}
 
+		if a.RateLimiter != nil {
+			a.RateLimiter.Stop()
+		}
+
 		// Cancel app context
 		a.cancelFunc()
 

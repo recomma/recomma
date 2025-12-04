@@ -1032,6 +1032,10 @@ func (o *orderState) inferFromEvent() {
 		o.originalQty = o.event.Size
 	}
 	if o.originalQty > 0 && o.remainingQty == 0 {
+		// Do not mark the order as filled just because 3Commas reported it.
+		// We only trust Hyperliquid statuses for fill/cancel transitions; otherwise
+		// stale bot events would let us wrongly declare "all buys filled" and skip
+		// take-profit reconciliation (see bug_2025-12-01_stale_open_cloid.md).
 		o.remainingQty = o.originalQty
 	}
 	if o.event.CreatedAt.UnixMilli() > 0 {

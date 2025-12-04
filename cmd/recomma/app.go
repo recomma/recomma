@@ -767,6 +767,8 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 
 	// TODO: needs to become venue aware!
 	if err := statusRefresher.Refresh(ctx); err != nil {
+		// Fill tracker now marks itself hydrated once live Hyperliquid statuses flow in (see filltracker.Service.markOrderHydratedLocked),
+		// so this warning does not permanently disable take-profit reconciliation even if the initial refresh fails.
 		a.Logger.Warn("status refresher failed", slog.String("error", err.Error()))
 	} else {
 		a.FillTracker.MarkStatusesHydrated()

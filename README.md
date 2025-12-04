@@ -2,6 +2,8 @@
 
 Recomma bridges your 3Commas bots to Hyperliquid. It watches every order 3Commas plans, mirrors the same intent on Hyperliquid, and cleans up take-profit orders once all safety legs are filled. A built-in web app guides you through setup with passkeys and keeps your API secrets safe.
 
+![Recomma Screenshot](screenshot.png)
+
 ## What You Need
 - An active 3Commas account with bots you want to mirror.
 - A Hyperliquid wallet and private key.

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from './ui/button';
 import { Alert, AlertDescription } from './ui/alert';
 import { Plus, AlertCircle, CheckCircle, Info } from 'lucide-react';
@@ -9,6 +9,8 @@ import { generateVenueId, normalizePrivateKey } from '../lib/venue-utils';
 import { fetchVenues, fetchVenueAssignments, fetchVaultPayload, updateVaultPayload } from '../lib/venue-api';
 import { decryptVaultPayload, encryptVaultPayload } from '../lib/vault-utils';
 import { toast } from 'sonner';
+
+const DEFAULT_INITIAL_VENUES: VaultVenueSecret[] = [];
 
 interface VenueManagementProps {
   /** Context: 'setup' for wizard, 'settings' for post-setup */
@@ -27,7 +29,7 @@ interface VenueManagementProps {
 
 export function VenueManagement({
   context,
-  initialVenues = [],
+  initialVenues = DEFAULT_INITIAL_VENUES,
   onVenuesChange,
   onVenuesLoaded,
   onViewDetail,
@@ -40,31 +42,32 @@ export function VenueManagement({
   const [apiLoading, setApiLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [vaultNeedsReseal, setVaultNeedsReseal] = useState(false);
+  const onVenuesLoadedRef = useRef(onVenuesLoaded);
 
   const isSetupContext = context === 'setup';
 
-  // Initialize venues
   useEffect(() => {
-    if (isSetupContext) {
-      // Setup wizard: use local state from initialVenues
-      const mappedVenues = initialVenues.map((v) => ({
-        venue_id: v.id,
-        type: v.type,
-        display_name: v.display_name || '',
-        wallet: v.wallet,
-        flags: { api_url: v.api_url },
-        isPrimary: v.is_primary,
-        assignmentCount: 0,
-      }));
-      setVenues(mappedVenues);
-    } else {
-      // Settings: load from API
-      loadVenuesFromAPI();
-    }
+    onVenuesLoadedRef.current = onVenuesLoaded;
+  }, [onVenuesLoaded]);
+
+  // Initialize venues during setup wizard
+  useEffect(() => {
+    if (!isSetupContext) return;
+
+    const mappedVenues = initialVenues.map((v) => ({
+      venue_id: v.id,
+      type: v.type,
+      display_name: v.display_name || '',
+      wallet: v.wallet,
+      flags: { api_url: v.api_url },
+      isPrimary: v.is_primary,
+      assignmentCount: 0,
+    }));
+    setVenues(mappedVenues);
   }, [isSetupContext, initialVenues]);
 
   // Load venues from API (settings context only)
-  const loadVenuesFromAPI = async () => {
+  const loadVenuesFromAPI = useCallback(async () => {
     if (isSetupContext) return;
 
     setApiLoading(true);
@@ -94,13 +97,19 @@ export function VenueManagement({
       );
 
       setVenues(venuesWithCounts);
-      onVenuesLoaded?.(venuesWithCounts);
+      onVenuesLoadedRef.current?.(venuesWithCounts);
     } catch (error) {
       setApiError(error instanceof Error ? error.message : 'Failed to load wallets');
     } finally {
       setApiLoading(false);
     }
-  };
+  }, [isSetupContext]);
+
+  // Load venues once when viewing settings
+  useEffect(() => {
+    if (isSetupContext) return;
+    loadVenuesFromAPI();
+  }, [isSetupContext, loadVenuesFromAPI]);
 
   // Helper to update vault by modifying venues array (settings context only)
   const updateVaultWithModifiedVenues = async (

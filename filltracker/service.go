@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	tc "github.com/recomma/3commas-sdk-go/threecommas"
@@ -29,9 +30,11 @@ type Service struct {
 	mu     sync.RWMutex
 	orders map[recomma.OrderIdentifier]*orderState
 	deals  map[uint32]*dealState
-	// submitter is optional; when configured the tracker can emit work items
-	// without waiting for the engine to rescan deals.
-	submitter recomma.Emitter
+
+	submitter        recomma.Emitter
+	requireHydration atomic.Bool
+	statusHydrated   atomic.Bool
+	hydrationEpoch   atomic.Uint64
 }
 
 // New creates a new fill tracker service.
@@ -45,6 +48,31 @@ func New(store *storage.Storage, logger *slog.Logger) *Service {
 		orders: make(map[recomma.OrderIdentifier]*orderState),
 		deals:  make(map[uint32]*dealState),
 	}
+}
+
+// RequireStatusHydration enforces that reconciliation is skipped until Hyperliquid
+// statuses have been refreshed at least once.
+func (s *Service) RequireStatusHydration() {
+	s.requireHydration.Store(true)
+	s.statusHydrated.Store(false)
+	s.hydrationEpoch.Add(1)
+}
+
+// MarkStatusesHydrated signals that Hyperliquid statuses have been replayed at least once.
+func (s *Service) MarkStatusesHydrated() {
+	s.statusHydrated.Store(true)
+}
+
+func (s *Service) statusesHydrated() bool {
+	if !s.requireHydration.Load() {
+		return true
+	}
+	return s.statusHydrated.Load()
+}
+
+// StatusesHydrated reports whether Hyperliquid statuses have been replayed at least once.
+func (s *Service) StatusesHydrated() bool {
+	return s.statusesHydrated()
 }
 
 // SetEmitter wires the queue emitter so the tracker can submit work directly.
@@ -92,6 +120,7 @@ func (s *Service) UpdateStatus(ctx context.Context, ident recomma.OrderIdentifie
 		state.applyEvent(&clone)
 	}
 	state.applyStatus(status)
+	s.markOrderHydratedLocked(state)
 
 	deal := s.ensureDealLocked(ident)
 	deal.orders[ident] = state
@@ -118,6 +147,44 @@ func (s *Service) UpdateStatus(ctx context.Context, ident recomma.OrderIdentifie
 	}
 
 	return nil
+}
+
+func (s *Service) markOrderHydratedLocked(state *orderState) {
+	if state == nil {
+		return
+	}
+	if !s.requireHydration.Load() {
+		return
+	}
+	if s.statusHydrated.Load() {
+		return
+	}
+	current := s.hydrationEpoch.Load()
+	if current == 0 {
+		return
+	}
+	if state.requiresHydration() {
+		state.hydratedEpoch = current
+	}
+	var needsHydration bool
+	for _, existing := range s.orders {
+		if existing == nil {
+			continue
+		}
+		if !existing.requiresHydration() {
+			continue
+		}
+		needsHydration = true
+		if existing.hydratedEpoch != current {
+			return
+		}
+	}
+	if !needsHydration {
+		s.statusHydrated.Store(true)
+		return
+	}
+	s.statusHydrated.Store(true)
+	s.logger.Info("hyperliquid statuses hydrated via replay")
 }
 
 // ApplyScaledOrder updates the cached state with a scaled order size/price.
@@ -172,6 +239,13 @@ func (s *Service) Snapshot(dealID uint32) (DealSnapshot, bool) {
 
 // ReconcileTakeProfits ensures a reduce-only order exists that matches the current net position.
 func (s *Service) ReconcileTakeProfits(ctx context.Context, submitter recomma.Emitter) {
+	if !s.statusesHydrated() {
+		// The hydration gate relaxes automatically once Hyperliquid begins streaming fresh statuses;
+		// see markOrderHydratedLocked and TestReconcileTakeProfits_RecoversAfterStatusRefreshFailure.
+		s.logger.Debug("skip take profit reconciliation: hyperliquid statuses not hydrated")
+		return
+	}
+
 	for _, dealID := range s.listDealIDs() {
 		snapshot, ok := s.Snapshot(dealID)
 		if !ok {
@@ -428,6 +502,17 @@ func (s *Service) ensureTakeProfit(
 		return
 	}
 
+	if !force && s.hasLiveHyperliquidStatus(ctx, ident) {
+		s.logger.Debug("skip take profit create: live reduce-only order already recorded",
+			slog.Uint64("deal_id", uint64(snapshot.DealID)),
+			slog.Uint64("bot_id", uint64(snapshot.BotID)),
+			slog.String("venue", ident.Venue()),
+			slog.String("wallet", ident.Wallet),
+			slog.String("cloid", ident.Hex()),
+		)
+		return
+	}
+
 	oid := ident.OrderId
 	create := adapter.ToCreateOrderRequest(snapshot.Currency, recomma.BotEvent{BotEvent: *evt}, oid)
 	create.Size = desiredQty
@@ -557,6 +642,18 @@ func isLiveHyperliquidStatus(status *hyperliquid.WsOrder) bool {
 	}
 }
 
+func (s *Service) hasLiveHyperliquidStatus(ctx context.Context, ident recomma.OrderIdentifier) bool {
+	status, found, err := s.store.LoadHyperliquidStatus(ctx, ident)
+	if err != nil {
+		s.logger.Warn("load hyperliquid status failed", slog.String("cloid", ident.Hex()), slog.String("error", err.Error()))
+		return false
+	}
+	if !found {
+		return false
+	}
+	return isLiveHyperliquidStatus(status)
+}
+
 func isCanceledHyperliquidStatus(status hyperliquid.OrderStatusValue) bool {
 	if status == hyperliquid.OrderStatusValueCanceled {
 		return true
@@ -656,6 +753,13 @@ func floatsEqual(a, b float64) bool {
 }
 
 func (s *Service) reloadDeal(ctx context.Context, dealID uint32) error {
+	var dealRecord *tc.Deal
+	if record, found, err := s.store.LoadThreeCommasDeal(ctx, int(dealID)); err != nil {
+		return err
+	} else if found {
+		dealRecord = record
+	}
+
 	oids, err := s.store.ListOrderIdsForDeal(ctx, dealID)
 	if err != nil {
 		return err
@@ -737,14 +841,20 @@ func (s *Service) reloadDeal(ctx context.Context, dealID uint32) error {
 		}
 	}
 
+	if dealFinished(dealRecord) {
+		s.closeOpenOrdersForDeal(dealID)
+	}
+
 	return nil
 }
 
 func (s *Service) ensureOrderLocked(ident recomma.OrderIdentifier) *orderState {
 	state, ok := s.orders[ident]
 	if !ok {
-		state = &orderState{
-			identifier: ident,
+		state = &orderState{identifier: ident}
+		currentEpoch := s.hydrationEpoch.Load()
+		if !s.requireHydration.Load() || s.statusHydrated.Load() || currentEpoch == 0 {
+			state.hydratedEpoch = currentEpoch
 		}
 		s.orders[ident] = state
 	} else {
@@ -827,6 +937,53 @@ func (s *Service) CleanupStaleDeals(staleDuration time.Duration) int {
 	return len(staleDeals)
 }
 
+func (s *Service) closeOpenOrdersForDeal(dealID uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	deal, ok := s.deals[dealID]
+	if !ok {
+		return
+	}
+
+	now := time.Now().UTC()
+	for _, state := range deal.orders {
+		if !state.isBuy() {
+			continue
+		}
+		if !state.isActive() {
+			continue
+		}
+		state.remainingQty = 0
+		state.status = hyperliquid.OrderStatusValueCanceled
+		state.statusObserved = now
+		state.lastUpdate = now
+	}
+	deal.lastUpdate = now
+	deal.recompute()
+}
+
+func dealFinished(deal *tc.Deal) bool {
+	if deal == nil {
+		return false
+	}
+	if deal.Finished {
+		return true
+	}
+	status := strings.ToLower(string(deal.Status))
+	if status == "" {
+		return false
+	}
+	if strings.Contains(status, "finished") ||
+		strings.Contains(status, "canceled") ||
+		strings.Contains(status, "cancelled") ||
+		status == "completed" ||
+		status == "failed" {
+		return true
+	}
+	return false
+}
+
 type orderState struct {
 	identifier recomma.OrderIdentifier
 
@@ -846,6 +1003,8 @@ type orderState struct {
 	status         hyperliquid.OrderStatusValue
 	statusObserved time.Time
 	lastUpdate     time.Time
+
+	hydratedEpoch uint64
 }
 
 func (o *orderState) applyEvent(evt *tc.BotEvent) {
@@ -924,9 +1083,12 @@ func (o *orderState) inferFromEvent() {
 	if o.event.Size > 0 && o.originalQty == 0 {
 		o.originalQty = o.event.Size
 	}
-	if o.event.Status == tc.Filled || o.event.Status == tc.Finished {
-		o.filledQty = o.event.Size
-		o.remainingQty = 0
+	if o.originalQty > 0 && o.remainingQty == 0 {
+		// Do not mark the order as filled just because 3Commas reported it.
+		// We only trust Hyperliquid statuses for fill/cancel transitions; otherwise
+		// stale bot events would let us wrongly declare "all buys filled" and skip
+		// take-profit reconciliation (see bug_2025-12-01_stale_open_cloid.md).
+		o.remainingQty = o.originalQty
 	}
 	if o.event.CreatedAt.UnixMilli() > 0 {
 		o.statusObserved = o.event.CreatedAt.UTC()
@@ -948,6 +1110,13 @@ func (o *orderState) isActive() bool {
 		return false
 	}
 	return true
+}
+
+func (o *orderState) requiresHydration() bool {
+	if o == nil {
+		return false
+	}
+	return o.reduceOnly
 }
 
 func (o *orderState) isFilled() bool {

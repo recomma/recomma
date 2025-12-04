@@ -7,6 +7,7 @@ package sqlcgen
 
 import (
 	"context"
+	"encoding/json"
 )
 
 const appendHyperliquidModify = `-- name: AppendHyperliquidModify :exec
@@ -841,6 +842,53 @@ func (q *Queries) HasThreeCommasOrderId(ctx context.Context, orderID string) (in
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const insertAppLogEntry = `-- name: InsertAppLogEntry :exec
+INSERT INTO app_logs (
+    timestamp_utc,
+    level,
+    scope,
+    message,
+    attrs,
+    source_file,
+    source_line,
+    source_func
+) VALUES (
+    ?1,
+    ?2,
+    ?3,
+    ?4,
+    ?5,
+    ?6,
+    ?7,
+    ?8
+)
+`
+
+type InsertAppLogEntryParams struct {
+	TimestampMillis int64           `json:"timestamp_millis"`
+	LevelText       string          `json:"level_text"`
+	Scope           *string         `json:"scope"`
+	Message         string          `json:"message"`
+	AttrsJson       json.RawMessage `json:"attrs_json"`
+	SourceFile      *string         `json:"source_file"`
+	SourceLine      *int64          `json:"source_line"`
+	SourceFunction  *string         `json:"source_function"`
+}
+
+func (q *Queries) InsertAppLogEntry(ctx context.Context, arg InsertAppLogEntryParams) error {
+	_, err := q.db.ExecContext(ctx, insertAppLogEntry,
+		arg.TimestampMillis,
+		arg.LevelText,
+		arg.Scope,
+		arg.Message,
+		arg.AttrsJson,
+		arg.SourceFile,
+		arg.SourceLine,
+		arg.SourceFunction,
+	)
+	return err
 }
 
 const insertHyperliquidStatus = `-- name: InsertHyperliquidStatus :exec

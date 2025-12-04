@@ -488,6 +488,13 @@ func (e *HyperLiquidEmitter) Emit(ctx context.Context, w recomma.OrderWork) erro
 		logger.Info("Cancelling order", slog.Any("cancel", w.Action.Cancel))
 		_, err := e.exchange.CancelByCloid(ctx, w.Action.Cancel.Coin, w.Action.Cancel.Cloid)
 		if err != nil {
+			if isAlreadyClosedCancelError(err) {
+				if err := e.store.RecordHyperliquidCancel(ctx, ident, w.Action.Cancel, w.BotEvent.RowID); err != nil {
+					logger.Warn("could not add to store", slog.String("error", err.Error()))
+				}
+				logger.Debug("cancel skipped: order already closed", slog.Any("action", w.Action.Cancel))
+				return recomma.ErrOrderAlreadySatisfied
+			}
 			// If HL rate limits (address-based or IP-based), apply a cooldown.
 			if strings.Contains(err.Error(), "429") || strings.Contains(strings.ToLower(err.Error()), "rate limit") {
 				logger.Debug("hit ratelimit, cooldown of 10s applied")
@@ -692,6 +699,27 @@ func isLiveStatus(status *hyperliquid.WsOrder) bool {
 	default:
 		return false
 	}
+}
+
+func isAlreadyClosedCancelError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	fragments := []string{
+		"already canceled",
+		"already cancelled",
+		"already filled",
+		"never placed",
+		"not live",
+		"does not exist",
+	}
+	for _, fragment := range fragments {
+		if strings.Contains(msg, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 func ordersMatch(status *hyperliquid.WsOrder, latestSubmission *hyperliquid.CreateOrderRequest, desired hyperliquid.CreateOrderRequest) bool {

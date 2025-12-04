@@ -18,6 +18,9 @@ type AppConfig struct {
 	PublicOrigin                   string
 	LogLevel                       string
 	LogFormatJSON                  bool
+	LogToStorage                   bool
+	LogStorageLevel                string
+	LogGroups                      string
 	Debug                          bool
 	HyperliquidIOCInitialOffsetBps float64
 	OrderScalerMaxMultiplier       float64
@@ -31,6 +34,9 @@ func DefaultConfig() AppConfig {
 		HTTPListen:                     ":8080",
 		LogLevel:                       "info",
 		LogFormatJSON:                  false,
+		LogToStorage:                   true,
+		LogStorageLevel:                "info",
+		LogGroups:                      "",
 		Debug:                          false,
 		HyperliquidIOCInitialOffsetBps: 0,
 		OrderScalerMaxMultiplier:       5,
@@ -49,6 +55,9 @@ func NewConfigFlagSet(cfg *AppConfig) *pflag.FlagSet {
 	fs.StringVar(&cfg.PublicOrigin, "public-origin", cfg.PublicOrigin, "Public origin served to clients (env: RECOMMA_PUBLIC_ORIGIN)")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "Log level (env: RECOMMA_LOG_LEVEL)")
 	fs.BoolVar(&cfg.LogFormatJSON, "log-json", cfg.LogFormatJSON, "Emit logs as JSON (env: RECOMMA_LOG_JSON)")
+	fs.BoolVar(&cfg.LogToStorage, "log-to-storage", cfg.LogToStorage, "Persist logs to SQLite storage (env: RECOMMA_LOG_TO_STORAGE)")
+	fs.StringVar(&cfg.LogStorageLevel, "log-storage-level", cfg.LogStorageLevel, "Minimum slog level stored in SQLite (env: RECOMMA_LOG_STORAGE_LEVEL)")
+	fs.StringVar(&cfg.LogGroups, "log-groups", cfg.LogGroups, "Comma-separated slog groups to emit; empty emits all (env: RECOMMA_LOG_GROUPS)")
 	registerDebugFlag(fs, cfg)
 	fs.Float64Var(&cfg.HyperliquidIOCInitialOffsetBps, "hyperliquid-ioc-offset-bps", cfg.HyperliquidIOCInitialOffsetBps, "Basis points to widen the first IOC price check (env: RECOMMA_HYPERLIQUID_IOC_OFFSET_BPS)")
 	fs.Float64Var(&cfg.OrderScalerMaxMultiplier, "order-scaler-max-multiplier", cfg.OrderScalerMaxMultiplier, "Maximum allowed order scaler multiplier (env: RECOMMA_ORDER_SCALER_MAX_MULTIPLIER)")
@@ -107,6 +116,9 @@ func ApplyEnvDefaults(fs *pflag.FlagSet, cfg *AppConfig) error {
 	setString("public-origin", "RECOMMA_PUBLIC_ORIGIN", &cfg.PublicOrigin)
 	setString("log-level", "RECOMMA_LOG_LEVEL", &cfg.LogLevel)
 	setBool("log-json", "RECOMMA_LOG_JSON", &cfg.LogFormatJSON)
+	setBool("log-to-storage", "RECOMMA_LOG_TO_STORAGE", &cfg.LogToStorage)
+	setString("log-storage-level", "RECOMMA_LOG_STORAGE_LEVEL", &cfg.LogStorageLevel)
+	setString("log-groups", "RECOMMA_LOG_GROUPS", &cfg.LogGroups)
 	setFloat("hyperliquid-ioc-offset-bps", "RECOMMA_HYPERLIQUID_IOC_OFFSET_BPS", &cfg.HyperliquidIOCInitialOffsetBps)
 	setFloat("order-scaler-max-multiplier", "RECOMMA_ORDER_SCALER_MAX_MULTIPLIER", &cfg.OrderScalerMaxMultiplier)
 	setString("system-stream-min-level", "RECOMMA_SYSTEM_STREAM_MIN_LEVEL", &cfg.SystemStreamMinLevel)
@@ -133,12 +145,7 @@ func ValidateConfig(cfg AppConfig) error {
 
 func GetLogHandler(cfg AppConfig) slog.Handler {
 	var level slog.Level
-	if cfg.LogLevel == "" {
-		level = slog.LevelInfo
-	} else if err := level.UnmarshalText([]byte(cfg.LogLevel)); err != nil {
-		level = slog.LevelInfo
-		log.Printf("unknown log level %q, defaulting to info", cfg.LogLevel)
-	}
+	level = ParseLevelOrDefault(cfg.LogLevel, slog.LevelInfo)
 
 	handlerOpts := &slog.HandlerOptions{Level: level}
 
@@ -150,4 +157,35 @@ func GetLogHandler(cfg AppConfig) slog.Handler {
 	}
 
 	return handler
+}
+
+// ParseLevelOrDefault parses a slog level string, returning the provided default on error.
+func ParseLevelOrDefault(value string, def slog.Level) slog.Level {
+	if value == "" {
+		return def
+	}
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(value)); err != nil {
+		log.Printf("unknown log level %q, defaulting to %s", value, def.String())
+		return def
+	}
+	return level
+}
+
+// ParseLogGroups converts a comma-separated list into normalized (lower-case) group names.
+func ParseLogGroups(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, strings.ToLower(trimmed))
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

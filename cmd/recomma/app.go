@@ -28,6 +28,7 @@ import (
 	"github.com/recomma/recomma/internal/origin"
 	"github.com/recomma/recomma/internal/vault"
 	rlog "github.com/recomma/recomma/log"
+	"github.com/recomma/recomma/pkg/sqllogger"
 	"github.com/recomma/recomma/ratelimit"
 	"github.com/recomma/recomma/recomma"
 	"github.com/recomma/recomma/storage"
@@ -40,9 +41,11 @@ type App struct {
 	Config config.AppConfig
 
 	// Core components
-	Store           *storage.Storage
-	VaultController *vault.Controller
-	Logger          *slog.Logger
+	Store            *storage.Storage
+	VaultController  *vault.Controller
+	Logger           *slog.Logger
+	sqliteLogHandler *sqllogger.Handler
+	logFanout        *rlog.MultiHandler
 
 	// API
 	APIHandler       *api.ApiHandler
@@ -116,14 +119,12 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 	workerCtx, cancelWorkers := context.WithCancel(context.Background())
 
 	// Setup logging
-	logger := slog.New(config.GetLogHandler(cfg))
-	slog.SetDefault(logger)
-	log.SetOutput(slog.NewLogLogger(logger.Handler(), slog.LevelDebug).Writer())
+	baseHandler := config.GetLogHandler(cfg)
+	logger := slog.New(baseHandler)
 
 	webui.SetDebug(cfg.Debug)
-	appCtx = rlog.ContextWithLogger(appCtx, logger)
 
-	// Initialize stream controllers
+	// Initialize stream controllers (logger will be updated once the final handler is assembled)
 	streamController := api.NewStreamController(api.WithStreamLogger(logger))
 
 	// Parse system stream log level
@@ -155,6 +156,39 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 			return nil, fmt.Errorf("storage init failed: %w", err)
 		}
 	}
+
+	// Optional SQLite log handler
+	var sqliteLogHandler *sqllogger.Handler
+	if cfg.LogToStorage {
+		storageLevel := config.ParseLevelOrDefault(cfg.LogStorageLevel, slog.LevelInfo)
+		sqliteLogHandler, err = sqllogger.NewHandler(
+			sqllogger.WithInsertFunc(store.LogInsertFunc()),
+			sqllogger.WithMinLevel(storageLevel),
+		)
+		if err != nil {
+			store.Close()
+			return nil, fmt.Errorf("log storage handler init failed: %w", err)
+		}
+	}
+
+	// Compose final slog handler (stderr + optional SQLite + group filter)
+	var fanOut []slog.Handler
+	fanOut = append(fanOut, baseHandler)
+	if sqliteLogHandler != nil {
+		fanOut = append(fanOut, sqliteLogHandler)
+	}
+	multiHandler := rlog.NewMultiHandler(fanOut...)
+	logGroups := config.ParseLogGroups(cfg.LogGroups)
+	var finalHandler slog.Handler = multiHandler
+	if len(logGroups) > 0 {
+		finalHandler = rlog.NewGroupFilterHandler(finalHandler, logGroups)
+	}
+	logger = slog.New(finalHandler)
+	streamController.SetLogger(logger)
+	storage.WithLogger(logger)(store)
+	slog.SetDefault(logger)
+	log.SetOutput(slog.NewLogLogger(logger.Handler(), slog.LevelDebug).Writer())
+	appCtx = rlog.ContextWithLogger(appCtx, logger)
 
 	// Initialize WebAuthn
 	webAuth, err := webauthn.New(&webauthn.Config{
@@ -261,6 +295,8 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 		Store:            store,
 		VaultController:  vaultController,
 		Logger:           logger,
+		sqliteLogHandler: sqliteLogHandler,
+		logFanout:        multiHandler,
 		APIHandler:       apiHandler,
 		StreamController: streamController,
 		SystemStream:     systemStream,
@@ -431,6 +467,7 @@ func (a *App) Start(ctx context.Context) error {
 
 	// Initialize fill tracker
 	a.FillTracker = filltracker.New(a.Store, a.Logger)
+	a.FillTracker.RequireStatusHydration()
 
 	// Create order queue and emitter
 	rlOrders := workqueue.NewTypedMaxOfRateLimiter(
@@ -734,7 +771,11 @@ func (a *App) initializeHyperliquidVenues(ctx context.Context, secrets *vault.Se
 
 	// TODO: needs to become venue aware!
 	if err := statusRefresher.Refresh(ctx); err != nil {
+		// Fill tracker now marks itself hydrated once live Hyperliquid statuses flow in (see filltracker.Service.markOrderHydratedLocked),
+		// so this warning does not permanently disable take-profit reconciliation even if the initial refresh fails.
 		a.Logger.Warn("status refresher failed", slog.String("error", err.Error()))
+	} else {
+		a.FillTracker.MarkStatusesHydrated()
 	}
 
 	if err := a.FillTracker.Rebuild(ctx); err != nil {
@@ -807,6 +848,17 @@ func (a *App) Shutdown(ctx context.Context) error {
 			closeFn()
 		}
 
+		// Close log handler before storage so queued writes flush
+		if a.sqliteLogHandler != nil {
+			if a.logFanout != nil {
+				a.logFanout.Remove(a.sqliteLogHandler)
+			}
+			if err := a.sqliteLogHandler.Close(ctx); err != nil {
+				a.Logger.Warn("log handler close error", slog.String("error", err.Error()))
+			}
+			a.sqliteLogHandler = nil
+		}
+
 		// Close storage
 		if a.Store != nil {
 			if err := a.Store.Close(); err != nil {
@@ -815,6 +867,10 @@ func (a *App) Shutdown(ctx context.Context) error {
 					shutdownErr = err
 				}
 			}
+		}
+
+		if a.RateLimiter != nil {
+			a.RateLimiter.Stop()
 		}
 
 		// Cancel app context

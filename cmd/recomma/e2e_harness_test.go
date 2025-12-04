@@ -194,6 +194,7 @@ func NewE2ETestHarness(t testing.TB, ctx context.Context, opts ...E2EHarnessOpti
 	cfg.Debug = false
 	cfg.OrderWorkers = 2
 	cfg.OrderScalerMaxMultiplier = 10.0
+	cfg.LogToStorage = false
 
 	// Create app with test dependencies - vault will be unsealed programmatically
 	app, err := NewApp(ctx, AppOptions{

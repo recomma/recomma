@@ -60,3 +60,16 @@ func (h *MultiHandler) WithGroup(name string) slog.Handler {
 	}
 	return &MultiHandler{children: newChildren}
 }
+
+// Remove detaches the provided handler instance from the fan-out if present.
+func (h *MultiHandler) Remove(target slog.Handler) {
+	if h == nil || target == nil {
+		return
+	}
+	for i, child := range h.children {
+		if child == target {
+			h.children = append(h.children[:i], h.children[i+1:]...)
+			return
+		}
+	}
+}

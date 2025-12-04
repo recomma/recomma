@@ -45,6 +45,7 @@ type App struct {
 	VaultController  *vault.Controller
 	Logger           *slog.Logger
 	sqliteLogHandler *sqllogger.Handler
+	logFanout        *rlog.MultiHandler
 
 	// API
 	APIHandler       *api.ApiHandler
@@ -176,9 +177,11 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 	if sqliteLogHandler != nil {
 		fanOut = append(fanOut, sqliteLogHandler)
 	}
-	var finalHandler slog.Handler = rlog.NewMultiHandler(fanOut...)
-	if groups := config.ParseLogGroups(cfg.LogGroups); len(groups) > 0 {
-		finalHandler = rlog.NewGroupFilterHandler(finalHandler, groups)
+	multiHandler := rlog.NewMultiHandler(fanOut...)
+	logGroups := config.ParseLogGroups(cfg.LogGroups)
+	var finalHandler slog.Handler = multiHandler
+	if len(logGroups) > 0 {
+		finalHandler = rlog.NewGroupFilterHandler(finalHandler, logGroups)
 	}
 	logger = slog.New(finalHandler)
 	streamController.SetLogger(logger)
@@ -293,6 +296,7 @@ func NewApp(ctx context.Context, opts AppOptions) (*App, error) {
 		VaultController:  vaultController,
 		Logger:           logger,
 		sqliteLogHandler: sqliteLogHandler,
+		logFanout:        multiHandler,
 		APIHandler:       apiHandler,
 		StreamController: streamController,
 		SystemStream:     systemStream,
@@ -846,9 +850,13 @@ func (a *App) Shutdown(ctx context.Context) error {
 
 		// Close log handler before storage so queued writes flush
 		if a.sqliteLogHandler != nil {
+			if a.logFanout != nil {
+				a.logFanout.Remove(a.sqliteLogHandler)
+			}
 			if err := a.sqliteLogHandler.Close(ctx); err != nil {
 				a.Logger.Warn("log handler close error", slog.String("error", err.Error()))
 			}
+			a.sqliteLogHandler = nil
 		}
 
 		// Close storage

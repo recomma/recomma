@@ -240,6 +240,8 @@ func (s *Service) Snapshot(dealID uint32) (DealSnapshot, bool) {
 // ReconcileTakeProfits ensures a reduce-only order exists that matches the current net position.
 func (s *Service) ReconcileTakeProfits(ctx context.Context, submitter recomma.Emitter) {
 	if !s.statusesHydrated() {
+		// The hydration gate relaxes automatically once Hyperliquid begins streaming fresh statuses;
+		// see markOrderHydratedLocked and TestReconcileTakeProfits_RecoversAfterStatusRefreshFailure.
 		s.logger.Debug("skip take profit reconciliation: hyperliquid statuses not hydrated")
 		return
 	}

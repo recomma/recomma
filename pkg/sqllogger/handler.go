@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"log/slog"
 	"strings"
 	"sync"
@@ -33,12 +34,15 @@ type InsertLogEntryParams struct {
 
 type InsertFunc func(context.Context, InsertLogEntryParams) error
 
+type ErrorReporter func(error)
+
 type Option func(*handlerConfig)
 
 type handlerConfig struct {
-	minLevel  slog.Level
-	queueSize int
-	insertFn  InsertFunc
+	minLevel      slog.Level
+	queueSize     int
+	insertFn      InsertFunc
+	errorReporter ErrorReporter
 }
 
 func WithMinLevel(level slog.Level) Option {
@@ -61,6 +65,12 @@ func WithInsertFunc(fn InsertFunc) Option {
 	}
 }
 
+func WithErrorReporter(fn ErrorReporter) Option {
+	return func(cfg *handlerConfig) {
+		cfg.errorReporter = fn
+	}
+}
+
 type Handler struct {
 	core   *handlerCore
 	attrs  []slog.Attr
@@ -68,8 +78,9 @@ type Handler struct {
 }
 
 type handlerCore struct {
-	insertFn InsertFunc
-	minLevel slog.Level
+	insertFn    InsertFunc
+	minLevel    slog.Level
+	reportError ErrorReporter
 
 	queue  chan queuedEntry
 	ctx    context.Context
@@ -98,13 +109,23 @@ func NewHandler(opts ...Option) (*Handler, error) {
 		return nil, errors.New("sqllogger: insert function is required")
 	}
 
+	if cfg.errorReporter == nil {
+		cfg.errorReporter = func(err error) {
+			if err == nil {
+				return
+			}
+			log.Printf("sqllogger: insert failed: %v", err)
+		}
+	}
+
 	coreCtx, cancel := context.WithCancel(context.Background())
 	core := &handlerCore{
-		insertFn: cfg.insertFn,
-		minLevel: cfg.minLevel,
-		queue:    make(chan queuedEntry, cfg.queueSize),
-		ctx:      coreCtx,
-		cancel:   cancel,
+		insertFn:    cfg.insertFn,
+		minLevel:    cfg.minLevel,
+		reportError: cfg.errorReporter,
+		queue:       make(chan queuedEntry, cfg.queueSize),
+		ctx:         coreCtx,
+		cancel:      cancel,
 	}
 	core.wg.Add(1)
 	go core.run()
@@ -205,8 +226,19 @@ func (c *handlerCore) process(entry queuedEntry) {
 	ctx := entry.ctx
 	if ctx == nil {
 		ctx = context.Background()
+	} else {
+		ctx = context.WithoutCancel(ctx)
 	}
-	_ = c.insertFn(ctx, entry.params)
+	if err := c.insertFn(ctx, entry.params); err != nil {
+		c.reportInsertError(err)
+	}
+}
+
+func (c *handlerCore) reportInsertError(err error) {
+	if err == nil || c.reportError == nil {
+		return
+	}
+	c.reportError(err)
 }
 
 func (c *handlerCore) drainQueue() {

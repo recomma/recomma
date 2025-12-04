@@ -203,3 +203,85 @@ func TestHandleAfterClose(t *testing.T) {
 		t.Fatalf("expected ErrHandlerClosed, got %v", err)
 	}
 }
+
+func TestHandlerProcessIgnoresCallerCancel(t *testing.T) {
+	t.Parallel()
+
+	started := make(chan struct{})
+	resume := make(chan struct{})
+	ctxResults := make(chan error, 1)
+
+	handler, err := NewHandler(
+		WithInsertFunc(func(ctx context.Context, params InsertLogEntryParams) error {
+			close(started)
+			<-resume
+			ctxResults <- ctx.Err()
+			return nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = handler.Close(context.Background())
+	})
+
+	rec := slog.NewRecord(time.Now(), slog.LevelInfo, "detached", 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := handler.Handle(ctx, rec); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("handler never processed entry")
+	}
+
+	cancel()
+	close(resume)
+
+	select {
+	case err := <-ctxResults:
+		if err != nil {
+			t.Fatalf("insert context unexpectedly canceled: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for insert result")
+	}
+}
+
+func TestHandlerReportsInsertErrors(t *testing.T) {
+	t.Parallel()
+
+	reported := make(chan error, 1)
+
+	handler, err := NewHandler(
+		WithInsertFunc(func(ctx context.Context, params InsertLogEntryParams) error {
+			return errors.New("insert failed")
+		}),
+		WithErrorReporter(func(err error) {
+			reported <- err
+		}),
+	)
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = handler.Close(context.Background())
+	})
+
+	rec := slog.NewRecord(time.Now(), slog.LevelInfo, "boom", 0)
+	if err := handler.Handle(context.Background(), rec); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	select {
+	case err := <-reported:
+		if err == nil || err.Error() != "insert failed" {
+			t.Fatalf("unexpected error reported: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for reported error")
+	}
+}

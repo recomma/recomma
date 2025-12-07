@@ -231,7 +231,22 @@ func (h *ApiHandler) GetVaultStatus(ctx context.Context, request GetVaultStatusR
 		return GetVaultStatus500Response{}, nil
 	}
 
-	if h.session != nil {
+	sessionValid := false
+	if status.State == vault.StateUnsealed {
+		valid, expired := h.requireSession(ctx)
+		sessionValid = valid
+		if !valid {
+			reason := "missing or invalid session"
+			if expired {
+				reason = "session expired"
+			}
+			h.logger.InfoContext(ctx, "GetVaultStatus unauthorized", slog.String("reason", reason))
+			status.State = vault.StateSealed
+			status.SessionExpiresAt = nil
+		}
+	}
+
+	if sessionValid && h.session != nil {
 		if exp := h.session.Expiry(); exp != nil {
 			status.SessionExpiresAt = exp
 		}

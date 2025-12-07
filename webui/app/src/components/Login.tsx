@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
-import { AlertCircle, KeyRound } from 'lucide-react';
+import { AlertCircle, AlertTriangle, KeyRound } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -15,6 +15,7 @@ import { buildOpsApiUrl } from '../config/opsApi';
 
 interface LoginProps {
   initialUsername?: string;
+  message?: string;
   onAuthenticated?: () => void;
 }
 
@@ -440,7 +441,7 @@ const decryptBundle = async (payload: VaultEncryptedPayload): Promise<VaultSecre
   }
 };
 
-export function Login({ initialUsername = '', onAuthenticated }: LoginProps) {
+export function Login({ initialUsername = '', message, onAuthenticated }: LoginProps) {
   const [username, setUsername] = useState(initialUsername);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [progressStep, setProgressStep] = useState<ProgressStep>('idle');
@@ -571,6 +572,12 @@ export function Login({ initialUsername = '', onAuthenticated }: LoginProps) {
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {message && (
+            <div className="mb-4 flex items-start gap-2 rounded-md bg-amber-50 p-3 text-sm text-amber-800">
+              <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+              <span>{message}</span>
+            </div>
+          )}
           <form className="space-y-4" onSubmit={handleSubmit}>
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-700" htmlFor="username">

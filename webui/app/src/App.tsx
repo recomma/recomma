@@ -26,6 +26,8 @@ import { useSystemErrors } from './hooks/useSystemErrors';
 
 export type FilterState = OrderFilterState;
 
+const STATUS_POLL_INTERVAL_MS = 15000;
+
 export default function App() {
   const [filters, setFilters] = useState<FilterState>({});
   const [selectedBotId, setSelectedBotId] = useState<number | undefined>();
@@ -36,12 +38,21 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
 
   // Only connect to system stream when vault is unsealed
-  const isUnsealed = vaultStatus?.state === 'unsealed';
+  const sessionExpiry = vaultStatus?.session_expires_at
+    ? new Date(vaultStatus.session_expires_at)
+    : null;
+  const hasValidSession = Boolean(
+    sessionExpiry && !Number.isNaN(sessionExpiry.getTime()) && sessionExpiry.getTime() > Date.now(),
+  );
+  const isUnsealed = vaultStatus?.state === 'unsealed' && hasValidSession;
   useSystemErrors(isUnsealed);
 
-  const fetchVaultStatus = useCallback(async () => {
-    setIsLoadingVaultStatus(true);
-    setVaultStatusError(null);
+  const fetchVaultStatus = useCallback(async (options?: { background?: boolean }) => {
+    const isBackground = options?.background ?? false;
+    if (!isBackground) {
+      setIsLoadingVaultStatus(true);
+      setVaultStatusError(null);
+    }
 
     try {
       const response = await fetch(buildOpsApiUrl('/vault/status'), {
@@ -60,14 +71,25 @@ export default function App() {
       console.error('Failed to load vault status:', err);
       const message =
         err instanceof Error ? err.message : 'Failed to load vault status.';
-      setVaultStatusError(message);
+      if (!isBackground) {
+        setVaultStatusError(message);
+      }
     } finally {
-      setIsLoadingVaultStatus(false);
+      if (!isBackground) {
+        setIsLoadingVaultStatus(false);
+      }
     }
   }, []);
 
   useEffect(() => {
     fetchVaultStatus();
+    const intervalId = window.setInterval(() => {
+      fetchVaultStatus({ background: true });
+    }, STATUS_POLL_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
   }, [fetchVaultStatus]);
 
   const handleSetupComplete = () => {
@@ -104,13 +126,29 @@ export default function App() {
     );
   }
 
-  if (vaultStatus.state === 'sealed') {
+  const shouldShowLogin =
+    vaultStatus.state === 'sealed' || (vaultStatus.state === 'unsealed' && !hasValidSession);
+
+  const sessionNotice = (() => {
+    if (vaultStatus.state !== 'unsealed') {
+      return null;
+    }
+    if (!hasValidSession) {
+      return vaultStatus.session_expires_at
+        ? 'Your session expired. Sign in again to unlock the vault.'
+        : 'Session required to continue. Sign in to unlock the vault.';
+    }
+    return null;
+  })();
+
+  if (shouldShowLogin) {
     return (
       <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-gray-50">Loading Login</div>}>
-      <Login
-        initialUsername={vaultStatus.user?.username ?? ''}
-        onAuthenticated={fetchVaultStatus}
-      />
+        <Login
+          initialUsername={vaultStatus.user?.username ?? ''}
+          message={sessionNotice ?? undefined}
+          onAuthenticated={fetchVaultStatus}
+        />
       </Suspense>
     );
   }

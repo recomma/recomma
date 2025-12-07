@@ -49,6 +49,19 @@ type StreamEvent struct {
 
 // StreamOrders satisfies StrictServerInterface.
 func (h *ApiHandler) StreamOrders(ctx context.Context, req StreamOrdersRequestObject) (StreamOrdersResponseObject, error) {
+	if ok, expired, sealed, err := h.requireUnsealedSession(ctx, "StreamOrders"); err != nil {
+		return StreamOrders500Response{}, nil
+	} else if !ok {
+		switch {
+		case expired:
+			return StreamOrders401Response{}, nil
+		case sealed:
+			return StreamOrders403Response{}, nil
+		default:
+			return StreamOrders401Response{}, nil
+		}
+	}
+
 	if h.stream == nil {
 		return nil, fmt.Errorf("order streaming not configured")
 	}
@@ -94,6 +107,19 @@ func (h *ApiHandler) StreamOrders(ctx context.Context, req StreamOrdersRequestOb
 
 // StreamSystemEvents satisfies StrictServerInterface.
 func (h *ApiHandler) StreamSystemEvents(ctx context.Context, req StreamSystemEventsRequestObject) (StreamSystemEventsResponseObject, error) {
+	if ok, expired, sealed, err := h.requireUnsealedSession(ctx, "StreamSystemEvents"); err != nil {
+		return StreamSystemEvents500Response{}, nil
+	} else if !ok {
+		switch {
+		case expired:
+			return StreamSystemEvents401Response{}, nil
+		case sealed:
+			return StreamSystemEvents403Response{}, nil
+		default:
+			return StreamSystemEvents401Response{}, nil
+		}
+	}
+
 	if h.systemStream == nil {
 		h.logger.ErrorContext(ctx, "systemStream is nil")
 		return StreamSystemEvents500Response{}, nil

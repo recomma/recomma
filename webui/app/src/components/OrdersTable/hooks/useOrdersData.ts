@@ -8,6 +8,7 @@ import { createOrderQueryParams, extractOrderIdFromEvent as extractOrderIdFromEv
 import { getOrderIdHex } from '../utils/orderFieldExtractors';
 import { generateMockOrders } from '../mockData';
 import { attachOrderStreamHandlers } from '../../../utils/orderStream';
+import { isAuthErrorStatus, redirectToLogin } from '../../../utils/auth';
 
 /**
  * Custom hook to manage orders and deals data fetching with real-time updates
@@ -46,6 +47,11 @@ export function useOrdersData(filters: OrderFilterState) {
           signal,
         });
 
+        if (isAuthErrorStatus(response.status)) {
+          redirectToLogin();
+          return;
+        }
+
         if (!response.ok) {
           throw new Error('API not available');
         }
@@ -81,6 +87,11 @@ export function useOrdersData(filters: OrderFilterState) {
         credentials: 'include',
       });
 
+      if (isAuthErrorStatus(response.status)) {
+        redirectToLogin();
+        return;
+      }
+
       if (!response.ok) {
         throw new Error('API not available');
       }
@@ -109,6 +120,11 @@ export function useOrdersData(filters: OrderFilterState) {
         const response = await fetch(url, {
           credentials: 'include',
         });
+
+        if (isAuthErrorStatus(response.status)) {
+          redirectToLogin();
+          return;
+        }
 
         if (!response.ok) {
           throw new Error('API not available');

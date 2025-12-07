@@ -340,6 +340,10 @@ paths:
             text/event-stream:
               schema:
                 type: string
+        '401':
+          description: Missing or invalid session
+        '403':
+          description: Vault is sealed or session expired
         '500':
           description: Internal server error
 
@@ -479,6 +483,10 @@ paths:
                   - items
         '400':
           description: Invalid parameters
+        '401':
+          description: Missing or invalid session
+        '403':
+          description: Vault is sealed or session expired
         '500':
           description: Internal server error
 
@@ -577,6 +585,10 @@ paths:
                   - items
         '400':
           description: Invalid parameters
+        '401':
+          description: Missing or invalid session
+        '403':
+          description: Vault is sealed or session expired
         '500':
           description: Internal server error
 
@@ -1135,6 +1147,10 @@ paths:
                   ```
         '400':
           description: Invalid parameters
+        '401':
+          description: Missing or invalid session
+        '403':
+          description: Vault is sealed or session expired
         '500':
           description: Internal server error
 

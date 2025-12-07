@@ -234,6 +234,19 @@ func (h *ApiHandler) ListBots(ctx context.Context, req ListBotsRequestObject) (L
 
 // ListDeals satisfies StrictServerInterface.
 func (h *ApiHandler) ListDeals(ctx context.Context, req ListDealsRequestObject) (ListDealsResponseObject, error) {
+	if ok, expired, sealed, err := h.requireUnsealedSession(ctx, "ListDeals"); err != nil {
+		return ListDeals500Response{}, nil
+	} else if !ok {
+		switch {
+		case expired:
+			return ListDeals401Response{}, nil
+		case sealed:
+			return ListDeals403Response{}, nil
+		default:
+			return ListDeals401Response{}, nil
+		}
+	}
+
 	limit := clampPageSize(req.Params.Limit)
 	opts := ListDealsOptions{
 		DealID:      req.Params.DealId,
@@ -258,6 +271,19 @@ func (h *ApiHandler) ListDeals(ctx context.Context, req ListDealsRequestObject) 
 
 // ListOrders satisfies StrictServerInterface.
 func (h *ApiHandler) ListOrders(ctx context.Context, req ListOrdersRequestObject) (ListOrdersResponseObject, error) {
+	if ok, expired, sealed, err := h.requireUnsealedSession(ctx, "ListOrders"); err != nil {
+		return ListOrders500Response{}, nil
+	} else if !ok {
+		switch {
+		case expired:
+			return ListOrders401Response{}, nil
+		case sealed:
+			return ListOrders403Response{}, nil
+		default:
+			return ListOrders401Response{}, nil
+		}
+	}
+
 	includeLog := req.Params.IncludeLog != nil && *req.Params.IncludeLog
 	limit := clampPageSize(req.Params.Limit)
 

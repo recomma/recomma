@@ -110,7 +110,9 @@ export default function App() {
         <p className="text-red-600">{vaultStatusError}</p>
         <button
           className="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
-          onClick={fetchVaultStatus}
+          onClick={() => {
+            void fetchVaultStatus();
+          }}
         >
           Retry
         </button>

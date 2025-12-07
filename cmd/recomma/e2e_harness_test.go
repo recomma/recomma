@@ -10,6 +10,8 @@ import (
 	"encoding/pem"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
+	"net/url"
 	"testing"
 	"time"
 
@@ -214,13 +216,20 @@ func NewE2ETestHarness(t testing.TB, ctx context.Context, opts ...E2EHarnessOpti
 		ThreeCommasMock:  tcMock,
 		HyperliquidMock:  hlMock,
 		Store:            app.Store,
-		HTTPClient:       &http.Client{Timeout: 10 * time.Second},
+		HTTPClient:       buildHTTPClient(t),
 		HLPrivateKey:     privateKey,
 		HLWallet:         wallet,
 		VenueID:          venueID,
 		testSecrets:      testSecrets,
 		AdditionalVenues: additional,
 	}
+}
+
+func buildHTTPClient(t testing.TB) *http.Client {
+	jar, err := cookiejar.New(nil)
+	require.NoError(t, err)
+
+	return &http.Client{Timeout: 10 * time.Second, Jar: jar}
 }
 
 // Start starts the application (non-blocking)
@@ -240,6 +249,19 @@ func (h *E2ETestHarness) Start(ctx context.Context) {
 
 	// Wait for HTTP server to be ready
 	h.WaitForHTTPServer(5 * time.Second)
+
+	// Issue a session for API access
+	expiry := time.Now().Add(30 * time.Minute).UTC()
+	token, err := h.App.APIHandler.IssueSessionForTest(expiry)
+	require.NoError(h.t, err)
+	baseURL, err := url.Parse("http://" + h.App.HTTPAddr())
+	require.NoError(h.t, err)
+	h.HTTPClient.Jar.SetCookies(baseURL, []*http.Cookie{{
+		Name:    "recomma_session",
+		Value:   token,
+		Path:    "/",
+		Expires: expiry,
+	}})
 }
 
 // Shutdown gracefully stops the application

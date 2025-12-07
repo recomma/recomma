@@ -467,6 +467,46 @@ func (h *ApiHandler) requireSession(ctx context.Context) (valid bool, expired bo
 	return valid, expired
 }
 
+func (h *ApiHandler) requireUnsealedSession(ctx context.Context, operation string) (ok bool, expired bool, sealed bool, err error) {
+	valid, expired := h.requireSession(ctx)
+	if !valid {
+		reason := "missing or invalid session"
+		if expired {
+			reason = "session expired"
+		}
+		h.logger.InfoContext(ctx, fmt.Sprintf("%s unauthorized", operation), slog.String("reason", reason))
+		return false, expired, false, nil
+	}
+
+	status, err := h.controllerStatus(ctx)
+	if err != nil {
+		h.logger.ErrorContext(ctx, fmt.Sprintf("%s controller status", operation), slog.String("error", err.Error()))
+		return false, false, false, err
+	}
+
+	if status.State != vault.StateUnsealed {
+		h.logger.InfoContext(ctx, fmt.Sprintf("%s forbidden", operation), slog.Any("state", status.State))
+		return false, false, true, nil
+	}
+
+	return true, false, false, nil
+}
+
+// IssueSessionForTest issues a session token for test harnesses that bypass HTTP unseal.
+//
+// In production, sessions are created by the /vault/unseal endpoint. Tests that
+// programmatically unseal the vault can call this helper to mint a valid token
+// and attach it as a cookie for subsequent requests.
+func (h *ApiHandler) IssueSessionForTest(expiry time.Time) (string, error) {
+	if h.session == nil {
+		return "", errors.New("session manager unavailable")
+	}
+	if expiry.IsZero() {
+		expiry = h.now().Add(defaultVaultSessionTTL).UTC()
+	}
+	return h.session.Issue(expiry)
+}
+
 func (h *ApiHandler) controllerStatus(ctx context.Context) (vault.ControllerStatus, error) {
 	if h.vault == nil {
 		h.logger.ErrorContext(ctx, "vault controller unavailable")

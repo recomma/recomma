@@ -4,6 +4,7 @@ import { ArrowUpRight, Activity, CheckCircle2, XCircle } from 'lucide-react';
 import type { ListOrdersResponse, OrderRecord } from '../types/api';
 import { buildOpsApiUrl } from '../config/opsApi';
 import { attachOrderStreamHandlers } from '../utils/orderStream';
+import { isAuthErrorStatus, redirectToLogin } from '../utils/auth';
 
 interface Stats {
   total_orders: number;
@@ -81,7 +82,15 @@ export function StatsCards() {
 
   const fetchStats = useCallback(async () => {
     try {
-      const response = await fetch(buildOpsApiUrl('/api/orders?limit=500'));
+      const response = await fetch(buildOpsApiUrl('/api/orders?limit=500'), {
+        credentials: 'include'
+      });
+
+      if (isAuthErrorStatus(response.status)) {
+        redirectToLogin();
+        return;
+      }
+
       if (!response.ok) throw new Error('API not available');
       const data: ListOrdersResponse = await response.json();
       const orders = data.items ?? [];
